@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(cordmic_native CXX)
+add_library(cordmic_native SHARED aaudio_capture.cpp)
+find_library(log-lib log)
+target_link_libraries(cordmic_native aaudio ${log-lib})

@@ -1,0 +1,14 @@
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+__pycache__/
+*.log
+bin/
+obj/
+publish/
+dist/
+*.apk
+*.exe
+.pytest_cache/
