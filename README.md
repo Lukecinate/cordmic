@@ -21,6 +21,7 @@ Downloads: see [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 ---
 
 ## Contents
+- [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Install & quick start](#install--quick-start)
 - [Using the Windows app](#using-the-windows-app)
@@ -34,6 +35,35 @@ Downloads: see [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 - [Upgrading from UsbMic](#upgrading-from-usbmic)
 - [Roadmap](#roadmap)
 - [License](#license)
+
+## Screenshots
+
+**Android app.** Real renders of the app's layouts, produced by the Robolectric screenshot test
+(`./gradlew testDebugUnitTest -PrecordScreenshots`) with sample values; not photos of a physical phone.
+
+| Waiting for USB tethering | Looking for your PC | Streaming to your PC |
+|---|---|---|
+| ![Waiting](docs/screenshots/android-waiting.png) | ![Searching](docs/screenshots/android-searching.png) | ![Streaming](docs/screenshots/android-streaming.png) |
+
+| Details expanded | Settings (idle) | Microphone unavailable |
+|---|---|---|
+| ![Details](docs/screenshots/android-details.png) | ![Settings](docs/screenshots/android-settings.png) | ![Error](docs/screenshots/android-error.png) |
+
+| Dark theme | Bahasa Indonesia | Small screen (320 dp) |
+|---|---|---|
+| ![Dark](docs/screenshots/android-dark.png) | ![Indonesian](docs/screenshots/android-streaming-id.png) | ![Small](docs/screenshots/android-small.png) |
+
+Landscape: [android-landscape.png](docs/screenshots/android-landscape.png).
+
+**Windows app.** *Design previews*: HTML renders built from the Windows app's colour tokens, font and string
+tables with sample values (headless Chrome). They are not screenshots of the running WinForms app.
+
+| Setup guide, streaming | Setup guide, waiting | Tray menu and tooltip |
+|---|---|---|
+| ![Windows setup guide, streaming (design preview)](docs/screenshots/windows-wizard-streaming-preview.png) | ![Windows setup guide, waiting (design preview)](docs/screenshots/windows-wizard-waiting-preview.png) | ![Windows tray (design preview)](docs/screenshots/windows-tray-preview.png) |
+
+More: [virtual mic step](docs/screenshots/windows-wizard-cable-preview.png),
+[Indonesian](docs/screenshots/windows-wizard-streaming-id-preview.png).
 
 ## Requirements
 
@@ -56,7 +86,7 @@ From the [latest release](https://github.com/Lukecinate/cordmic/releases/latest)
 2. **Install on the phone and connect.** Copy the APK to the phone and open it (allow "Install unknown apps" for
    your file manager; on Samsung, temporarily turn off Auto Blocker if it is on). Plug in the USB cable, turn on
    **Settings → Connections → Mobile Hotspot and Tethering → USB tethering**, open CordMic and tap **Start**.
-   The tray icon turns green.
+   The phone shows **Streaming to your PC** and the tray icon turns teal.
 3. **Pick the mic in your app.** Choose **CABLE Output (VB-Audio Virtual Cable)** as the input device, e.g. Discord:
    *User Settings → Voice & Video → Input Device*; Zoom: *Settings → Audio → Microphone*. For games without a mic
    selector, make CABLE Output the default recording device in Windows Sound settings.
@@ -78,9 +108,9 @@ scheduled task. Settings and logs under `%APPDATA%` / `%LOCALAPPDATA%` are kept.
 
 | Color | Meaning |
 |---|---|
-| Gray | Waiting for the phone (no cable/tethering yet), or phone detected but not started |
-| Green | Connected, audio is flowing |
-| Yellow | Needs attention: no virtual mic installed, phone connected but not sending audio, or PC internet is routed through the phone |
+| Grey | Waiting for USB tethering, or *Phone found* but Start not tapped yet |
+| Teal | Streaming from your phone, audio is flowing |
+| Amber | Needs attention: no virtual mic installed, phone connected but not sending audio, or PC internet is routed through the phone |
 | Red | Error: UDP port 50005 is in use by another app, or the audio device failed to open (retried automatically) |
 
 Hover the icon to see the estimated PC-side latency (½ USB round trip + jitter buffer + 10 ms WASAPI buffer),
@@ -102,13 +132,25 @@ round-trip time, packet loss over the last 10 seconds and buffer fill. Right-cli
 
 ## Using the Android app
 
-1. Turn on USB tethering (see below). The **PC IP** field can stay empty (automatic discovery); the port is `50005`.
-2. Choose a mic mode:
-   - **Voice Recognition** (default) – minimal processing, usually the lowest-latency path.
-   - **Unprocessed** – raw audio without filters.
-   - **Voice Communication** – noise suppression and echo cancellation; higher latency. Useful without a headset.
+The screen is one status card plus one button. The card says in plain words what is happening
+(*Ready to start*, *Waiting for USB tethering*, *Looking for your PC*, *Streaming to your PC*,
+*Microphone unavailable*) and gives one next step, e.g. an **Open tethering settings** button. While streaming
+it shows the live input level, packets sent, send errors and how long ago the PC last replied. Round-trip time is
+measured on the PC side and shown in the Windows app.
+
+1. Turn on USB tethering (see below).
+2. Check **Settings** (open while idle, collapsed and locked while streaming):
+   - **PC IP address** – leave empty to find the PC automatically; **UDP port** `50005`.
+   - **Microphone mode**:
+     **Voice recognition** (default, minimal processing, usually the lowest latency),
+     **Unprocessed** (raw signal without filters), or
+     **Voice communication** (noise suppression and echo cancellation; adds latency, useful without a headset).
+   - **Low-latency engine (AAudio)** – on by default; turn off only if audio cuts out.
 3. Tap **Start** and grant the Microphone and Notification permissions. A persistent "CordMic" notification
    (with a Stop button) keeps capture running with the screen off or while you use other apps.
+   **Details** shows the capture engine, sample rate, buffer sizes and the USB interface.
+
+The app follows the system light/dark theme and language (English or Bahasa Indonesia).
 4. To keep One UI from stopping it: **Settings → Apps → CordMic → Battery → Unrestricted**, and make sure CordMic is
    not in the "Sleeping apps" list.
 
@@ -125,10 +167,10 @@ tapped from the app screen and the service does not auto-start after a reboot.
 
 | Symptom | Try |
 |---|---|
-| Icon stays gray, "Waiting for phone" | Use a **data** cable. Turn *USB tethering* on again (Samsung turns it off on every unplug). Windows *Settings → Network* should list a "Remote NDIS…" / "UsbNcm…" adapter. |
-| "Phone detected" but not connected | Open CordMic on the phone and tap *Start*. Check that the firewall rule *CordMic (UDP 50005)* exists (re-run the installer if it is missing). |
+| Icon stays grey, "Waiting for USB tethering" | Use a **data** cable. Turn *USB tethering* on again (Samsung turns it off on every unplug). Windows *Settings → Network* should list a "Remote NDIS…" / "UsbNcm…" adapter. |
+| "Phone found" but not streaming | Open CordMic on the phone and tap *Start*. Check that the firewall rule *CordMic (UDP 50005)* exists (re-run the installer if it is missing). |
 | Red, "Port busy" | Another receiver (e.g. the Python `cordmic_receiver`) is still running. Close it; CordMic retries every 5 seconds. |
-| Yellow, "No virtual mic" | Install VB-CABLE (setup guide step 1); restart the PC if it does not appear. |
+| Amber, "No virtual mic yet" | Install VB-CABLE (setup guide step 1); restart the PC if it does not appear. |
 | Choppy or robotic audio | *Jitter buffer → Safe (20 ms)*. Check `lost` / `underrun` in the log. Avoid USB hubs; use a port on the PC directly. |
 | Game ping rises after plugging in the phone | *Fix phone network priority* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator). Alternatively, turn off mobile data on the phone. |
 | Discord hears nothing | The input device must be **CABLE Output** (not CABLE Input). The level bar in setup guide step 3 should move while you speak. |
@@ -157,6 +199,8 @@ Get-NetRoute 0.0.0.0/0                                          # the default ro
   signed with a debug key; uninstall it before installing 0.3.1 (Android rejects an update signed with a different key).
 - **No clock-drift compensation yet.** Over long sessions the jitter buffer corrects phone/PC clock drift by
   dropping packets when it grows past its limit, which can cause a brief click.
+- **Round-trip time is PC-side only.** The phone answers the PC's PING but does not time it, so the phone app
+  shows the age of the last PC reply instead of a round-trip figure.
 - **Android 14+ start rule.** Capture must be started from the visible app; it does not start on boot.
 
 ## Architecture & protocol
@@ -207,7 +251,9 @@ cordmic/
 │       ├── AndroidManifest.xml   permissions + foregroundServiceType="microphone"
 │       ├── cpp/aaudio_capture.cpp  low-latency AAudio capture (JNI)
 │       ├── java/dev/cordmic/     MainActivity, MicService, Streamer, Capture, TetherNet, Protocol
-│       └── res/values[-in]/      English and Indonesian strings
+│       └── res/values[-in]/      English and Indonesian strings (+ values-night for the dark theme)
+├── docs/                         screenshots, app icon, THIRD_PARTY_NOTICES.md
+├── third_party/fonts/            Plus Jakarta Sans + OFL license
 ├── windows-app/                  Windows app, C# / .NET 8
 │   ├── src/CordMic.Core/         protocol, jitter buffer, UDP receiver, settings, string tables
 │   ├── src/CordMic.App/          WinForms tray app + WASAPI (NAudio) + setup guide
@@ -257,7 +303,7 @@ Release signing is read from a properties file outside the repository
 |---|---|---|
 | Python (17 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
 | .NET (45 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
-| Kotlin (4 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, English/Indonesian string parity |
+| Kotlin (17 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, English/Indonesian string parity, level meter and IP helpers, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 ## Python receiver (developer tool)
 
@@ -310,9 +356,13 @@ CordMic was previously called **UsbMic**. The audio protocol is unchanged (`UM` 
    ACX on Windows 11. Kernel drivers must be signed by Microsoft (EV certificate + attestation signing), which is
    why this is a separate milestone. Windows has no user-mode API for a system-wide virtual microphone.
 4. **Code signing** (Authenticode) for the installer and app so SmartScreen does not warn.
-5. Phone-side cable/tethering detection with a "turn on USB tethering" prompt; better packet-loss concealment;
-   mic level meter in the phone app.
+5. Better packet-loss concealment.
 
 ## License
 
 [MIT](LICENSE) © CordMic contributors. VB-CABLE is a separate product by VB-Audio and is not included.
+
+Design assets: the app icon and in-app icons are [Material Icons](https://fonts.google.com/icons) (Round style,
+Apache 2.0) by Google; the UI font is [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans)
+(SIL Open Font License 1.1). Details and the other libraries are listed in
+[docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).

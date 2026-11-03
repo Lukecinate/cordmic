@@ -22,6 +22,7 @@ Unduhan: lihat [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 ---
 
 ## Isi
+- [Tangkapan layar](#tangkapan-layar)
 - [Kebutuhan](#kebutuhan)
 - [Pasang & mulai cepat](#pasang--mulai-cepat)
 - [Aplikasi Windows](#aplikasi-windows)
@@ -35,6 +36,35 @@ Unduhan: lihat [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 - [Upgrade dari UsbMic](#upgrade-dari-usbmic)
 - [Roadmap](#roadmap)
 - [Lisensi](#lisensi)
+
+## Tangkapan layar
+
+**Aplikasi Android.** Render asli dari layout aplikasi, dibuat oleh test screenshot Robolectric
+(`./gradlew testDebugUnitTest -PrecordScreenshots`) dengan nilai contoh; bukan foto dari HP fisik.
+
+| Menunggu USB tethering | Mencari PC | Streaming ke PC |
+|---|---|---|
+| ![Menunggu](docs/screenshots/android-waiting.png) | ![Mencari](docs/screenshots/android-searching.png) | ![Streaming](docs/screenshots/android-streaming.png) |
+
+| Detail dibuka | Pengaturan (diam) | Mikrofon tidak tersedia |
+|---|---|---|
+| ![Detail](docs/screenshots/android-details.png) | ![Pengaturan](docs/screenshots/android-settings.png) | ![Error](docs/screenshots/android-error.png) |
+
+| Tema gelap | Bahasa Indonesia | Layar kecil (320 dp) |
+|---|---|---|
+| ![Gelap](docs/screenshots/android-dark.png) | ![Indonesia](docs/screenshots/android-streaming-id.png) | ![Kecil](docs/screenshots/android-small.png) |
+
+Lanskap: [android-landscape.png](docs/screenshots/android-landscape.png).
+
+**Aplikasi Windows.** *Pratinjau desain*: render HTML yang dibuat dari token warna, font, dan tabel teks aplikasi
+Windows dengan nilai contoh (Chrome headless). Ini bukan tangkapan layar aplikasi WinForms yang sedang berjalan.
+
+| Panduan, streaming | Panduan, menunggu | Menu tray dan tooltip |
+|---|---|---|
+| ![Panduan Windows, streaming (pratinjau desain)](docs/screenshots/windows-wizard-streaming-id-preview.png) | ![Panduan Windows, menunggu (pratinjau desain)](docs/screenshots/windows-wizard-waiting-preview.png) | ![Tray Windows (pratinjau desain)](docs/screenshots/windows-tray-preview.png) |
+
+Lainnya: [langkah mic virtual](docs/screenshots/windows-wizard-cable-preview.png),
+[versi Inggris](docs/screenshots/windows-wizard-streaming-preview.png).
 
 ## Kebutuhan
 
@@ -56,8 +86,8 @@ Dari [rilis terbaru](https://github.com/Lukecinate/cordmic/releases/latest) undu
    mendeteksi driver secara otomatis).
 2. **Pasang di HP lalu sambungkan.** Salin APK ke HP dan buka (izinkan "Install unknown apps" untuk aplikasi
    pengelola file; di Samsung, matikan sementara Auto Blocker jika aktif). Colok kabel USB, nyalakan
-   **Pengaturan → Koneksi → Hotspot Seluler dan Tethering → Tethering USB**, buka CordMic, lalu tekan **Start**.
-   Ikon tray berubah hijau.
+   **Pengaturan → Koneksi → Hotspot Seluler dan Tethering → Tethering USB**, buka CordMic, lalu ketuk **Mulai**.
+   HP menampilkan **Streaming ke PC** dan ikon tray berubah teal.
 3. **Pilih mic di aplikasi.** Pilih **CABLE Output (VB-Audio Virtual Cable)** sebagai input, misalnya Discord:
    *User Settings → Voice & Video → Input Device*; Zoom: *Settings → Audio → Microphone*. Untuk game tanpa pilihan
    mic, jadikan CABLE Output perangkat rekaman default di pengaturan Sound Windows.
@@ -79,9 +109,9 @@ firewall, dan scheduled task. Setting dan log di `%APPDATA%` / `%LOCALAPPDATA%` 
 
 | Warna | Arti |
 |---|---|
-| Abu-abu | Menunggu HP (kabel/tethering belum ada), atau HP terdeteksi tapi belum *Start* |
-| Hijau | Terhubung, suara masuk |
-| Kuning | Perlu perhatian: mic virtual belum ada, HP terhubung tapi tidak mengirim suara, atau internet PC lewat HP |
+| Abu-abu | Menunggu USB tethering, atau *HP ditemukan* tapi *Mulai* belum diketuk |
+| Teal | Streaming dari HP, suara masuk |
+| Amber | Perlu perhatian: mic virtual belum ada, HP terhubung tapi tidak mengirim suara, atau internet PC lewat HP |
 | Merah | Error: port UDP 50005 dipakai aplikasi lain, atau perangkat audio gagal dibuka (dicoba ulang otomatis) |
 
 Arahkan mouse ke ikon untuk melihat perkiraan latensi sisi PC (½ RTT USB + jitter buffer + buffer WASAPI 10 ms),
@@ -103,17 +133,29 @@ RTT, loss 10 detik terakhir, dan isi buffer. Klik kanan untuk menu:
 
 ## Aplikasi Android
 
-1. Nyalakan USB tethering (lihat di bawah). Kolom **IP PC** boleh dikosongkan (deteksi otomatis); port `50005`.
-2. Pilih mode mic:
-   - **Voice Recognition** (default) – proses minimal, biasanya jalur paling low-latency.
-   - **Unprocessed** – suara mentah tanpa filter.
-   - **Voice Communication** – noise suppression dan echo cancellation; latensi lebih tinggi. Cocok tanpa headset.
-3. Tekan **Start**, lalu izinkan Mikrofon dan Notifikasi. Notifikasi "CordMic" (dengan tombol Stop) tetap tampil dan
-   capture terus berjalan saat layar mati atau saat memakai aplikasi lain.
+Layarnya berisi satu kartu status dan satu tombol. Kartu menjelaskan keadaan dengan bahasa sederhana
+(*Siap dimulai*, *Menunggu USB tethering*, *Mencari PC*, *Streaming ke PC*, *Mikrofon tidak tersedia*) dan memberi
+satu langkah berikutnya, misalnya tombol **Buka pengaturan tethering**. Saat streaming, kartu menampilkan level
+input langsung, paket terkirim, gagal kirim, dan kapan PC terakhir membalas. Waktu pulang-pergi (RTT) diukur di sisi
+PC dan ditampilkan di aplikasi Windows.
+
+1. Nyalakan USB tethering (lihat di bawah).
+2. Cek **Pengaturan** (terbuka saat diam, terlipat dan terkunci saat streaming):
+   - **Alamat IP PC** – kosongkan agar PC ditemukan otomatis; **Port UDP** `50005`.
+   - **Mode mikrofon**:
+     **Pengenalan suara** (default, pemrosesan minimal, biasanya latensi paling rendah),
+     **Tanpa pemrosesan** (sinyal mentah tanpa filter), atau
+     **Komunikasi suara** (peredam bising dan peredam gema; menambah latensi, cocok tanpa headset).
+   - **Mesin latensi rendah (AAudio)** – aktif secara default; matikan hanya jika suara putus-putus.
+3. Ketuk **Mulai**, lalu izinkan Mikrofon dan Notifikasi. Notifikasi "CordMic" (dengan tombol Hentikan) tetap tampil
+   dan capture terus berjalan saat layar mati atau saat memakai aplikasi lain. **Detail** menampilkan mesin capture,
+   sample rate, ukuran buffer, dan antarmuka USB.
+
+Aplikasi mengikuti tema terang/gelap dan bahasa sistem (Inggris atau Indonesia).
 4. Agar tidak dimatikan One UI: **Pengaturan → Aplikasi → CordMic → Baterai → Tidak dibatasi**, dan pastikan CordMic
    tidak ada di daftar "Aplikasi tidur".
 
-Android 14+ hanya mengizinkan foreground service mikrofon dimulai saat aplikasi terlihat, jadi **Start** harus
+Android 14+ hanya mengizinkan foreground service mikrofon dimulai saat aplikasi terlihat, jadi **Mulai** harus
 ditekan dari layar aplikasi dan service tidak otomatis jalan setelah reboot.
 
 ### USB tethering di Samsung
@@ -126,10 +168,10 @@ ditekan dari layar aplikasi dan service tidak otomatis jalan setelah reboot.
 
 | Gejala | Coba |
 |---|---|
-| Ikon abu-abu terus, "Menunggu HP" | Pakai kabel **data**. Nyalakan lagi *Tethering USB* (Samsung mematikannya tiap kabel dicabut). Di Windows *Settings → Network* harus ada adapter "Remote NDIS…" / "UsbNcm…". |
-| "HP terdeteksi" tapi tidak tersambung | Buka CordMic di HP dan tekan *Start*. Pastikan aturan firewall *CordMic (UDP 50005)* ada (jalankan ulang installer bila hilang). |
+| Ikon abu-abu terus, "Menunggu USB tethering" | Pakai kabel **data**. Nyalakan lagi *Tethering USB* (Samsung mematikannya tiap kabel dicabut). Di Windows *Settings → Network* harus ada adapter "Remote NDIS…" / "UsbNcm…". |
+| "HP ditemukan" tapi tidak streaming | Buka CordMic di HP dan ketuk *Mulai*. Pastikan aturan firewall *CordMic (UDP 50005)* ada (jalankan ulang installer bila hilang). |
 | Merah, "Port sibuk" | Receiver lain (misalnya `cordmic_receiver` Python) masih jalan. Tutup; CordMic mencoba lagi tiap 5 detik. |
-| Kuning, "Mic virtual belum ada" | Pasang VB-CABLE (langkah 1 panduan); restart PC bila belum muncul. |
+| Amber, "Mic virtual belum ada" | Pasang VB-CABLE (langkah 1 panduan); restart PC bila belum muncul. |
 | Suara putus-putus / robot | *Jitter buffer → Aman (20 ms)*. Lihat `lost` / `underrun` di log. Hindari hub USB; pakai port langsung di PC. |
 | Ping game naik setelah colok HP | Menu *Perbaiki prioritas jaringan HP* (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai admin). Alternatif: matikan data seluler di HP. |
 | Discord tidak mendengar apa-apa | Input Device harus **CABLE Output** (bukan CABLE Input). Bar level di panduan langkah 3 harus bergerak saat bicara. |
@@ -156,6 +198,8 @@ Get-NetRoute 0.0.0.0/0                                          # route default 
   `2c:da:64:ae:df:4e:ba:6f:9d:4a:fa:06:e6:85:43:04:65:a6:0d:5d:2a:25:ef:99:ee:f3:cc:16:3e:47:1c:8b`). APK
   didistribusikan di luar Google Play, jadi Android meminta izin instal dari sumber tidak dikenal. Versi 0.3.0
   ditandatangani dengan debug key; uninstall dulu sebelum memasang 0.3.1 (Android menolak update dengan key berbeda).
+- **RTT hanya di sisi PC.** HP menjawab PING dari PC tetapi tidak mengukurnya, jadi aplikasi HP menampilkan
+  berapa lama sejak balasan PC terakhir, bukan angka pulang-pergi.
 - **Belum ada kompensasi clock drift.** Pada sesi panjang, jitter buffer menangani perbedaan jam HP/PC dengan
   membuang paket saat buffer melewati batas, yang bisa menimbulkan klik singkat.
 - **Aturan start Android 14+.** Capture harus dimulai dari aplikasi yang sedang terlihat; tidak jalan otomatis saat boot.
@@ -208,7 +252,9 @@ cordmic/
 │       ├── AndroidManifest.xml   izin + foregroundServiceType="microphone"
 │       ├── cpp/aaudio_capture.cpp  capture AAudio low-latency (JNI)
 │       ├── java/dev/cordmic/     MainActivity, MicService, Streamer, Capture, TetherNet, Protocol
-│       └── res/values[-in]/      teks bahasa Inggris dan Indonesia
+│       └── res/values[-in]/      teks bahasa Inggris dan Indonesia (+ values-night untuk tema gelap)
+├── docs/                         tangkapan layar, ikon aplikasi, THIRD_PARTY_NOTICES.md
+├── third_party/fonts/            Plus Jakarta Sans + lisensi OFL
 ├── windows-app/                  aplikasi Windows, C# / .NET 8
 │   ├── src/CordMic.Core/         protokol, jitter buffer, receiver UDP, setting, tabel teks
 │   ├── src/CordMic.App/          aplikasi tray WinForms + WASAPI (NAudio) + panduan penyiapan
@@ -257,7 +303,7 @@ release lokal ditandatangani dengan debug key.
 |---|---|---|
 | Python (17 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, loopback UDP (bersih dan lossy) |
 | .NET (45 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks |
-| Kotlin (4 test) | `cd android && ./gradlew testDebugUnitTest` | kompatibilitas byte header dengan Python, kesamaan teks Inggris/Indonesia |
+| Kotlin (17 test) | `cd android && ./gradlew testDebugUnitTest` | kompatibilitas byte header dengan Python, kesamaan teks Inggris/Indonesia, helper level meter dan IP, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 ## Receiver Python (alat developer)
 
@@ -310,9 +356,13 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audionya tidak berubah (header `
    di Windows 11. Driver kernel wajib ditandatangani Microsoft (sertifikat EV + attestation signing), karena itu
    menjadi tahap tersendiri. Windows tidak punya API user-mode untuk mikrofon virtual tingkat sistem.
 4. **Code signing** (Authenticode) untuk installer dan aplikasi agar SmartScreen tidak memperingatkan.
-5. Deteksi kabel/tethering di HP dengan pengingat "nyalakan USB tethering"; packet-loss concealment yang lebih baik;
-   indikator level mic di aplikasi HP.
+5. Packet-loss concealment yang lebih baik.
 
 ## Lisensi
 
 [MIT](LICENSE) © CordMic contributors. VB-CABLE adalah produk terpisah dari VB-Audio dan tidak disertakan.
+
+Aset desain: ikon aplikasi dan ikon di dalam aplikasi memakai [Material Icons](https://fonts.google.com/icons)
+(gaya Round, Apache 2.0) dari Google; font UI adalah [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans)
+(SIL Open Font License 1.1). Rincian dan pustaka lain ada di
+[docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
