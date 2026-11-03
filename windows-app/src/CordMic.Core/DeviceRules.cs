@@ -45,6 +45,21 @@ public static class DeviceRules
 
 public enum JitterPreset { Low, Normal, Safe }
 
+/// <summary>Windows output path. LowLatency: shared mode, about one device period queued. Stable: shared mode,
+/// whole buffer kept full (pre-0.4.2 behaviour). Exclusive: WASAPI exclusive mode at a short period.</summary>
+public enum OutputMode { LowLatency, Stable, Exclusive }
+
+public static class OutputModes
+{
+    public static readonly OutputMode[] All = { OutputMode.LowLatency, OutputMode.Stable, OutputMode.Exclusive };
+    public static string Label(OutputMode m) => m switch
+    {
+        OutputMode.Stable => L.T("outmode.stable"),
+        OutputMode.Exclusive => L.T("outmode.exclusive"),
+        _ => L.T("outmode.low"),
+    };
+}
+
 public static class Presets
 {
     public static double Ms(JitterPreset p) => p switch { JitterPreset.Low => 5, JitterPreset.Safe => 20, _ => 10 };

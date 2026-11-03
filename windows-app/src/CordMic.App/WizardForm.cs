@@ -28,7 +28,7 @@ internal sealed class WizardForm : Form
     private Label? _stateTitle, _stateMsg;
     private LevelMeter? _meter;
     private Control? _statsRow;
-    private Label? _latency, _rtt, _loss;
+    private Label? _latency, _rtt, _loss, _breakdown;
 
     public bool Finished { get; private set; }
 
@@ -106,7 +106,7 @@ internal sealed class WizardForm : Form
         PlaceStepLabel();
         _back.Visible = _step > 0;
         _next.Text = _step == 2 ? L.T("wiz.finish") : L.T("wiz.next");
-        _badge = null; _stateTitle = _stateMsg = null; _meter = null; _statsRow = null; _latency = _rtt = _loss = null;
+        _badge = null; _stateTitle = _stateMsg = null; _meter = null; _statsRow = null; _latency = _rtt = _loss = _breakdown = null;
 
         var col = new FlowLayoutPanel
         {
@@ -211,6 +211,9 @@ internal sealed class WizardForm : Form
                 SetText(_latency!, _app.EstLatencyMs() is { } lat ? $"~{lat.ToString("F0", inv)} ms" : "–");
                 SetText(_rtt!, s!.RttMs is { } r ? $"{r.ToString("F1", inv)} ms" : "–");
                 SetText(_loss!, $"{_app.RecentLossPct.ToString("F1", inv)} %");
+                SetText(_breakdown!, _app.LatencyBreakdown() is { } b
+                    ? L.T("wiz.stat.breakdown", b.NetworkMs.ToString("F0", inv), b.BufferMs.ToString("F0", inv), b.OutputMs.ToString("F0", inv))
+                    : "");
             }
         }
     }
@@ -259,7 +262,7 @@ internal sealed class WizardForm : Form
         _meter = new LevelMeter { Width = Inner, AccessibleName = L.T("wiz.level") };
         card.Controls.Add(_meter);
 
-        var stats = new TableLayoutPanel { ColumnCount = 3, RowCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Width = Inner, Margin = new Padding(0, 0, 0, 8), BackColor = Theme.Surface, Visible = false };
+        var stats = new TableLayoutPanel { ColumnCount = 3, RowCount = 3, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Width = Inner, Margin = new Padding(0, 0, 0, 8), BackColor = Theme.Surface, Visible = false };
         for (int i = 0; i < 3; i++) stats.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Inner / 3f));
         Label Val() { var l = Theme.Text("–", Theme.StatValue, maxWidth: Inner / 3); l.Margin = new Padding(0, 2, 0, 0); return l; }
         Label Cap(string k) { var l = Theme.Text(L.T(k), Theme.Small, Theme.Muted, Inner / 3); l.Margin = Padding.Empty; return l; }
@@ -267,6 +270,11 @@ internal sealed class WizardForm : Form
         stats.Controls.Add(Cap("wiz.stat.latency"), 0, 0); stats.Controls.Add(_latency, 0, 1);
         stats.Controls.Add(Cap("wiz.stat.rtt"), 1, 0); stats.Controls.Add(_rtt, 1, 1);
         stats.Controls.Add(Cap("wiz.stat.loss"), 2, 0); stats.Controls.Add(_loss, 2, 1);
+        // Where the PC-side delay comes from: one muted line under the numbers.
+        _breakdown = Theme.Text("", Theme.Small, Theme.Muted, Inner);
+        _breakdown.Margin = new Padding(0, 6, 0, 0);
+        stats.Controls.Add(_breakdown, 0, 2);
+        stats.SetColumnSpan(_breakdown, 3);
         _statsRow = stats;
         card.Controls.Add(stats);
         return card;

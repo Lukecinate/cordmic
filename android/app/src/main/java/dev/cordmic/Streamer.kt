@@ -177,6 +177,9 @@ class Streamer(context: Context, private val cfg: Config) {
 
     /** Handles HELLO (discovery reply) and PING (RTT) from the PC. */
     private fun controlLoop() {
+        // PING -> PONG latency is part of the RTT the PC shows; at default priority this thread could wait
+        // behind other apps while the phone is busy. Audio priority keeps the reply prompt (it only sleeps in receive()).
+        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val rb = ByteArray(256)
         val rp = DatagramPacket(rb, rb.size)
         val tb = ByteArray(Protocol.HEADER_SIZE)

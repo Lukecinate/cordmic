@@ -35,6 +35,8 @@ class StatsSnapshot:
     rtt_min_ms: float | None
     arrival_jitter_ms: float
     pkt_ms: float
+    buffer_avg_ms: float = float("nan")
+    catch_up_drops: int = 0
 
     def line(self) -> str:
         rtt = f"{self.rtt_ms:.2f}" if self.rtt_ms is not None else "-"
@@ -43,7 +45,8 @@ class StatsSnapshot:
                 f"reord={self.reordered} late={self.late} plc={self.concealed} "
                 f"underrun={self.underruns} ovf={self.overflow_drops} "
                 f"buf={self.depth_ms:.1f}ms jitter={self.arrival_jitter_ms:.2f}ms "
-                f"rtt={rtt}ms (min {rmin}) pkt={self.pkt_ms:.1f}ms")
+                f"rtt={rtt}ms (min {rmin}) pkt={self.pkt_ms:.1f}ms "
+                f"bufavg={self.buffer_avg_ms:.1f}ms catchup={self.catch_up_drops}")
 
 
 class Receiver:
@@ -59,6 +62,7 @@ class Receiver:
         self.peer_timeout = peer_timeout
         self.jb = self._make_jb(frames_per_packet)
         self.sock: socket.socket | None = None
+        self.ping_sock: socket.socket | None = None  # RTT pings: own socket so PONGs never wait behind audio
         self.peer: tuple[str, int] | None = None
         self._peer_last = 0.0
         self._stop = threading.Event()
@@ -82,7 +86,7 @@ class Receiver:
         pkt_ms = fpp * 1000.0 / self.sample_rate
         target = max(1, round(self.jitter_ms / pkt_ms))
         self.fpp = fpp
-        return JitterBuffer(fpp, self.channels, target_packets=target)
+        return JitterBuffer(fpp, self.channels, target_packets=target, sample_rate=self.sample_rate)
 
     # ------------------------------------------------------------------
     def start(self) -> None:
@@ -101,6 +105,19 @@ class Receiver:
         s.settimeout(0.2)
         self.port = s.getsockname()[1]
         self.sock = s
+        try:
+            ps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if hasattr(socket, "SIO_UDP_CONNRESET"):
+                try:
+                    ps.ioctl(socket.SIO_UDP_CONNRESET, False)
+                except OSError:
+                    pass
+            ps.bind((self.bind, 0))
+            ps.settimeout(0.05)
+            self.ping_sock = ps
+        except OSError as e:
+            log.warning("ping socket unavailable, using main socket: %s", e)
+            self.ping_sock = None
         for fn, name in ((self._rx_loop, "cordmic-rx"), (self._ping_loop, "cordmic-ping")):
             t = threading.Thread(target=fn, name=name, daemon=True)
             t.start()
@@ -114,6 +131,8 @@ class Receiver:
             t.join(timeout=1)
         if self.sock:
             self.sock.close()
+        if self.ping_sock:
+            self.ping_sock.close()
 
     def _send(self, data: bytes, addr) -> None:
         try:
@@ -154,11 +173,7 @@ class Receiver:
                 self._send(P.encode(P.T_HELLO, pkt.seq, now_us()), addr)
                 self._set_peer(addr)
             elif pkt.type == P.T_PONG:
-                rtt = (arrival - pkt.ts_us) / 1000.0
-                if 0 <= rtt < 5000:
-                    with self._lock:
-                        self._rtt_ms = rtt if self._rtt_ms is None else 0.8 * self._rtt_ms + 0.2 * rtt
-                        self._rtt_min = rtt if self._rtt_min is None else min(self._rtt_min, rtt)
+                self._on_pong(pkt, arrival)
             elif pkt.type == P.T_PING:  # phone may ping us too
                 self._send(P.encode(P.T_PONG, pkt.seq, pkt.ts_us), addr)
             elif pkt.type == P.T_BYE:
@@ -166,6 +181,13 @@ class Receiver:
                 self.peer = None
                 if self.on_peer_change:
                     self.on_peer_change(None)
+
+    def _on_pong(self, pkt: P.Packet, arrival: int) -> None:
+        rtt = (arrival - pkt.ts_us) / 1000.0
+        if 0 <= rtt < 5000:
+            with self._lock:
+                self._rtt_ms = rtt if self._rtt_ms is None else 0.8 * self._rtt_ms + 0.2 * rtt
+                self._rtt_min = rtt if self._rtt_min is None else min(self._rtt_min, rtt)
 
     def _check_peer_timeout(self) -> None:
         if self.peer and time.monotonic() - self._peer_last > self.peer_timeout:
@@ -204,10 +226,43 @@ class Receiver:
         self.jb.push(pkt.seq, pkt.payload)
 
     def _ping_loop(self) -> None:
-        while not self._stop.wait(self.ping_interval):
-            if self.peer:
+        next_at = time.monotonic() + self.ping_interval
+        while not self._stop.is_set():
+            ps = self.ping_sock
+            if ps is None:
+                if self._stop.wait(self.ping_interval):
+                    break
+            else:
+                while not self._stop.is_set() and time.monotonic() < next_at:
+                    try:
+                        data, _ = ps.recvfrom(2048)
+                    except socket.timeout:
+                        continue
+                    except OSError:
+                        if self._stop.is_set():
+                            return
+                        continue
+                    arrival = now_us()
+                    try:
+                        pkt = P.decode(data)
+                    except P.ProtocolError:
+                        continue
+                    if pkt.type == P.T_PONG:
+                        self._on_pong(pkt, arrival)
+            next_at = time.monotonic() + self.ping_interval
+            if self._stop.is_set():
+                break
+            peer = self.peer
+            if peer:
                 self._ping_seq += 1
-                self._send(P.encode(P.T_PING, self._ping_seq, now_us()), self.peer)
+                ping = P.encode(P.T_PING, self._ping_seq, now_us())
+                if ps is not None:
+                    try:
+                        ps.sendto(ping, peer)
+                    except OSError as e:
+                        log.debug("ping send failed: %s", e)
+                else:
+                    self._send(ping, peer)
 
     # ------------------------------------------------------------------
     def snapshot(self) -> StatsSnapshot:
@@ -226,7 +281,8 @@ class Receiver:
                 underruns=js.underruns, overflow_drops=js.overflow_drops,
                 depth_ms=self.jb.depth_ms(self.sample_rate), rtt_ms=self._rtt_ms,
                 rtt_min_ms=self._rtt_min, arrival_jitter_ms=self._jitter_us / 1000.0,
-                pkt_ms=self.fpp * 1000.0 / self.sample_rate)
+                pkt_ms=self.fpp * 1000.0 / self.sample_rate,
+                buffer_avg_ms=self.jb.avg_depth_ms, catch_up_drops=js.catch_up_drops)
 
     def pull(self, nbytes: int) -> bytes:
         return self.jb.pull(nbytes)

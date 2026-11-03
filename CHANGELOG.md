@@ -2,6 +2,62 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-11-03
+
+Lower and steadier PC-side delay, and an honest breakdown of it. A user measured 25–45 ms PC-side delay with
+0.4.1, with the round trip rising from under 10 ms to under 20 ms whenever the delay was around 30 ms or more. This
+release fixes the causes found in the receiver code; the effect on real hardware has not been measured yet. No
+protocol change: 0.4.2 works with 0.4.x and 0.3.x on the other side.
+
+### Fixed
+- **Jitter-buffer backlog could float between the target and 3× the target.** A burst or a slightly fast phone clock
+  left extra packets queued until the hard limit (30 ms on Normal) trimmed them. The buffer now checks the smallest
+  amount left after each read over ~0.5 s windows and removes a standing excess by playing two consecutive packets
+  as one with a 5 ms crossfade. The hard limit remains as a backstop.
+- **The Windows output buffer was always full.** NAudio's WasapiOut tops up the whole endpoint buffer on every
+  event, so audio waited roughly a full buffer while the tooltip counted a fixed 10 ms. CordMic now has its own
+  event-driven WASAPI render loop on an MMCSS "Pro Audio" thread that keeps about one device period plus 3 ms
+  queued (*Low latency* mode).
+- **Repeated underruns after resuming.** Playback resumed with only the target queued while Windows reads 10 ms at
+  a time, so on Low the first read could run dry again. It now waits for enough audio to cover one whole read.
+- **RTT pings shared the audio socket and thread on the PC.** PONGs queued behind audio packets in the same receive
+  loop. Pings now go out from a separate UDP socket on a random port with its own thread; the phone already replies
+  to the sender, so no protocol change is needed. On Android the thread that answers pings now runs at audio
+  priority instead of the default priority.
+
+### Added
+- Tray menu **Output mode**: *Low latency* (default), *Stable* (whole Windows buffer kept full, the pre-0.4.2
+  behaviour) and *Exclusive* (WASAPI exclusive mode; falls back to Low latency with a notice if the device refuses).
+  The choice is saved in settings. If CordMic's renderer cannot open the device at all, the old NAudio path is used.
+- PC-side delay breakdown in the tooltip and the setup guide: network (½ round trip), jitter buffer (time-averaged
+  wait) and Windows output (measured average buffer fill). The log line adds `bufavg`, `bufmin` and `catchup`.
+- Garbage collector runs in sustained low-latency mode to avoid blocking collections on the audio threads.
+- Tests: catch-up, crossfade, resume sizing, averaged depth and the separate ping socket (C# and Python).
+
+### Changed
+- The PC-side delay number is defined differently (see above) and is not directly comparable with 0.4.1. It still
+  excludes phone capture, the Windows engine period, VB-CABLE's own buffering and the recording app.
+- Python reference receiver: same catch-up and separate ping socket; `__version__` is now 0.4.2 (was 0.3.1).
+
+### What to test
+- *Jitter buffer → Low* with *Output mode → Low latency*, then *Exclusive*; compare with a clap test (README,
+  Latency). Use *Stable* or *Safe* if audio crackles.
+- Set "CABLE Input" and "CABLE Output" to 48000 Hz in Windows Sound settings so Windows does not resample.
+
+### Catatan rilis (Bahasa Indonesia)
+- **Antrean jitter buffer bisa naik sampai 3× target.** Kini kelebihan yang menetap dibuang perlahan: dua paket
+  berurutan diputar sebagai satu dengan crossfade 5 ms. Batas keras tetap ada.
+- **Buffer output Windows selalu penuh.** CordMic kini punya loop render WASAPI sendiri (event, thread MMCSS
+  "Pro Audio") yang hanya mengantrekan sekitar satu periode perangkat + 3 ms (mode *Latensi rendah*).
+- **Underrun berulang setelah lanjut** diperbaiki: playback menunggu cukup audio untuk satu kali baca penuh.
+- **Ping RTT berbagi socket dan thread dengan audio di PC.** Ping kini memakai socket UDP terpisah dengan thread
+  sendiri; di Android thread yang membalas ping berjalan dengan prioritas audio. Tidak ada perubahan protokol.
+- Menu tray baru **Mode output**: *Latensi rendah* (default), *Stabil* (perilaku lama) dan *Eksklusif*.
+- Rincian jeda sisi PC di tooltip dan panduan penyiapan: jaringan, jitter buffer, output Windows. Angkanya
+  didefinisikan ulang sehingga tidak bisa dibandingkan langsung dengan 0.4.1; efek di perangkat nyata belum diukur.
+- Yang perlu dicoba: *Jitter buffer → Rendah* + *Mode output → Latensi rendah*, lalu *Eksklusif*; atur CABLE
+  Input/Output ke 48000 Hz. Pakai *Stabil* atau *Aman* bila suara putus-putus.
+
 ## [0.4.1] - 2026-11-03
 
 New CordMic logo across both apps, the installer and the docs. No change to audio, protocol, ports or settings;

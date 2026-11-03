@@ -18,6 +18,8 @@ internal static class Program
             return 0;
         }
 
+        // Avoid blocking gen-2 GCs pausing the audio threads (the receive and render loops are allocation-light).
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         ApplicationConfiguration.Initialize();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         using var show = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);

@@ -116,10 +116,15 @@ firewall, dan scheduled task. Setting dan log di `%APPDATA%` / `%LOCALAPPDATA%` 
 | Amber | Perlu perhatian: mic virtual belum ada, HP terhubung tapi tidak mengirim suara, atau internet PC lewat HP |
 | Merah | Error: port UDP 50005 dipakai aplikasi lain, atau perangkat audio gagal dibuka (dicoba ulang otomatis) |
 
-Arahkan mouse ke ikon untuk melihat perkiraan latensi sisi PC (½ RTT USB + jitter buffer + buffer WASAPI 10 ms),
-RTT, loss 10 detik terakhir, dan isi buffer. Klik kanan untuk menu:
+Arahkan mouse ke ikon untuk melihat perkiraan jeda sisi PC beserta rinciannya (jaringan = ½ RTT USB, rata-rata
+waktu tunggu di jitter buffer, dan buffer output Windows yang terukur), serta RTT dan loss 10 detik terakhir.
+Panduan penyiapan menampilkan rincian yang sama di bawah angkanya. Klik kanan untuk menu:
 
 - **Perangkat output** – *Otomatis* (kabel virtual terbaik) atau pilih manual (VB-CABLE A–D, VAC, VoiceMeeter).
+- **Mode output** – *Latensi rendah* (default: mode shared, kira-kira satu periode audio Windows yang diantrekan),
+  *Stabil* (buffer Windows selalu penuh seperti sebelum 0.4.2; pakai kalau suara putus-putus saat PC sibuk) atau
+  *Eksklusif* (mode eksklusif WASAPI, jeda terendah; CordMic memakai "CABLE Input" sendiri dan kembali ke Latensi
+  rendah bila perangkat menolak).
 - **Jitter buffer** – Rendah 5 ms / Normal 10 ms (default) / Aman 20 ms (pakai Aman kalau suara putus-putus).
 - **Mode mic** – penjelasan mode capture (dipilih di aplikasi HP).
 - **Panduan penyiapan**, **Perbaiki prioritas jaringan HP** (muncul hanya bila internet lewat HP; minta UAC),
@@ -174,7 +179,7 @@ ditekan dari layar aplikasi dan service tidak otomatis jalan setelah reboot.
 | "HP ditemukan" tapi tidak streaming | Buka CordMic di HP dan ketuk *Mulai*. Pastikan aturan firewall *CordMic (UDP 50005)* ada (jalankan ulang installer bila hilang). |
 | Merah, "Port sibuk" | Receiver lain (misalnya `cordmic_receiver` Python) masih jalan. Tutup; CordMic mencoba lagi tiap 5 detik. |
 | Amber, "Mic virtual belum ada" | Pasang VB-CABLE (langkah 1 panduan); restart PC bila belum muncul. |
-| Suara putus-putus / robot | *Jitter buffer → Aman (20 ms)*. Lihat `lost` / `underrun` di log. Hindari hub USB; pakai port langsung di PC. |
+| Suara putus-putus / robot | *Jitter buffer → Aman (20 ms)*; kalau masih, *Mode output → Stabil*. Lihat `lost` / `underrun` di log. Hindari hub USB; pakai port langsung di PC. |
 | Ping game naik setelah colok HP | Menu *Perbaiki prioritas jaringan HP* (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai admin). Alternatif: matikan data seluler di HP. |
 | Discord tidak mendengar apa-apa | Input Device harus **CABLE Output** (bukan CABLE Input). Bar level di panduan langkah 3 harus bergerak saat bicara. |
 | Suara terlalu diproses / terasa delay | Pilih *Voice Recognition* di HP. Kalau memakai *Voice Communication*, matikan noise suppression dan echo cancellation di Discord supaya tidak diproses dua kali. |
@@ -242,8 +247,14 @@ Get-NetRoute 0.0.0.0/0                                          # route default 
 
   Payload AUDIO berisi PCM mentah: 240 frame × 2 byte = 480 byte per 5 ms (~100 kbit/s).
 - **Jitter buffer.** Menyusun ulang paket berdasarkan nomor urut; playback mulai setelah target terisi (Rendah 5 /
-  Normal 10 / Aman 20 ms). Paket hilang diganti hening, paket terlambat dibuang, dan bila buffer melebihi batas,
-  paket terlama dibuang supaya latensi tidak terus naik.
+  Normal 10 / Aman 20 ms). Paket hilang diganti hening dan paket terlambat dibuang. Setiap ~0,5 dtk buffer
+  memeriksa isi terkecil tepat setelah dibaca; bila tetap di atas target (lonjakan paket, atau jam HP sedikit lebih
+  cepat), dua paket berurutan diputar sebagai satu dengan crossfade 5 ms sampai kelebihannya habis. Batas keras
+  tetap membuang paket terlama bila buffer melebihi maksimum.
+- **Output.** Loop render WASAPI berbasis event di thread MMCSS "Pro Audio". Pada mode *Latensi rendah* yang
+  diantrekan hanya sekitar satu periode perangkat Windows ditambah 3 ms, bukan seluruh buffer endpoint.
+- **RTT.** PC mengirim PING dari socket UDP kedua di port acak dengan thread sendiri; HP membalas ke pengirim,
+  sehingga PONG tidak pernah mengantre di belakang paket audio.
 
 ### Struktur repositori
 
@@ -272,6 +283,18 @@ cordmic/
 Pipeline ini **dirancang untuk sekitar 30–45 ms end-to-end**. Ini anggaran rancangan, bukan hasil pengukuran:
 capture AAudio ~5–10 ms + paket 5 ms + link USB 1–2 ms + jitter buffer 10 ms + WASAPI/VB-CABLE ~10–20 ms.
 Latensi sebenarnya bergantung pada HP, mode mic, dan sistem audio PC.
+
+**Jeda sisi PC yang ditampilkan aplikasi.** Jaringan (½ RTT) + jitter buffer (rata-rata terhadap waktu) + output
+Windows (rata-rata isi buffer WASAPI CordMic yang terukur). Tidak termasuk capture di HP, periode engine audio
+Windows, buffer internal VB-CABLE, dan aplikasi perekam. Sebelum 0.4.2 bagian output memakai angka tetap 10 ms
+padahal NAudio sebenarnya menjaga buffer yang lebih besar tetap penuh, dan bagian buffer hanya satu pembacaan
+sesaat; jadi angka 0.4.1 dan 0.4.2 tidak bisa dibandingkan langsung.
+
+Seorang pengguna mengukur jeda sisi PC 25–45 ms dengan 0.4.1. Versi 0.4.2 menyasar penyebab yang ditemukan di kode
+(antrean yang bisa naik sampai 3× target jitter, buffer WASAPI yang selalu penuh, dan underrun berulang setelah
+lanjut); efeknya di perangkat nyata belum diukur. Untuk jeda terendah: *Jitter buffer → Rendah*, *Mode output →
+Latensi rendah* (lalu coba *Eksklusif*), dan atur "CABLE Input" serta "CABLE Output" ke 48000 Hz di pengaturan
+Sound Windows agar tidak terjadi resampling.
 
 Cara mengukur di perangkat Anda: di OBS tambahkan dua *Audio Input Capture*, (a) "CABLE Output" dan (b) mic fisik
 lain (headset/webcam). Rekam, tepuk tangan di dekat **kedua** mic, buka rekaman di Audacity, lalu ukur jarak antar
@@ -303,8 +326,8 @@ release lokal ditandatangani dengan debug key.
 ### Test
 | Suite | Perintah | Cakupan |
 |---|---|---|
-| Python (17 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, loopback UDP (bersih dan lossy) |
-| .NET (45 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks |
+| Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, loopback UDP (bersih dan lossy) |
+| .NET (52 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer dan catch-up, socket ping terpisah, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks |
 | Kotlin (17 test) | `cd android && ./gradlew testDebugUnitTest` | kompatibilitas byte header dengan Python, kesamaan teks Inggris/Indonesia, helper level meter dan IP, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 ## Receiver Python (alat developer)

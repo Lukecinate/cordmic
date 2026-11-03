@@ -115,10 +115,14 @@ scheduled task. Settings and logs under `%APPDATA%` / `%LOCALAPPDATA%` are kept.
 | Amber | Needs attention: no virtual mic installed, phone connected but not sending audio, or PC internet is routed through the phone |
 | Red | Error: UDP port 50005 is in use by another app, or the audio device failed to open (retried automatically) |
 
-Hover the icon to see the estimated PC-side latency (½ USB round trip + jitter buffer + 10 ms WASAPI buffer),
-round-trip time, packet loss over the last 10 seconds and buffer fill. Right-click for the menu:
+Hover the icon to see the estimated PC-side delay and where it comes from (network = ½ USB round trip, the
+averaged jitter-buffer wait, and the measured Windows output buffer), plus round-trip time and packet loss over the
+last 10 seconds. The setup guide shows the same breakdown under its numbers. Right-click for the menu:
 
 - **Output device** – *Automatic* (best virtual cable found) or a specific one (VB-CABLE A–D, VAC, VoiceMeeter).
+- **Output mode** – *Low latency* (default: shared mode, about one Windows audio period queued), *Stable* (keeps
+  the whole Windows buffer full, as before 0.4.2; use it if audio crackles on a busy PC) or *Exclusive* (WASAPI
+  exclusive mode, lowest delay; CordMic then owns "CABLE Input" and falls back to Low latency if the device refuses).
 - **Jitter buffer** – Low 5 ms / Normal 10 ms (default) / Safe 20 ms (use Safe if audio crackles).
 - **Mic mode** – explains the capture modes (selected in the phone app).
 - **Setup guide**, **Fix phone network priority** (shown only when internet goes through the phone; asks for UAC),
@@ -173,7 +177,7 @@ tapped from the app screen and the service does not auto-start after a reboot.
 | "Phone found" but not streaming | Open CordMic on the phone and tap *Start*. Check that the firewall rule *CordMic (UDP 50005)* exists (re-run the installer if it is missing). |
 | Red, "Port busy" | Another receiver (e.g. the Python `cordmic_receiver`) is still running. Close it; CordMic retries every 5 seconds. |
 | Amber, "No virtual mic yet" | Install VB-CABLE (setup guide step 1); restart the PC if it does not appear. |
-| Choppy or robotic audio | *Jitter buffer → Safe (20 ms)*. Check `lost` / `underrun` in the log. Avoid USB hubs; use a port on the PC directly. |
+| Choppy or robotic audio | *Jitter buffer → Safe (20 ms)*; if it persists, *Output mode → Stable*. Check `lost` / `underrun` in the log. Avoid USB hubs; use a port on the PC directly. |
 | Game ping rises after plugging in the phone | *Fix phone network priority* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator). Alternatively, turn off mobile data on the phone. |
 | Discord hears nothing | The input device must be **CABLE Output** (not CABLE Input). The level bar in setup guide step 3 should move while you speak. |
 | Audio sounds over-processed or delayed | Use *Voice Recognition* on the phone. If you use *Voice Communication*, turn off Discord's noise suppression and echo cancellation to avoid double processing. |
@@ -241,8 +245,14 @@ Get-NetRoute 0.0.0.0/0                                          # the default ro
 
   An AUDIO payload is raw PCM: 240 frames × 2 bytes = 480 bytes per 5 ms (~100 kbit/s).
 - **Jitter buffer.** Reorders packets by sequence number; playback starts once the target is filled (Low 5 /
-  Normal 10 / Safe 20 ms). Missing packets are replaced with silence, late packets are discarded, and if the buffer
-  exceeds its maximum the oldest packets are dropped so latency cannot creep up.
+  Normal 10 / Safe 20 ms). Missing packets are replaced with silence and late packets are discarded. Every ~0.5 s
+  the buffer checks the smallest amount it held right after a read; if that stays above the target (a burst, or
+  the phone's clock running slightly fast), it plays two consecutive packets as one with a 5 ms crossfade until the
+  excess is gone. A hard limit still drops the oldest packets if the buffer ever exceeds its maximum.
+- **Output.** An event-driven WASAPI render loop on an MMCSS "Pro Audio" thread. In *Low latency* mode it keeps
+  about one Windows device period plus 3 ms queued instead of the whole endpoint buffer.
+- **RTT.** The PC sends PINGs from a second UDP socket on a random port with its own thread; the phone answers to
+  the sender, so PONGs never wait behind audio packets.
 
 ### Repository layout
 
@@ -271,6 +281,18 @@ cordmic/
 The pipeline is **designed for roughly 30–45 ms end-to-end**. This is a design budget, not a measurement:
 AAudio capture ~5–10 ms + 5 ms packet + USB link 1–2 ms + 10 ms jitter buffer + WASAPI/VB-CABLE ~10–20 ms.
 Actual latency depends on the phone, the mic mode and the PC audio stack.
+
+**PC-side delay shown by the app.** Network (½ round trip) + jitter buffer (time-averaged) + Windows output (the
+measured average fill of CordMic's WASAPI buffer). It leaves out phone capture, the Windows audio engine period,
+VB-CABLE's own buffering and the recording app. Before 0.4.2 the output part was the fixed 10 ms setting while
+NAudio actually kept a larger buffer full, and the buffer part was a single instant reading; numbers from 0.4.1
+and 0.4.2 are therefore not directly comparable.
+
+A user measured 25–45 ms PC-side delay with 0.4.1. 0.4.2 targets the causes found in the code (a backlog that
+could float up to 3× the jitter target, the full WASAPI buffer, and re-underruns after resuming); its effect on
+real hardware has not been measured yet. For the lowest delay: *Jitter buffer → Low*, *Output mode → Low
+latency* (then try *Exclusive*), and set both "CABLE Input" and "CABLE Output" to 48000 Hz in Windows Sound
+settings so Windows does not resample.
 
 To measure it on your own setup: in OBS add two *Audio Input Capture* sources, (a) "CABLE Output" and (b) another
 physical mic (headset/webcam). Record, clap close to **both** mics, open the recording in Audacity and measure the
@@ -303,8 +325,8 @@ Release signing is read from a properties file outside the repository
 ### Tests
 | Suite | Command | Covers |
 |---|---|---|
-| Python (17 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (45 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
+| Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
+| .NET (52 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer and catch-up, separate ping socket, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
 | Kotlin (17 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, English/Indonesian string parity, level meter and IP helpers, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 ## Python receiver (developer tool)

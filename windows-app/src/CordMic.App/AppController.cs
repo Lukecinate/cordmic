@@ -8,6 +8,14 @@ internal enum Health { Waiting, Ok, Warn, Error }
 
 internal sealed record AppStatus(Health Health, string Title, string Detail, string Tooltip);
 
+/// <summary>PC-side delay estimate split by stage (ms). Network = RTT/2 (USB link + both UDP stacks);
+/// Buffer = time-averaged jitter-buffer wait; Output = average time our samples sit in the WASAPI endpoint
+/// buffer. Not included: phone capture, the Windows engine period, VB-CABLE's own buffer, the recording app.</summary>
+internal sealed record LatencyParts(double NetworkMs, double BufferMs, double OutputMs)
+{
+    public double TotalMs => NetworkMs + BufferMs + OutputMs;
+}
+
 /// <summary>
 /// Tray-resident controller. Owns the UDP receiver (bound once on 0.0.0.0 so adapters can come and go),
 /// the WASAPI output, the tether-adapter watcher and the tray menu. Everything mutable runs on the UI thread;
@@ -36,7 +44,7 @@ internal sealed class AppController : ApplicationContext
     private Health? _shownHealth;
     private WizardForm? _wizard;
 
-    private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miOutput = null!, _miJitter = null!,
+    private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miOutput = null!, _miJitter = null!, _miOutMode = null!,
                               _miStartup = null!, _miFixRoute = null!;
 
     public AppStatus Status { get; private set; } = new(Health.Waiting, L.T("status.starting"), "", "CordMic");
@@ -45,6 +53,7 @@ internal sealed class AppController : ApplicationContext
     public string? CableName { get; private set; }
     public string? ActiveOutput => _audio.ActiveName;
     public double RecentLossPct { get; private set; }
+    private LatencyParts? _parts;
 
     public AppController(bool openWizard)
     {
@@ -141,8 +150,10 @@ internal sealed class AppController : ApplicationContext
         if (DateTime.UtcNow < _nextAudioTry) return;
         try
         {
-            _audio.Start(want.Id, _rx, _settings.OutputChannels, _settings.OutputLatencyMs);
-            Log($"output -> {want.Name} (wasapi shared, event, {_settings.OutputLatencyMs} ms)");
+            _audio.Start(want.Id, _rx, _settings.OutputChannels, _settings.OutputLatencyMs, _settings.OutputMode, Log);
+            Log($"output -> {want.Name} ({_audio.Describe})");
+            if (_settings.OutputMode == OutputMode.Exclusive && _audio.ActiveMode != OutputMode.Exclusive)
+                _tray.ShowBalloonTip(5000, "CordMic", L.T("outmode.fellBack", want.Name), ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
@@ -192,6 +203,7 @@ internal sealed class AppController : ApplicationContext
         var first = _lossWin.Peek();
         long de = s.Expected - first.exp, dl = s.Lost - first.lost;
         RecentLossPct = de > 0 && dl >= 0 ? 100.0 * dl / de : 0;
+        _parts = s.Peer is null ? null : new LatencyParts((s.RttMs ?? 1) / 2, s.BufferMs, _audio.OutputMs());
         if (s.Peer is not null && now >= _nextStatsLog)
         {
             _nextStatsLog = now.AddSeconds(10);
@@ -199,12 +211,13 @@ internal sealed class AppController : ApplicationContext
         }
     }
 
-    /// <summary>Estimated PC-side delay: half RTT (USB) + jitter buffer + WASAPI buffer. Excludes phone capture and the app's own input buffer.</summary>
-    public double? EstLatencyMs()
-    {
-        if (Stats is not { } s || s.Peer is null) return null;
-        return (s.RttMs ?? 1) / 2 + s.DepthMs + _audio.LatencyMs;
-    }
+    /// <summary>Estimated PC-side delay split by stage; null while no phone is connected. Updated every 500 ms.</summary>
+    public LatencyParts? LatencyBreakdown() => Stats?.Peer is null ? null : _parts;
+
+    /// <summary>Estimated PC-side delay: half RTT (USB) + average jitter-buffer wait + measured WASAPI fill.
+    /// Excludes phone capture, the Windows engine period, the virtual cable and the recording app.
+    /// Before 0.4.2 the output part was the nominal 10 ms setting, so older numbers are not directly comparable.</summary>
+    public double? EstLatencyMs() => LatencyBreakdown()?.TotalMs;
 
     private void UpdateStatus()
     {
@@ -236,7 +249,12 @@ internal sealed class AppController : ApplicationContext
             bool viaPhone = a?.CarriesInternet == true;
             var latS = lat.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
             var lossS = RecentLossPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-            var tip = L.T("status.connected.tip", latS, rtt, lossS, s.DepthMs.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var parts = LatencyBreakdown();
+            var tip = L.T("status.connected.tip", latS, rtt, lossS,
+                (parts?.BufferMs ?? s.BufferMs).ToString("F0", inv),
+                (parts?.NetworkMs ?? 0).ToString("F0", inv),
+                (parts?.OutputMs ?? 0).ToString("F0", inv));
             if (silent) st = new(Health.Warn, L.T("status.silent.title"), L.T("status.silent.detail"), L.T("status.silent.tip"));
             else if (viaPhone) st = new(Health.Warn, L.T("status.viaPhone.title"), L.T("status.viaPhone.detail"), tip + L.T("status.viaPhone.tipSuffix"));
             else st = new(Health.Ok, L.T("status.connected.title"), L.T("status.connected.detail", latS, rtt, lossS), tip);
@@ -272,6 +290,17 @@ internal sealed class AppController : ApplicationContext
         {
             foreach (ToolStripMenuItem it in _miJitter.DropDownItems) it.Checked = (JitterPreset)it.Tag! == _settings.Jitter;
         };
+        _miOutMode = new ToolStripMenuItem(L.T("menu.outmode"));
+        foreach (var om in OutputModes.All)
+        {
+            var it = new ToolStripMenuItem(OutputModes.Label(om)) { Tag = om };
+            it.Click += (_, _) => SetOutputMode((OutputMode)it.Tag!);
+            _miOutMode.DropDownItems.Add(it);
+        }
+        _miOutMode.DropDownOpening += (_, _) =>
+        {
+            foreach (ToolStripMenuItem it in _miOutMode.DropDownItems) it.Checked = (OutputMode)it.Tag! == _settings.OutputMode;
+        };
         var miMode = new ToolStripMenuItem(L.T("menu.micMode"), null, (_, _) => ShowMicModeInfo());
         var miWizard = new ToolStripMenuItem(L.T("menu.wizard"), null, (_, _) => ShowWizard());
         _miFixRoute = new ToolStripMenuItem(L.T("menu.fixRoute"), null, (_, _) => FixRoute()) { Visible = false };
@@ -293,7 +322,7 @@ internal sealed class AppController : ApplicationContext
         m.Items.AddRange(new ToolStripItem[]
         {
             _miHeader, _miDetail, new ToolStripSeparator(),
-            _miOutput, _miJitter, miMode, new ToolStripSeparator(),
+            _miOutput, _miOutMode, _miJitter, miMode, new ToolStripSeparator(),
             miWizard, _miFixRoute, miLog, _miStartup, miLang, new ToolStripSeparator(), miQuit,
         });
         return m;
@@ -361,6 +390,18 @@ internal sealed class AppController : ApplicationContext
         Save();
         _rx?.SetJitterMs(Presets.Ms(p));
         Log($"jitter preset -> {p} ({Presets.Ms(p)} ms)");
+    }
+
+    private void SetOutputMode(OutputMode m)
+    {
+        if (_settings.OutputMode == m) return;
+        _settings.OutputMode = m;
+        Save();
+        Log($"output mode -> {m}");
+        _audio.Stop();
+        _nextAudioTry = DateTime.MinValue;
+        EnsureOutput();
+        UpdateStatus();
     }
 
     private void ShowMicModeInfo() => MessageBox.Show(

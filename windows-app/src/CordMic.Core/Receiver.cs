@@ -7,17 +7,26 @@ namespace CordMic.Core;
 public sealed record StatsSnapshot(
     string? Peer, long Received, long Expected, long Lost, double LossPct, long Reordered, long Late,
     long Concealed, long Underruns, long OverflowDrops, double DepthMs, double? RttMs, double? RttMinMs,
-    double ArrivalJitterMs, double PacketMs, double LevelDbfs, double SecondsSinceAudio)
+    double ArrivalJitterMs, double PacketMs, double LevelDbfs, double SecondsSinceAudio,
+    double BufferAvgMs = double.NaN, double BufferMinMs = double.NaN, long CatchUpDrops = 0)
 {
+    /// <summary>Jitter-buffer delay to show: the time-averaged depth once a window completed, else the instantaneous depth.</summary>
+    public double BufferMs => double.IsNaN(BufferAvgMs) ? DepthMs : BufferAvgMs;
+
     public string Line() =>
         $"peer={Peer ?? "-"} rx={Received} lost={Lost} ({LossPct:F2}%) reord={Reordered} late={Late} " +
         $"plc={Concealed} underrun={Underruns} ovf={OverflowDrops} buf={DepthMs:F1}ms " +
         $"jitter={ArrivalJitterMs:F2}ms rtt={(RttMs is { } r ? r.ToString("F2") : "-")}ms " +
-        $"(min {(RttMinMs is { } m ? m.ToString("F2") : "-")}) pkt={PacketMs:F1}ms level={LevelDbfs:F0}dBFS";
+        $"(min {(RttMinMs is { } m ? m.ToString("F2") : "-")}) pkt={PacketMs:F1}ms level={LevelDbfs:F0}dBFS " +
+        $"bufavg={(double.IsNaN(BufferAvgMs) ? "-" : BufferAvgMs.ToString("F1"))}ms " +
+        $"bufmin={(double.IsNaN(BufferMinMs) ? "-" : BufferMinMs.ToString("F1"))}ms catchup={CatchUpDrops}";
 }
 
 /// <summary>
 /// UDP receiver: answers DISCOVER with HELLO, pings the phone for RTT, feeds AUDIO into the jitter buffer.
+/// Since 0.4.2 RTT pings go out from a second socket on an ephemeral port with its own thread: the phone
+/// answers to the sender's address, so PONGs never queue behind audio packets on the main socket and the
+/// RTT shows the link, not the PC's audio receive path.
 /// Port of windows-receiver/cordmic_receiver/server.py plus proactive HELLO probes to the phone
 /// (the USB-tethering gateway), so discovery works even if Windows drops inbound broadcasts.
 /// </summary>
@@ -28,7 +37,7 @@ public sealed class Receiver : IDisposable
     private readonly int _channels;
     private readonly double _pingInterval, _peerTimeout;
     private readonly IPAddress _bind;
-    private Socket? _sock;
+    private Socket? _sock, _pingSock;
     private Thread? _rx, _ping;
     private volatile bool _stop;
     private volatile JitterBuffer _jb;
@@ -77,7 +86,7 @@ public sealed class Receiver : IDisposable
         double pktMs = fpp * 1000.0 / _sampleRate;
         int target = Math.Max(1, (int)Math.Round(_jitterMs / pktMs, MidpointRounding.ToEven));
         FramesPerPacket = fpp;
-        return new JitterBuffer(fpp, _channels, target);
+        return new JitterBuffer(fpp, _channels, target, sampleRate: _sampleRate);
     }
 
     public double JitterMs => _jitterMs;
@@ -107,9 +116,19 @@ public sealed class Receiver : IDisposable
         s.ReceiveTimeout = 200;
         Port = ((IPEndPoint)s.LocalEndPoint!).Port;
         _sock = s;
+        try
+        {
+            var ps = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            if (OperatingSystem.IsWindows())
+                try { ps.IOControl(unchecked((int)0x9800000C), new byte[4], null); } catch (Exception) { }
+            ps.Bind(new IPEndPoint(_bind, 0));
+            ps.ReceiveTimeout = 50;
+            _pingSock = ps;
+        }
+        catch (Exception e) { _pingSock = null; Log?.Invoke($"ping socket unavailable, using main socket: {e.Message}"); }
         _stop = false;
         _rx = new Thread(RxLoop) { Name = "cordmic-rx", IsBackground = true, Priority = ThreadPriority.Highest };
-        _ping = new Thread(PingLoop) { Name = "cordmic-ping", IsBackground = true };
+        _ping = new Thread(PingLoop) { Name = "cordmic-ping", IsBackground = true, Priority = ThreadPriority.AboveNormal };
         _rx.Start(); _ping.Start();
         Log?.Invoke($"listening on udp {_bind}:{Port} (jitter target {_jitterMs:F1} ms = {_jb.Target} pkt)");
     }
@@ -119,6 +138,7 @@ public sealed class Receiver : IDisposable
         _stop = true;
         _rx?.Join(1000); _ping?.Join(1000);
         _sock?.Close(); _sock = null;
+        _pingSock?.Close(); _pingSock = null;
     }
 
     public void Dispose() => Stop();
@@ -180,13 +200,7 @@ public sealed class Receiver : IDisposable
                     SetPeer(new IPEndPoint(addr.Address, addr.Port));
                     break;
                 case Protocol.TPong:
-                    double rtt = ((long)arrival - (long)h.TsUs) / 1000.0;
-                    if (rtt >= 0 && rtt < 5000)
-                        lock (_lock)
-                        {
-                            _rttMs = _rttMs is { } r ? 0.8 * r + 0.2 * rtt : rtt;
-                            _rttMin = _rttMin is { } m ? Math.Min(m, rtt) : rtt;
-                        }
+                    OnPong(h, arrival);
                     break;
                 case Protocol.TPing:
                     Send(Protocol.Encode(Protocol.TPong, h.Seq, h.TsUs), addr);
@@ -197,6 +211,17 @@ public sealed class Receiver : IDisposable
             }
             CheckPeerTimeout();
         }
+    }
+
+    private void OnPong(in PacketHeader h, ulong arrival)
+    {
+        double rtt = ((long)arrival - (long)h.TsUs) / 1000.0;
+        if (rtt >= 0 && rtt < 5000)
+            lock (_lock)
+            {
+                _rttMs = _rttMs is { } r ? 0.8 * r + 0.2 * rtt : rtt;
+                _rttMin = _rttMin is { } m ? Math.Min(m, rtt) : rtt;
+            }
     }
 
     private void CheckPeerTimeout()
@@ -250,15 +275,41 @@ public sealed class Receiver : IDisposable
     {
         var probeEvery = TimeSpan.FromSeconds(1);
         var lastProbe = DateTime.MinValue;
+        var buf = new byte[256];
+        EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+        long interval = (long)(_pingInterval * Stopwatch.Frequency);
+        long nextAt = Stopwatch.GetTimestamp() + interval;
         while (!_stop)
         {
-            Thread.Sleep(TimeSpan.FromSeconds(_pingInterval));
+            var ps = _pingSock;
+            if (ps is null) { Thread.Sleep(TimeSpan.FromSeconds(_pingInterval)); }
+            else
+            {
+                // Wait for PONGs on the dedicated socket until the next ping is due.
+                while (!_stop && Stopwatch.GetTimestamp() < nextAt)
+                {
+                    try
+                    {
+                        int n = ps.ReceiveFrom(buf, ref from);
+                        ulong arrival = NowUs();
+                        if (Protocol.TryDecode(buf.AsSpan(0, n), out var h, out _) && h.Type == Protocol.TPong) OnPong(h, arrival);
+                    }
+                    catch (SocketException) { }
+                    catch (ObjectDisposedException) { return; }
+                }
+            }
+            nextAt = Stopwatch.GetTimestamp() + interval;
             if (_stop) break;
             var peer = Peer;
             if (peer != null)
             {
                 _pingSeq++;
-                Send(Protocol.Encode(Protocol.TPing, _pingSeq, NowUs()), peer);
+                var ping = Protocol.Encode(Protocol.TPing, _pingSeq, NowUs());
+                if (_pingSock is { } p2)
+                {
+                    try { p2.SendTo(ping, peer); } catch (Exception e) { Log?.Invoke($"ping send failed: {e.Message}"); }
+                }
+                else Send(ping, peer);
             }
             else if (DateTime.UtcNow - lastProbe >= probeEvery)
             {
@@ -281,7 +332,8 @@ public sealed class Receiver : IDisposable
                 peer?.ToString(), _received, expected, lost, expected > 0 ? 100.0 * lost / expected : 0,
                 _reordered, js.Late, js.Concealed, js.Underruns, js.OverflowDrops, jb.DepthMs(_sampleRate),
                 _rttMs, _rttMin, _jitterUs / 1000.0, FramesPerPacket * 1000.0 / _sampleRate, _levelDb,
-                _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(Stopwatch.GetTimestamp() - _lastAudioTicks));
+                _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(Stopwatch.GetTimestamp() - _lastAudioTicks),
+                jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops);
         }
     }
 

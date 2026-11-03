@@ -15,8 +15,11 @@ public sealed class AppSettings
     public bool FirstRunDone { get; set; }
     /// <summary>Output channels sent to WASAPI (VB-Cable default is stereo).</summary>
     public int OutputChannels { get; set; } = 2;
-    /// <summary>WASAPI shared-mode buffer request in ms.</summary>
+    /// <summary>WASAPI buffer request in ms, used only by the NAudio fallback path.</summary>
     public int OutputLatencyMs { get; set; } = 10;
+    /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public OutputMode OutputMode { get; set; } = OutputMode.LowLatency;
     /// <summary>UI language: "auto" (follow Windows), "en" or "id".</summary>
     public string Language { get; set; } = L.Auto;
 

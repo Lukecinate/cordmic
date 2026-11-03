@@ -14,8 +14,8 @@ android {
         applicationId = "dev.cordmic"
         minSdk = 29
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.4.1"
+        versionCode = 7
+        versionName = "0.4.2"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
     }
