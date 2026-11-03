@@ -8,14 +8,14 @@
     <color name="cm_on_surface_variant">#FF555B65</color>
     <color name="cm_outline">#FFC9CDD3</color>
     <color name="cm_divider">#FFE3E5E9</color>
-    <color name="cm_accent">#FF0B6B5D</color>
+    <color name="cm_accent">#FF007A7F</color>
     <color name="cm_on_accent">#FFFFFFFF</color>
-    <color name="cm_accent_soft">#FFDDEFEB</color>
+    <color name="cm_accent_soft">#FFD9EEEF</color>
     <color name="cm_amber">#FF8A5300</color>
     <color name="cm_amber_soft">#FFFBEFD9</color>
     <color name="cm_red">#FFB3261E</color>
     <color name="cm_red_soft">#FFFBE7E5</color>
     <color name="cm_meter_amber">#FFD99A1E</color>
-    <!-- Launcher tile, same teal in light and dark (not overridden in values-night). -->
-    <color name="cm_launcher_background">#FF0B6B5D</color>
+    <!-- Launcher tile = brand tile colour of the CordMic logo; same in light and dark (not overridden in values-night). -->
+    <color name="cm_launcher_background">#FF007A7F</color>
 </resources>

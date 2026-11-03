@@ -12,9 +12,21 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:minHeight="56dp"
-        app:title="@string/app_name"
-        app:titleTextAppearance="@style/TextAppearance.CordMic.AppBar" />
+        android:minHeight="56dp">
+
+        <!-- Brand row: CordMic logo tile (28 dp ic_brand) + wordmark -->
+        <TextView
+            android:id="@+id/brandName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:accessibilityHeading="true"
+            android:drawablePadding="12dp"
+            android:gravity="center_vertical"
+            android:text="@string/app_name"
+            android:textAppearance="@style/TextAppearance.CordMic.AppBar"
+            app:drawableStartCompat="@drawable/ic_brand" />
+    </com.google.android.material.appbar.MaterialToolbar>
 
     <androidx.core.widget.NestedScrollView
         android:id="@+id/scroll"

@@ -7,9 +7,9 @@
     <color name="cm_on_surface_variant">#FFA9AFB8</color>
     <color name="cm_outline">#FF444A52</color>
     <color name="cm_divider">#FF2C3036</color>
-    <color name="cm_accent">#FF5FC9B5</color>
-    <color name="cm_on_accent">#FF00201B</color>
-    <color name="cm_accent_soft">#FF173A34</color>
+    <color name="cm_accent">#FF5EC6CA</color>
+    <color name="cm_on_accent">#FF002022</color>
+    <color name="cm_accent_soft">#FF143A3C</color>
     <color name="cm_amber">#FFF0BC5E</color>
     <color name="cm_amber_soft">#FF3A2D14</color>
     <color name="cm_red">#FFF2A097</color>
