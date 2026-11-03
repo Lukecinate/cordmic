@@ -10,8 +10,44 @@ interface CaptureEngine {
     val name: String
     fun open(): Boolean
     fun read(dst: ByteArray, off: Int, frames: Int): Int
-    fun info(): String
+    fun info(): String = stats().toString()
+    /** Values reported by the audio stack. Fields the engine does not report are null. Call from the capture thread. */
+    fun stats(): EngineStats
     fun close()
+}
+
+/** Diagnostics of an open capture stream, as reported by AAudio / AudioRecord (never estimated). */
+data class EngineStats(
+    val engine: String,
+    val sampleRate: Int,
+    val framesPerBurst: Int? = null,
+    val lowLatency: Boolean? = null,
+    val exclusive: Boolean? = null,
+    val bufferFrames: Int? = null,
+    val xruns: Int? = null,
+) {
+    override fun toString() = buildString {
+        append("$engine ${sampleRate}Hz")
+        framesPerBurst?.let { append(" burst=$it") }
+        lowLatency?.let { append(if (it) " LOW_LATENCY" else " NORMAL") }
+        exclusive?.let { append(if (it) " EXCLUSIVE" else " SHARED") }
+        bufferFrames?.let { append(" buf=$it") }
+        xruns?.let { append(" xrun=$it") }
+    }
+}
+
+/** Peak of little-endian PCM16 samples in [off, off + frames*2), 0..32768. */
+fun pcm16Peak(buf: ByteArray, off: Int, frames: Int): Int {
+    var peak = 0
+    var i = off
+    val end = off + frames * 2
+    while (i + 1 < end) {
+        val v = (buf[i].toInt() and 0xFF) or (buf[i + 1].toInt() shl 8)
+        val a = if (v < 0) -v else v
+        if (a > peak) peak = a
+        i += 2
+    }
+    return peak
 }
 
 /** AAudio (native) low-latency input: PERFORMANCE_MODE_LOW_LATENCY, exclusive if possible. */
@@ -37,17 +73,18 @@ class AAudioCapture(private val rate: Int, private val preset: Int) : CaptureEng
         return got
     }
 
-    override fun info(): String {
-        val i = nativeInfo()
-        val perf = if (i[2] == 12) "LOW_LATENCY" else "perf=${i[2]}"
-        val share = if (i[3] == 0) "EXCLUSIVE" else "SHARED"
-        return "AAudio ${i[0]}Hz burst=${i[1]} $perf $share cap=${i[4]} xrun=${i[5]}"
+    override fun stats(): EngineStats {
+        val i = nativeInfo() // [rate, burst, perfMode, sharingMode, capacity, xruns]
+        return EngineStats(name, i[0], framesPerBurst = i[1], lowLatency = i[2] == PERF_LOW_LATENCY,
+            exclusive = i[3] == SHARING_EXCLUSIVE, bufferFrames = i[4], xruns = i[5])
     }
 
     override fun close() = nativeClose()
 
     companion object {
         private const val TAG = "CordMic"
+        private const val PERF_LOW_LATENCY = 12 // AAUDIO_PERFORMANCE_MODE_LOW_LATENCY
+        private const val SHARING_EXCLUSIVE = 0 // AAUDIO_SHARING_MODE_EXCLUSIVE
         init { System.loadLibrary("cordmic_native") }
         @JvmStatic external fun nativeOpen(rate: Int, ch: Int, preset: Int, exclusive: Boolean): Int
         @JvmStatic external fun nativeRead(dst: ByteArray, off: Int, frames: Int, timeoutNs: Long): Int
@@ -78,7 +115,7 @@ class AudioRecordCapture(private val rate: Int, private val source: Int) : Captu
         return if (n < 0) n else n / 2
     }
 
-    override fun info() = "AudioRecord ${rate}Hz buf=${rec?.bufferSizeInFrames ?: 0}"
+    override fun stats() = EngineStats(name, rate, bufferFrames = rec?.bufferSizeInFrames)
 
     override fun close() { rec?.run { stop(); release() }; rec = null }
 }

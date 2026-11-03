@@ -9,11 +9,12 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Captures 5 ms frames and sends them over UDP to the PC on the USB-tethering link. */
 class Streamer(context: Context, private val cfg: Config) {
-    // Only the application context is kept (used for localized status strings).
-    private val ctx: Context = context.applicationContext
+    // Only the application context is kept.
+    @Suppress("unused") private val ctx: Context = context.applicationContext
 
     data class Config(
         val manualHost: String?,   // null/blank = auto discovery on the tethering subnet
@@ -28,8 +29,20 @@ class Streamer(context: Context, private val cfg: Config) {
     @Volatile private var sock: DatagramSocket? = null
     @Volatile private var target: InetSocketAddress? = null
     @Volatile private var lastHeard = 0L
-    @Volatile var status: String = ctx.getString(R.string.s_idle); private set
-    @Volatile var engineInfo: String = ""; private set
+    /** Connection state shown by the app and the notification. */
+    enum class State { STARTING, MIC_FAILED, WAITING_TETHER, SEARCHING, STREAMING, STOPPED }
+
+    @Volatile var state: State = State.STARTING; private set
+    /** PC address while [State.STREAMING]. */
+    @Volatile var targetAddress: InetSocketAddress? = null; private set
+    /** Name of the open capture engine ("AAudio" / "AudioRecord"), empty before the mic opens. */
+    @Volatile var engineName: String = ""; private set
+    /** Refreshed about once per second from the capture thread. */
+    @Volatile var engineStats: EngineStats? = null; private set
+    val engineInfo: String get() = engineStats?.toString().orEmpty()
+    /** elapsedRealtime of the last HELLO/PING from the PC, 0 = never. */
+    val lastHeardAt: Long get() = lastHeard
+    private val peak = AtomicInteger(0)
     @Volatile var sent = 0L; private set
     @Volatile var sendErrors = 0L; private set
     private var audioThread: Thread? = null
@@ -56,8 +69,11 @@ class Streamer(context: Context, private val cfg: Config) {
         } catch (_: Exception) {}
         sock?.close(); sock = null
         ctlThread?.join(1000)
-        status = ctx.getString(R.string.s_stopped)
+        state = State.STOPPED; targetAddress = null
     }
+
+    /** Highest absolute PCM16 sample (0..32768) captured since the previous call. */
+    fun takePeak(): Int = peak.getAndSet(0)
 
     private fun openEngine(): CaptureEngine? {
         if (cfg.useAAudio) {
@@ -114,11 +130,13 @@ class Streamer(context: Context, private val cfg: Config) {
         var seq = 0
         var lastDiscover = 0L
         var lastSockTry = 0L
+        var lastStats = 0L
         while (running) {
             if (engine == null) {
                 engine = openEngine()
-                if (engine == null) { status = ctx.getString(R.string.s_mic_failed); SystemClock.sleep(1000); continue }
-                engineInfo = engine.info()
+                if (engine == null) { state = State.MIC_FAILED; SystemClock.sleep(1000); continue }
+                engineName = engine.name
+                engineStats = engine.stats()
                 Log.i(TAG, engineInfo)
             }
             val n = engine.read(buf, Protocol.HEADER_SIZE, cfg.frames)
@@ -126,14 +144,18 @@ class Streamer(context: Context, private val cfg: Config) {
                 Log.w(TAG, "read returned $n, reopening ${engine.name}")
                 engine.close(); engine = null; continue
             }
+            // Level meter: one pass over 240 samples, read by the UI via takePeak().
+            val p = pcm16Peak(buf, Protocol.HEADER_SIZE, n)
+            peak.accumulateAndGet(p) { a, b -> if (a > b) a else b }
             val now = SystemClock.elapsedRealtime()
+            if (now - lastStats > 1000) { lastStats = now; engineStats = engine.stats() }
             val s = sock ?: if (now - lastSockTry > 1000) { lastSockTry = now; ensureSocket() } else null
-            if (s == null) { status = ctx.getString(R.string.s_wait_tether, TetherNet.describe(ctx.getString(R.string.iface_none))); continue }
+            if (s == null) { state = State.WAITING_TETHER; targetAddress = null; continue }
             val auto = cfg.manualHost.isNullOrBlank()
             if (auto && target != null && now - lastHeard > 3000) { target = null; Log.i(TAG, "PC timeout, rediscover") }
             val t = target
             if (t == null) {
-                status = ctx.getString(R.string.s_searching, TetherNet.describe(ctx.getString(R.string.iface_none)))
+                state = State.SEARCHING; targetAddress = null
                 if (now - lastDiscover > 500) { lastDiscover = now; sendDiscover(s) }
                 continue
             }
@@ -142,7 +164,7 @@ class Streamer(context: Context, private val cfg: Config) {
             pkt.socketAddress = t
             try {
                 s.send(pkt); sent++
-                status = ctx.getString(R.string.s_streaming, t.address.hostAddress, t.port, engine.name)
+                targetAddress = t; state = State.STREAMING
             } catch (e: Exception) { // cable unplugged / tethering off: rebuild socket
                 sendErrors++
                 Log.w(TAG, "send: $e")
