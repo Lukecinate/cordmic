@@ -1,392 +1,318 @@
-# CordMic — HP Android jadi mic PC lewat kabel USB (prototipe)
+# CordMic
 
-Status: **prototipe v0.3.0** (nama baru: **CordMic**, sebelumnya *UsbMic*). Sekarang ada **aplikasi Windows plug & play** (installer `.exe`, ikon tray, panduan
-penyiapan) – lihat bagian 0. Logika receiver (Python dan C#) sudah dites otomatis di Linux (unit test + loopback UDP);
-aplikasi Windows-nya **belum pernah dijalankan di Windows**.
-Aplikasi Android sudah **berhasil di-build** jadi APK, tapi **belum pernah dijalankan di HP sungguhan**.
-Bagian "Status verifikasi" di bawah menjelaskan apa yang sudah dan belum dites.
+**English** | [Bahasa Indonesia](README.id.md)
 
-Target: Samsung S24 FE / Galaxy S (Android 14/15) → Windows 11 Pro, untuk Discord, game, Zoom.
-Syarat: **hanya kabel USB**, tanpa Wi-Fi, **tanpa USB debugging/ADB**, latensi rendah, jalan di background.
+CordMic turns an Android phone into a low-latency PC microphone over a **USB cable**. It uses Android's built-in
+**USB tethering**, so it needs no Wi-Fi, no USB debugging/ADB and no phone-side drivers. Audio flows from the phone
+to a Windows tray app, which plays it into a virtual audio cable that Discord, Zoom and games can use as a microphone.
 
----
+- **Cable only** – the phone shows up as a wired network adapter (RNDIS/NCM); audio never touches Wi-Fi or the internet.
+- **Low latency by design** – 48 kHz mono PCM in 5 ms packets, AAudio low-latency capture, a small jitter buffer
+  and WASAPI output. The pipeline is designed for roughly **30–45 ms end-to-end** (see [Latency](#latency)).
+- **Runs in the background** – Android foreground service with a persistent notification; Windows tray app that
+  detects the phone, reconnects automatically and can start with Windows.
+- **Plug & play Windows installer** – firewall rule, phone-adapter priority (so games keep using LAN/Wi-Fi) and a
+  3-step setup guide.
+- **English and Indonesian** – Android app, Windows app and installer follow the system language; the Windows tray
+  has a *Language / Bahasa* override.
 
-## 0. Aplikasi Windows plug & play (v0.3.0) – cara paling mudah
-
-Aplikasi Windows ini menggantikan receiver Python untuk pemakaian sehari-hari. Ia jalan diam-diam di tray,
-mendeteksi HP sendiri saat kabel dicolok, dan menyambung ulang otomatis. Receiver Python tetap ada untuk debugging.
-
-### Pasang (sekali saja)
-1. Jalankan **`dist/CordMic-Setup-0.3.0.exe`** (klik dua kali, setujui UAC).
-   * Windows SmartScreen bisa menampilkan "Windows protected your PC" karena installer belum
-     ditandatangani (in-house). Klik **More info → Run anyway**.
-   * Pilihan di installer: **Jalan otomatis saat Windows mulai** (default aktif) dan *Shortcut di Desktop*.
-2. Installer otomatis:
-   * memasang aplikasi ke `C:\Program Files\CordMic` + shortcut di Start menu;
-   * membuat aturan firewall **CordMic (UDP 50005)** (masuk, hanya subnet lokal, semua profil – jaringan
-     tethering biasanya dianggap "Public");
-   * membuat scheduled task `\CordMic\SetTetherMetric` (jalan sebagai SYSTEM saat jaringan baru
-     tersambung, saat login, dan saat boot) yang memberi adapter HP **metric 9999**, supaya
-     internet/game tetap lewat LAN/Wi-Fi dan HP hanya membawa audio.
-3. Pasang **HP**: APK `dist/CordMic-0.3.0-release.apk` (lihat bagian 3). Versi 0.2.0 ke atas diperlukan agar
-   PC bisa "memanggil" HP langsung (lebih andal dari broadcast saja).
-
-### Upgrade dari UsbMic 0.2.0 (ganti nama ke CordMic)
-Produk ini sebelumnya bernama **UsbMic**. Protokol audionya **tidak berubah** (header `UM`, port UDP 50005),
-jadi HP dan PC versi lama/baru tetap saling kompatibel.
-* **Windows:** cukup jalankan `CordMic-Setup-0.3.0.exe`. Installer otomatis menutup `UsbMic.exe`, menghapus
-  aturan firewall *UsbMic (UDP 50005)*, scheduled task `\UsbMic\SetTetherMetric`, entri startup `UsbMic`,
-  shortcut, folder `C:\Program Files\UsbMic`, dan entri uninstall lama. Setting di `%APPDATA%\UsbMic` **tidak
-  dihapus**: saat pertama jalan, CordMic menyalinnya ke `%APPDATA%\CordMic` (jitter, perangkat output,
-  status panduan tetap sama). Log lama di `%LOCALAPPDATA%\UsbMic` tidak dipindah.
-* **HP:** nama paket Android berubah (`dev.usbmic` → `dev.cordmic`), jadi CordMic terpasang sebagai aplikasi
-  **baru**, bukan update. Pasang `CordMic-0.3.0-release.apk`, beri izin mikrofon dan notifikasi lagi, lalu
-  **uninstall aplikasi UsbMic lama** supaya tidak ada dua aplikasi yang berebut mic.
-
-### Pemakaian pertama (panduan 3 langkah muncul otomatis)
-1. **Pasang mic virtual.** CordMic tidak membawa driver sendiri; ia memakai VB-CABLE (gratis) dari situs
-   resminya. Tombol *Buka halaman unduhan VB-CABLE* membuka https://vb-audio.com/Cable/. Ekstrak,
-   klik kanan `VBCABLE_Setup_x64.exe` → *Run as administrator* → *Install Driver*. Panduan mengecek
-   ulang tiap 2 detik dan langsung memilih "CABLE Input" begitu terdeteksi (restart PC bila belum muncul).
-2. **Sambungkan HP.** Colok kabel USB data → di HP: *Pengaturan → Koneksi → Hotspot Seluler dan
-   Tethering → Tethering USB* ON → buka aplikasi CordMic di HP → *Start*. Status di panduan berubah
-   hijau dan bar level bergerak saat Anda bicara.
-   **Samsung mematikan Tethering USB setiap kabel dicabut**: setelah colok ulang, nyalakan lagi
-   toggle-nya. PC menyambung sendiri, tidak perlu menyentuh aplikasi Windows.
-3. **Pilih mic di aplikasi.** Discord: *User Settings → Voice & Video → Input Device →
-   CABLE Output (VB-Audio Virtual Cable)*. Zoom: *Settings → Audio → Microphone → CABLE Output*.
-   Game tanpa pilihan mic: jadikan CABLE Output perangkat rekaman default (tombol di panduan membuka
-   pengaturan Sound Windows).
-
-### Ikon tray
-| Warna | Arti |
-|---|---|
-| abu-abu | menunggu HP (kabel/tethering belum ada) atau HP terdeteksi tapi belum *Start* |
-| hijau | terhubung, suara masuk |
-| kuning | perlu perhatian: mic virtual belum ada, HP terhubung tapi tidak mengirim suara, atau internet PC lewat HP |
-| merah | error: port UDP 50005 dipakai aplikasi lain, atau perangkat audio gagal dibuka (dicoba ulang otomatis) |
-
-Arahkan mouse ke ikon untuk melihat **latensi perkiraan sisi PC** (½ RTT USB + jitter buffer + buffer
-WASAPI 10 ms), RTT, loss 10 detik terakhir, dan isi buffer. Klik kanan untuk menu:
-* **Perangkat output** – *Otomatis* (kabel virtual terbaik) atau pilih manual (VB-CABLE A–D, VAC, VoiceMeeter).
-* **Jitter buffer** – Rendah 5 ms / Normal 10 ms (default) / Aman 20 ms (kalau suara putus-putus).
-* **Mode mic** – penjelasan mode di HP (dipilih di aplikasi HP).
-* **Panduan penyiapan**, **Perbaiki prioritas jaringan HP** (muncul hanya bila internet lewat HP; minta UAC),
-  **Buka log**, **Jalan saat Windows mulai**, **Keluar**.
-
-Setting: `%APPDATA%\CordMic\settings.json`. Log: `%LOCALAPPDATA%\CordMic\logs\cordmic.log` (statistik tiap 10 detik
-saat terhubung). Log installer/metric: `C:\ProgramData\CordMic\`.
-
-### Troubleshooting
-| Gejala | Coba |
-|---|---|
-| Ikon abu-abu terus, "Menunggu HP" | Kabel harus kabel **data**. Nyalakan lagi *Tethering USB* (mati tiap kabel dicabut). Di Windows *Settings → Network* harus muncul adapter "Remote NDIS…"/"UsbNcm…". |
-| "HP terdeteksi" tapi tidak tersambung | Buka aplikasi CordMic di HP dan tekan *Start*. Pastikan versi APK 0.2.0 ke atas (CordMic 0.3.0 disarankan). Cek aturan firewall *CordMic (UDP 50005)* ada (pasang ulang installer bila hilang). |
-| Merah, "Port sibuk" | Receiver Python (`cordmic_receiver`) masih jalan. Tutup, CordMic mencoba lagi tiap 5 detik. |
-| Kuning, "Mic virtual belum ada" | Pasang VB-CABLE (langkah 1), restart PC bila perlu. |
-| Suara putus-putus / robot | Menu *Jitter buffer → Aman (20 ms)*. Lihat `lost`/`underrun` di log. Hindari hub USB, pakai port langsung. |
-| Ping game naik setelah colok HP | Menu *Perbaiki prioritas jaringan HP* (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai admin). Sebagai alternatif, matikan data seluler di HP. |
-| Discord tidak dengar apa-apa | Input Device harus **CABLE Output** (bukan CABLE Input). Bar level di panduan langkah 3 harus bergerak. |
-| Suara terlalu diproses / ada delay | Di HP pilih *Voice Recognition*; kalau memakai *Voice Communication*, matikan Noise Suppression/Echo Cancellation di Discord. |
-
-### Copot pemasangan
-*Settings → Apps → CordMic → Uninstall*: menghapus aplikasi, shortcut, startup, aturan firewall dan
-scheduled task. Setting dan log di `%APPDATA%`/`%LOCALAPPDATA%` sengaja dibiarkan.
-
-### Build sendiri (Linux)
-```
-cd windows-app && ./build.sh     # butuh .NET 8 SDK, NSIS 3 (makensis), python3
-```
-Hasil: `windows-app/publish/CordMic.exe` (win-x64 self-contained single-file) dan `dist/CordMic-Setup-0.3.0.exe`.
-
-### Kenapa masih perlu VB-CABLE? (mic virtual sendiri = pekerjaan lanjutan)
-Windows hanya menampilkan "mikrofon" yang berasal dari **driver audio**. Aplikasi biasa (user-mode) tidak
-bisa membuat perangkat rekaman baru, jadi CordMic memutar suara ke kabel virtual yang sudah ada.
-Untuk "CordMic Microphone" sendiri tanpa VB-CABLE ada dua jalur:
-1. **Driver audio virtual sendiri** berbasis contoh Microsoft *SysVAD* atau *SimpleAudioSample*
-   (Windows-driver-samples). Driver kernel ini wajib ditandatangani Microsoft: perlu **sertifikat EV**
-   dan *attestation signing* lewat Partner Center (untuk distribusi umum: WHQL/HLK). Tanpa itu hanya bisa
-   jalan dengan *test signing* (tidak cocok untuk PC gaming dengan anti-cheat).
-2. **ACX (Audio Class eXtensions, Windows 11)** – kerangka driver audio baru di atas KMDF yang lebih
-   sederhana dari PortCls/SysVAD. Tetap **driver kernel**, jadi syarat tanda tangan sama (EV + attestation).
-Catatan: Windows **tidak** punya API user-mode untuk membuat mikrofon virtual yang terlihat oleh semua aplikasi
-(API kamera virtual Media Foundation hanya untuk video). Jadi jalur "tanpa VB-CABLE" pasti lewat driver
-bertanda tangan; bagian streaming (UDP, jitter buffer) di CordMic.Core tetap bisa dipakai, driver hanya
-menerima PCM lewat IOCTL/ring buffer dari aplikasi tray.
-Keputusan driver ditunda sesuai rencana ("prototipe dulu, driver diputuskan nanti").
+Downloads: see [Releases](https://github.com/Lukecinate/cordmic/releases/latest).
 
 ---
 
-## 1. Arsitektur
+## Contents
+- [Requirements](#requirements)
+- [Install & quick start](#install--quick-start)
+- [Using the Windows app](#using-the-windows-app)
+- [Using the Android app](#using-the-android-app)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations](#known-limitations)
+- [Architecture & protocol](#architecture--protocol)
+- [Latency](#latency)
+- [Build from source](#build-from-source)
+- [Python receiver (developer tool)](#python-receiver-developer-tool)
+- [Upgrading from UsbMic](#upgrading-from-usbmic)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+## Requirements
+
+| | |
+|---|---|
+| PC | Windows 10 or 11, 64-bit (x64) |
+| Phone | Android 10 or newer (minSdk 29), with USB tethering |
+| Cable | A USB **data** cable (charge-only cables do not work) |
+| Virtual mic | [VB-CABLE](https://vb-audio.com/Cable/) (free, installed separately) |
+
+## Install & quick start
+
+From the [latest release](https://github.com/Lukecinate/cordmic/releases/latest) download
+`CordMic-Setup-<version>.exe` (Windows) and `CordMic-<version>-release.apk` (Android).
+
+1. **Install on the PC.** Run `CordMic-Setup-<version>.exe` and accept the UAC prompt. The installer is not yet
+   code-signed, so SmartScreen may show "Windows protected your PC": click **More info → Run anyway**.
+   When CordMic starts, its setup guide walks you through installing **VB-CABLE** (it opens the official download
+   page and detects the driver automatically).
+2. **Install on the phone and connect.** Copy the APK to the phone and open it (allow "Install unknown apps" for
+   your file manager; on Samsung, temporarily turn off Auto Blocker if it is on). Plug in the USB cable, turn on
+   **Settings → Connections → Mobile Hotspot and Tethering → USB tethering**, open CordMic and tap **Start**.
+   The tray icon turns green.
+3. **Pick the mic in your app.** Choose **CABLE Output (VB-Audio Virtual Cable)** as the input device, e.g. Discord:
+   *User Settings → Voice & Video → Input Device*; Zoom: *Settings → Audio → Microphone*. For games without a mic
+   selector, make CABLE Output the default recording device in Windows Sound settings.
+
+What the installer does:
+- installs to `C:\Program Files\CordMic` with a Start menu shortcut (optional: start with Windows, desktop shortcut);
+- adds the inbound firewall rule **CordMic (UDP 50005)**, limited to the local subnet, for all profiles
+  (tethering networks are usually classified as "Public");
+- adds the scheduled task `\CordMic\SetTetherMetric` (runs as SYSTEM at boot, logon and on network changes) that
+  sets the phone adapter's interface **metric to 9999**, so internet traffic stays on LAN/Wi-Fi and the phone link
+  carries only audio.
+
+Uninstall via *Settings → Apps → CordMic → Uninstall*. This removes the app, shortcuts, autostart, firewall rule and
+scheduled task. Settings and logs under `%APPDATA%` / `%LOCALAPPDATA%` are kept.
+
+## Using the Windows app
+
+### Tray icon
+
+| Color | Meaning |
+|---|---|
+| Gray | Waiting for the phone (no cable/tethering yet), or phone detected but not started |
+| Green | Connected, audio is flowing |
+| Yellow | Needs attention: no virtual mic installed, phone connected but not sending audio, or PC internet is routed through the phone |
+| Red | Error: UDP port 50005 is in use by another app, or the audio device failed to open (retried automatically) |
+
+Hover the icon to see the estimated PC-side latency (½ USB round trip + jitter buffer + 10 ms WASAPI buffer),
+round-trip time, packet loss over the last 10 seconds and buffer fill. Right-click for the menu:
+
+- **Output device** – *Automatic* (best virtual cable found) or a specific one (VB-CABLE A–D, VAC, VoiceMeeter).
+- **Jitter buffer** – Low 5 ms / Normal 10 ms (default) / Safe 20 ms (use Safe if audio crackles).
+- **Mic mode** – explains the capture modes (selected in the phone app).
+- **Setup guide**, **Fix phone network priority** (shown only when internet goes through the phone; asks for UAC),
+  **Open log**, **Start with Windows**, **Language / Bahasa** (Automatic, English, Bahasa Indonesia), **Exit**.
+
+### Settings and logs
+
+| What | Where |
+|---|---|
+| Settings | `%APPDATA%\CordMic\settings.json` |
+| App log (stats every 10 s while connected) | `%LOCALAPPDATA%\CordMic\logs\cordmic.log` |
+| Installer / metric task logs | `C:\ProgramData\CordMic\` |
+
+## Using the Android app
+
+1. Turn on USB tethering (see below). The **PC IP** field can stay empty (automatic discovery); the port is `50005`.
+2. Choose a mic mode:
+   - **Voice Recognition** (default) – minimal processing, usually the lowest-latency path.
+   - **Unprocessed** – raw audio without filters.
+   - **Voice Communication** – noise suppression and echo cancellation; higher latency. Useful without a headset.
+3. Tap **Start** and grant the Microphone and Notification permissions. A persistent "CordMic" notification
+   (with a Stop button) keeps capture running with the screen off or while you use other apps.
+4. To keep One UI from stopping it: **Settings → Apps → CordMic → Battery → Unrestricted**, and make sure CordMic is
+   not in the "Sleeping apps" list.
+
+Android 14+ only allows a microphone foreground service to start while the app is visible, so **Start** must be
+tapped from the app screen and the service does not auto-start after a reboot.
+
+### USB tethering on Samsung
+1. Connect the phone with a USB data cable.
+2. **Settings → Connections → Mobile Hotspot and Tethering → USB tethering → On** (the toggle is grayed out until
+   a cable is connected). USB debugging is **not** needed.
+3. Windows shows a new adapter, usually "Remote NDIS based Internet Sharing Device" or "UsbNcm".
+
+## Troubleshooting
+
+| Symptom | Try |
+|---|---|
+| Icon stays gray, "Waiting for phone" | Use a **data** cable. Turn *USB tethering* on again (Samsung turns it off on every unplug). Windows *Settings → Network* should list a "Remote NDIS…" / "UsbNcm…" adapter. |
+| "Phone detected" but not connected | Open CordMic on the phone and tap *Start*. Check that the firewall rule *CordMic (UDP 50005)* exists (re-run the installer if it is missing). |
+| Red, "Port busy" | Another receiver (e.g. the Python `cordmic_receiver`) is still running. Close it; CordMic retries every 5 seconds. |
+| Yellow, "No virtual mic" | Install VB-CABLE (setup guide step 1); restart the PC if it does not appear. |
+| Choppy or robotic audio | *Jitter buffer → Safe (20 ms)*. Check `lost` / `underrun` in the log. Avoid USB hubs; use a port on the PC directly. |
+| Game ping rises after plugging in the phone | *Fix phone network priority* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator). Alternatively, turn off mobile data on the phone. |
+| Discord hears nothing | The input device must be **CABLE Output** (not CABLE Input). The level bar in setup guide step 3 should move while you speak. |
+| Audio sounds over-processed or delayed | Use *Voice Recognition* on the phone. If you use *Voice Communication*, turn off Discord's noise suppression and echo cancellation to avoid double processing. |
+
+Manual metric fix (PowerShell as administrator):
+```powershell
+Get-NetAdapter                                                  # find the phone adapter, e.g. "Ethernet 3"
+Set-NetIPInterface -InterfaceAlias "Ethernet 3" -InterfaceMetric 9999
+Get-NetRoute 0.0.0.0/0                                          # the default route should use LAN/Wi-Fi
+```
+
+## Known limitations
+
+- **Unsigned Windows installer.** The installer and `CordMic.exe` are not Authenticode-signed yet, so SmartScreen
+  warns on first run (*More info → Run anyway*). Verify downloads with `SHA256SUMS.txt` from the release.
+- **USB tethering must be turned on manually.** Android does not let regular apps enable tethering, and Samsung
+  turns it off every time the cable is unplugged. Re-enable the toggle after replugging; the PC side reconnects
+  automatically.
+- **VB-CABLE is required.** Windows only lists microphones that come from an audio driver, and a user-mode app
+  cannot create one. CordMic therefore plays into an existing virtual cable (see [Roadmap](#roadmap)).
+- **APK signing.** Starting with 0.3.1, the release APK is signed with the project's own release key
+  (certificate `CN=CordMic, O=CordMic contributors`, SHA-256
+  `2c:da:64:ae:df:4e:ba:6f:9d:4a:fa:06:e6:85:43:04:65:a6:0d:5d:2a:25:ef:99:ee:f3:cc:16:3e:47:1c:8b`). The APK is
+  distributed outside Google Play, so Android asks you to allow installs from unknown sources. Version 0.3.0 was
+  signed with a debug key; uninstall it before installing 0.3.1 (Android rejects an update signed with a different key).
+- **No clock-drift compensation yet.** Over long sessions the jitter buffer corrects phone/PC clock drift by
+  dropping packets when it grows past its limit, which can cause a brief click.
+- **Android 14+ start rule.** Capture must be started from the visible app; it does not start on boot.
+
+## Architecture & protocol
 
 ```
-┌──────────────── HP Android ────────────────┐   kabel USB    ┌──────────────── Windows 11 ─────────────────┐
-│ Mic → AAudio (LOW_LATENCY, 48 kHz, mono,   │  (USB tethering│ cordmic_receiver (Python)                    │
-│       16-bit, frame 5 ms = 240 sampel)     │   RNDIS/NCM =  │  UDP :50005 → jitter buffer (default 10 ms) │
-│   → header 20 byte (seq + timestamp)       │   kartu jaringan│  → WASAPI (sounddevice/PortAudio)           │
-│   → UDP ke IP PC                           │──────────────▶ │  → "CABLE Input" (VB-Cable)                 │
-│ Foreground service type=microphone         │                │  Discord/Zoom/game pakai "CABLE Output"     │
-│ + notifikasi permanen + wakelock           │ ◀── PING/HELLO │  sebagai mikrofon                            │
-└────────────────────────────────────────────┘                └─────────────────────────────────────────────┘
+┌──────────────── Android phone ───────────────┐   USB cable     ┌──────────────── Windows PC ──────────────────┐
+│ Mic → AAudio (LOW_LATENCY, 48 kHz, mono,     │ (USB tethering, │ CordMic tray app (.NET 8)                    │
+│       16-bit, 5 ms frames = 240 samples)     │  RNDIS/NCM =    │  UDP :50005 → jitter buffer (default 10 ms)  │
+│   → 20-byte header (seq + timestamp)         │  network link)  │  → WASAPI (NAudio)                           │
+│   → UDP to the PC                            │ ──────────────▶ │  → "CABLE Input" (VB-CABLE)                  │
+│ Foreground service type=microphone           │                 │  Discord/Zoom/games use "CABLE Output"       │
+│ + persistent notification + wake lock        │ ◀── PING/HELLO  │  as their microphone                         │
+└──────────────────────────────────────────────┘                 └──────────────────────────────────────────────┘
 ```
 
-* **Transport**: USB tethering membuat HP muncul sebagai kartu jaringan kabel di Windows
-  (driver RNDIS/NCM bawaan Windows 11). Tidak perlu ADB, tidak perlu Wi-Fi, dan tidak bergantung
-  pada mode USB debugging yang sering berpindah atau terputus.
-* **Catatan alamat IP**: saat USB tethering aktif, **HP itulah gateway/DHCP server-nya** (contoh: HP
-  `192.168.42.129`, PC dapat `192.168.42.x`). Jadi aplikasi tidak mengirim ke gateway. Aplikasi
-  mencari interface tethering (`rndis0`/`ncm0`/`usb0`), lalu mengirim paket **DISCOVER** broadcast di
-  subnet itu. Receiver PC membalas **HELLO**, lalu HP mengirim audio langsung (unicast) ke IP PC.
-  IP PC juga bisa diisi manual.
-* **Auto-reconnect sederhana**: PC mengirim PING tiap 500 ms dan HP membalas PONG (dipakai juga untuk
-  mengukur RTT). Kalau HP tidak mendengar PC selama 3 detik, atau kabel dicabut lalu socket error,
-  HP kembali ke mode discovery. Kalau stream AAudio putus (misalnya karena route audio berubah),
-  stream dibuka ulang otomatis.
-* **Protokol** (little-endian, 20 byte, sama persis di `Protocol.kt` dan `protocol.py`):
+- **Transport.** USB tethering makes the phone appear as a wired network adapter in Windows (built-in RNDIS/NCM
+  drivers). No ADB, no Wi-Fi, and no dependency on USB debugging modes.
+- **Discovery.** With tethering on, the phone is the gateway/DHCP server (e.g. phone `192.168.42.129`, PC
+  `192.168.42.x`). The app finds the tethering interface (`rndis0` / `ncm0` / `usb0`) and broadcasts **DISCOVER** on
+  that subnet; the PC replies **HELLO** (the Windows app also sends HELLO proactively when it sees a tethering
+  adapter), and the phone then streams unicast to the PC. The PC IP can also be entered manually.
+- **Keep-alive and reconnect.** The PC sends **PING** every 500 ms and the phone answers **PONG** (also used to
+  measure round-trip time). If the phone hears nothing from the PC for 3 seconds, or the socket fails after an
+  unplug, it returns to discovery. If the AAudio stream is disconnected (e.g. an audio route change), it is reopened.
+- **Header** (20 bytes, little-endian; identical in `Protocol.kt`, `protocol.py` and `CordMic.Core`):
 
-  | offset | ukuran | field |
+  | Offset | Size | Field |
   |---|---|---|
   | 0 | 2 | magic `"UM"` |
-  | 2 | 1 | versi (1) |
-  | 3 | 1 | tipe: 1 AUDIO, 2 DISCOVER, 3 HELLO, 4 PING, 5 PONG, 6 BYE |
-  | 4 | 4 | seq (uint32, wrap) |
-  | 8 | 8 | timestamp µs (jam monotonic pengirim) |
-  | 16 | 2 | jumlah frame PCM |
-  | 18 | 2 | flags: bit 0-3 codec (0 = PCM s16le), bit 4-7 channel-1, bit 8-11 sample rate (0 = 48 kHz) |
+  | 2 | 1 | version (1) |
+  | 3 | 1 | type: 1 AUDIO, 2 DISCOVER, 3 HELLO, 4 PING, 5 PONG, 6 BYE |
+  | 4 | 4 | sequence number (uint32, wraps) |
+  | 8 | 8 | timestamp in µs (sender's monotonic clock) |
+  | 16 | 2 | PCM frame count |
+  | 18 | 2 | flags: bits 0–3 codec (0 = PCM s16le), bits 4–7 channels − 1, bits 8–11 sample rate (0 = 48 kHz) |
 
-  Payload AUDIO berisi PCM mentah: 240 frame × 2 byte = 480 byte per 5 ms (~100 kbit/s).
-* **Jitter buffer** (`jitter.py`): menyusun ulang paket berdasarkan seq. Playback mulai setelah
-  target terisi (default 10 ms = 2 paket). Paket yang hilang diganti hening (PLC sederhana).
-  Paket terlambat dibuang. Kalau buffer melebihi batas maksimum, paket terlama dibuang supaya
-  latensi tidak terus naik (misalnya karena clock drift).
+  An AUDIO payload is raw PCM: 240 frames × 2 bytes = 480 bytes per 5 ms (~100 kbit/s).
+- **Jitter buffer.** Reorders packets by sequence number; playback starts once the target is filled (Low 5 /
+  Normal 10 / Safe 20 ms). Missing packets are replaced with silence, late packets are discarded, and if the buffer
+  exceeds its maximum the oldest packets are dropped so latency cannot creep up.
 
-### Struktur folder
+### Repository layout
 
 ```
-usbmic/                           (nama folder proyek tidak diubah)
-├── README.md
-├── dist/                         CordMic-Setup-0.3.0.exe (installer Windows) + APK (debug + release)
-├── windows-app/                  aplikasi Windows C#/.NET 8 (tray + wizard + installer NSIS)
-│   ├── src/CordMic.Core/          protokol, jitter buffer, receiver UDP (port dari Python, byte-kompatibel)
-│   ├── src/CordMic.App/           aplikasi tray WinForms + WASAPI (NAudio) + panduan penyiapan
-│   ├── src/CordMic.Harness/       receiver console untuk tes loopback di Linux
-│   ├── tests/CordMic.Tests/       33 unit/loopback test (xUnit), termasuk interop dengan sim_sender.py
-│   ├── installer/                cordmic.nsi + tools/*.ps1 (firewall, prioritas adapter HP)
-│   └── build.sh                  test → publish win-x64 → installer
-├── android/                      proyek Gradle (Kotlin + C++/AAudio)
+cordmic/
+├── android/                      Gradle project (Kotlin + C++/AAudio)
 │   └── app/src/main/
-│       ├── AndroidManifest.xml   izin + service foregroundServiceType="microphone"
-│       ├── cpp/aaudio_capture.cpp  capture AAudio low-latency (JNI)
-│       ├── java/dev/cordmic/
-│       │   ├── MainActivity.kt   UI: IP/port, mode mic, Start/Stop, status
-│       │   ├── MicService.kt     foreground service + notifikasi + wakelock
-│       │   ├── Streamer.kt       loop capture→UDP, discovery, PING/PONG, reconnect
-│       │   ├── Capture.kt        AAudio (utama) + AudioRecord (cadangan)
-│       │   ├── TetherNet.kt      deteksi interface USB tethering
-│       │   └── Protocol.kt       header 20 byte
-│       └── res/…
-└── windows-receiver/
-    ├── cordmic_receiver/          protocol, jitter, server (UDP), audio_out (WASAPI), tray, CLI
-    ├── tests/                    unit test + loopback test
-    ├── sim_sender.py             "HP palsu" (nada sinus) untuk tes tanpa HP
-    ├── cordmic_tray.pyw           launcher klik-ganda (tanpa console, ikon tray)
-    ├── run_receiver.bat
-    ├── setup_firewall.ps1
-    └── requirements.txt
+│       ├── AndroidManifest.xml   permissions + foregroundServiceType="microphone"
+│       ├── cpp/aaudio_capture.cpp  low-latency AAudio capture (JNI)
+│       ├── java/dev/cordmic/     MainActivity, MicService, Streamer, Capture, TetherNet, Protocol
+│       └── res/values[-in]/      English and Indonesian strings
+├── windows-app/                  Windows app, C# / .NET 8
+│   ├── src/CordMic.Core/         protocol, jitter buffer, UDP receiver, settings, string tables
+│   ├── src/CordMic.App/          WinForms tray app + WASAPI (NAudio) + setup guide
+│   ├── src/CordMic.Harness/      console receiver for loopback testing
+│   ├── tests/CordMic.Tests/      xUnit tests (incl. interop with sim_sender.py)
+│   ├── installer/                cordmic.nsi + tools/*.ps1 (firewall, adapter metric)
+│   └── build.sh                  test → publish win-x64 → installer
+└── windows-receiver/             Python reference receiver + phone simulator (sim_sender.py)
 ```
 
----
+## Latency
 
-## 2. Mengaktifkan USB tethering (Samsung)
+The pipeline is **designed for roughly 30–45 ms end-to-end**. This is a design budget, not a measurement:
+AAudio capture ~5–10 ms + 5 ms packet + USB link 1–2 ms + 10 ms jitter buffer + WASAPI/VB-CABLE ~10–20 ms.
+Actual latency depends on the phone, the mic mode and the PC audio stack.
 
-1. Colokkan HP ke PC dengan kabel USB **data** (bukan kabel charge-only).
-2. HP: **Pengaturan → Koneksi → Hotspot Seluler dan Tethering → Tethering USB → ON**.
-   (Toggle ini abu-abu sampai kabel tersambung.) USB debugging **tidak** perlu dinyalakan.
-3. Windows: di *Settings → Network & internet* muncul adapter baru (biasanya "Ethernet X",
-   *Remote NDIS based Internet Sharing Device* atau *UsbNcm*).
-4. **Penting untuk gaming: jangan sampai internet PC lewat HP.** Windows bisa memakai HP sebagai
-   jalur internet, sehingga ping game naik dan kuota HP terpakai. Jalankan di PowerShell (Admin):
-   ```powershell
-   Get-NetAdapter                    # cari nama adapter HP, mis. "Ethernet 3"
-   Set-NetIPInterface -InterfaceAlias "Ethernet 3" -InterfaceMetric 9999
-   ```
-   Dengan metric tinggi, Windows tetap memakai LAN/Wi-Fi utama untuk internet, sedangkan HP hanya
-   dipakai untuk link audio. Cek dengan `Get-NetRoute 0.0.0.0/0`. Catatan: kalau Windows membuat
-   adapter baru (misalnya port USB berbeda), metric perlu diset lagi.
-5. Firewall: jaringan tethering biasanya dianggap "Public". Izinkan UDP 50005 dengan menjalankan
-   `windows-receiver\setup_firewall.ps1` sebagai Admin.
+To measure it on your own setup: in OBS add two *Audio Input Capture* sources, (a) "CABLE Output" and (b) another
+physical mic (headset/webcam). Record, clap close to **both** mics, open the recording in Audacity and measure the
+distance between the two clap peaks. That difference is CordMic's latency minus the reference mic's latency.
+Repeat with the Low jitter preset.
 
-> Keterbatasan Android: aplikasi biasa **tidak bisa** menyalakan USB tethering sendiri (butuh izin
-> sistem). Setelah kabel dicabut lalu dicolok lagi, Samsung biasanya mematikan tethering, jadi toggle
-> perlu dinyalakan ulang manual. Ide otomatisasi ada di roadmap.
+## Build from source
 
----
+### Windows app and installer
+Requires the .NET 8 SDK, NSIS 3 (`makensis`) and Python 3 (used by interop tests). Works on Windows (Git Bash/WSL),
+Linux or macOS:
+```bash
+cd windows-app && ./build.sh
+```
+Runs the tests, publishes `windows-app/publish/CordMic.exe` (win-x64, self-contained, single file) and writes
+`dist/CordMic-Setup-<version>.exe`.
 
-## 3. Aplikasi Android
-
-### Install APK siap pakai
-APK ada di `dist/`:
-* `dist/CordMic-0.3.0-release.apk` (tanpa debug, **ditandatangani dengan debug key**, khusus prototipe)
-* `dist/CordMic-0.3.0-debug.apk`
-
-Cara install: salin APK ke HP (kabel/MTP atau cara lain), buka file di My Files, lalu izinkan
-"Install unknown apps" untuk My Files. Samsung Auto Blocker harus dimatikan sementara jika aktif.
-Tidak perlu ADB.
-
-### Build sendiri
-Kebutuhan: JDK 17, Android SDK Platform 34, Build-Tools 34, **NDK 26.1.10909125**, **CMake 3.22.1**
-(semuanya terpasang otomatis lewat Android Studio, atau `sdkmanager`).
+### Android app
+Requires JDK 17, Android SDK Platform 34 and Build-Tools 34, NDK 26.1.10909125 and CMake 3.22.1
+(Android Studio or `sdkmanager`). Built with AGP 8.5.2, Gradle 8.7 and Kotlin 1.9.24.
 ```bash
 cd android
-echo "sdk.dir=/path/ke/Android/Sdk" > local.properties     # Android Studio membuat ini otomatis
-./gradlew assembleRelease        # → app/build/outputs/apk/release/app-release.apk
-./gradlew testDebugUnitTest lint # unit test protokol + lint
+echo "sdk.dir=/path/to/Android/Sdk" > local.properties   # Android Studio creates this automatically
+./gradlew testDebugUnitTest lint assembleRelease
 ```
-Prototipe ini sudah di-build di Linux (JDK 17.0.21, AGP 8.5.2, Gradle 8.7, Kotlin 1.9.24).
-Hasilnya: build sukses, lint 0 error, dan 3 unit test Kotlin lulus.
+Release signing is read from a properties file outside the repository
+(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`), passed via `CORDMIC_SIGNING_PROPERTIES=/path/file` or
+`-PcordmicSigning=/path/file`. Without it, local release builds are signed with the debug key.
 
-### Pemakaian
-1. Nyalakan USB tethering (lihat bagian 2) dan jalankan receiver di PC (bagian 4).
-2. Buka **CordMic**. Kolom "IP PC" boleh dikosongkan (auto-detect), port default `50005`.
-3. Pilih mode mic:
-   * **Voice Recognition** (default): proses minimal, biasanya jalur paling low-latency.
-   * **Unprocessed**: suara mentah tanpa filter.
-   * **Voice Communication**: noise suppression/echo cancel aktif, latensi lebih tinggi. Cocok kalau
-     tidak memakai headset.
-4. Tekan **Start**, lalu izinkan Mikrofon dan Notifikasi. Notifikasi "CordMic aktif" (dengan tombol
-   Stop) tetap tampil dan aplikasi terus berjalan saat layar mati atau saat pindah aplikasi.
-5. Agar tidak dimatikan One UI: **Pengaturan → Aplikasi → CordMic → Baterai → Tidak dibatasi**, dan
-   pastikan CordMic tidak ada di daftar "Aplikasi tidur".
+### Tests
+| Suite | Command | Covers |
+|---|---|---|
+| Python (17 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
+| .NET (45 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
+| Kotlin (4 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, English/Indonesian string parity |
 
-> Aturan Android 14+: foreground service mikrofon hanya boleh dimulai saat aplikasi terlihat.
-> Karena itu Start harus ditekan dari layar aplikasi, dan service tidak auto-start setelah reboot.
+## Python receiver (developer tool)
 
----
+`windows-receiver/` contains the reference receiver used for protocol development and debugging. For everyday use,
+install the Windows app instead (both bind UDP 50005, so run only one).
 
-## 4. Receiver Windows
-
-Kebutuhan: Python 3.11+ (python.org, centang "Add to PATH").
 ```bat
 cd windows-receiver
 pip install -r requirements.txt
-python -m cordmic_receiver --list-devices            REM daftar output WASAPI
+python -m cordmic_receiver --list-devices
 python -m cordmic_receiver --device "CABLE Input" --jitter-ms 10
 ```
-Opsi penting:
 
-| opsi | default | arti |
+| Option | Default | Meaning |
 |---|---|---|
-| `--device` | default output | index atau sebagian nama device (contoh `"CABLE Input"`) |
-| `--jitter-ms` | 10 | target jitter buffer. Turunkan ke 5 kalau stats bersih, naikkan kalau sering `plc`/`underrun` |
-| `--exclusive` | off | WASAPI exclusive: latensi output paling rendah, tapi device dikunci oleh app ini |
-| `--blocksize` | 240 | ukuran blok callback (5 ms) |
-| `--channels` | 2 | mono diduplikasi ke stereo (VB-Cable default stereo) |
-| `--tray` | off | ikon tray (pystray + pillow). Hijau = HP terhubung |
-| `--log file` | - | simpan log dan statistik ke file |
-| `--no-audio` | off | hanya terima paket + statistik (debug jaringan) |
+| `--device` | default output | device index or part of its name (e.g. `"CABLE Input"`) |
+| `--jitter-ms` | 10 | jitter buffer target; lower to 5 if stats are clean, raise if you see `plc` / `underrun` |
+| `--exclusive` | off | WASAPI exclusive mode: lowest output latency, but locks the device |
+| `--blocksize` | 240 | callback block size (5 ms) |
+| `--channels` | 2 | mono duplicated to stereo (VB-CABLE defaults to stereo) |
+| `--tray` | off | tray icon (pystray + pillow) |
+| `--log file` | – | write logs and stats to a file |
+| `--no-audio` | off | receive and print stats only (network debugging) |
 
-**Jalan di background**: klik ganda `cordmic_tray.pyw` (berjalan dengan pythonw, tanpa jendela console,
-ikon di tray, log di `cordmic.log`). Ubah `DEFAULT_ARGS` di file itu kalau perlu. Agar ikut jalan
-saat login, buat shortcut ke file tersebut di `shell:startup`. Untuk `.exe` tunggal:
-`pip install pyinstaller && pyinstaller --noconsole --onefile cordmic_tray.pyw`.
+Stats fields: `lost` = sequence gaps, `plc` = slots filled with silence, `late` = packets that arrived after their
+turn, `underrun` = buffer empty, `ovf` = packets dropped because the buffer was full, `jitter` = arrival jitter
+(RFC 3550), `rtt` = PING/PONG round trip over USB, `est_pc_side` = buffer + output latency + RTT/2 (PC side only).
 
-**Statistik** (dicetak tiap detik):
-```
-peer=192.168.42.129:40123 rx=… lost=0 (0.00%) reord=0 late=0 plc=0 underrun=0 ovf=0
-buf=10.0ms jitter=0.10ms rtt=0.80ms (min 0.50) pkt=5.0ms out=…ms xruns=0 est_pc_side=…ms
-```
-`lost` = gap seq (gaya RTP), `plc` = slot yang diisi hening, `late` = paket datang setelah gilirannya,
-`underrun` = buffer kosong, `ovf` = paket dibuang karena buffer kepenuhan, `jitter` = jitter
-kedatangan (RFC 3550), `rtt` = round trip PING/PONG lewat USB, `est_pc_side` = buffer + latensi
-output + RTT/2 (**perkiraan sisi PC saja**, tanpa latensi capture HP).
+Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 440 Hz test tone
+(`--loss` and `--jitter-ms` simulate a bad link).
 
----
+For best results set VB-CABLE to 48 kHz: *Control Panel → Sound → Playback → CABLE Input → Properties → Advanced*
+and *Recording → CABLE Output → Advanced*. Do not make CABLE Input your default playback device.
 
-## 5. Virtual cable dan Discord
+## Upgrading from UsbMic
 
-1. Download **VB-CABLE Driver** dari https://vb-audio.com/Cable/ (donationware). Ekstrak, klik kanan
-   `VBCABLE_Setup_x64.exe` → *Run as administrator* → Install, lalu reboot.
-2. *Control Panel → Sound*:
-   * tab **Playback → CABLE Input → Properties → Advanced**: pilih 2 channel, 16 bit, **48000 Hz**.
-   * tab **Recording → CABLE Output → Advanced**: 48000 Hz juga.
-   * Jangan jadikan CABLE Input sebagai default playback (supaya suara game tidak masuk ke mic).
-3. Jalankan receiver dengan `--device "CABLE Input"`.
-4. **Discord**: *User Settings → Voice & Video → Input Device = "CABLE Output (VB-Audio Virtual Cable)"*.
-   Untuk latensi minimum, matikan Noise Suppression/Krisp dan Echo Cancellation di Discord kalau mode
-   mic HP sudah Voice Communication (supaya pemrosesan tidak dobel). Gunakan Voice Activity atau PTT.
-5. **Zoom / game**: pilih "CABLE Output" sebagai mikrofon. Kalau game tidak punya pilihan device,
-   jadikan CABLE Output sebagai *Default Recording Device* di Windows.
+CordMic was previously called **UsbMic**. The audio protocol is unchanged (`UM` header, UDP 50005).
 
----
+- **Windows:** run the CordMic installer. It closes `UsbMic.exe` and removes the old firewall rule, scheduled task
+  `\UsbMic\SetTetherMetric`, startup entry, shortcuts, `C:\Program Files\UsbMic` and the old uninstall entry.
+  Settings in `%APPDATA%\UsbMic` are copied to `%APPDATA%\CordMic` on first start.
+- **Android:** the package name changed (`dev.usbmic` → `dev.cordmic`), so CordMic installs as a new app. Grant the
+  permissions again and uninstall the old UsbMic app so the two do not compete for the mic.
 
-## 6. Menguji latensi
+## Roadmap
 
-1. **Tanpa HP (tes PC + jaringan lokal)**:
-   ```bat
-   python -m cordmic_receiver --device "CABLE Input"
-   python sim_sender.py --host 127.0.0.1 --seconds 10 --loss 0.01 --jitter-ms 2
-   ```
-   Nada 440 Hz harus terdengar di CABLE Output (cek di *Sound → Recording → CABLE Output → Listen*).
-2. **Link USB**: jalankan receiver, lalu Start di HP. Lihat `rtt` (link USB biasanya hanya beberapa
-   ms atau kurang; ukur sendiri) dan pastikan `lost`/`plc`/`underrun` tetap 0 selama beberapa menit.
-3. **End-to-end (akustik)**: buka OBS, tambahkan dua *Audio Input Capture*: (a) "CABLE Output" dan
-   (b) mic fisik lain (headset/webcam). Rekam, lalu tepuk tangan tepat di dekat **kedua** mic. Buka
-   rekaman di Audacity dan ukur jarak antar puncak tepukan. Selisih itu adalah latensi CordMic
-   dikurangi latensi mic pembanding. Ulangi dengan `--jitter-ms 5` dan `--exclusive`.
-4. **Estimasi teoritis** (belum diukur): capture AAudio ~5–10 ms + paket 5 ms + USB <1–2 ms
-   + jitter buffer 10 ms + WASAPI/VB-Cable ~10–20 ms ≈ **30–45 ms**. Nilai sebenarnya harus diukur
-   dengan langkah 3.
+1. **Opus** (48 kHz, 2.5/5 ms frames, FEC) as an option; PCM stays the default.
+2. **Clock-drift compensation** – insert or drop single samples instead of whole packets.
+3. **Native virtual audio driver** ("CordMic Microphone" without VB-CABLE), based on Microsoft's SysVAD samples or
+   ACX on Windows 11. Kernel drivers must be signed by Microsoft (EV certificate + attestation signing), which is
+   why this is a separate milestone. Windows has no user-mode API for a system-wide virtual microphone.
+4. **Code signing** (Authenticode) for the installer and app so SmartScreen does not warn.
+5. Phone-side cable/tethering detection with a "turn on USB tethering" prompt; better packet-loss concealment;
+   mic level meter in the phone app.
 
----
+## License
 
-## 7. Status verifikasi (jujur)
-
-Sudah dijalankan (di box Linux, bukan Windows/HP):
-* `python -m unittest discover -s tests` (folder `windows-receiver`): **17 test lulus**. Isinya
-  protokol, jitter buffer (reorder, loss, late, underrun, overflow, wrap seq, restart pengirim),
-  duplikasi channel di callback output, dan **2 loopback test UDP** (simulator → receiver → konsumen
-  real-time 5 ms): link bersih 0 loss, link dengan 2% loss/jitter 3 ms/reorder di mana `lost`
-  receiver = paket yang dibuang simulator.
-* CLI receiver `--no-audio` + `sim_sender.py` via 127.0.0.1: discovery HELLO, PING/PONG RTT, statistik.
-* Build Android: `assembleDebug`, `assembleRelease`, `lint` (0 error), `testDebugUnitTest`
-  (3 test; header Kotlin byte-identik dengan Python). APK berisi `libcordmic_native.so`
-  (arm64-v8a, armeabi-v7a, x86_64), minSdk 29, targetSdk 34, dan semua izin yang dibutuhkan.
-
-* Aplikasi Windows C# (`windows-app/`, di-cross-build dari Linux): `dotnet test` **34 test lulus** (v0.3.0, termasuk migrasi setting dari `%APPDATA%\UsbMic`)
-  (protokol termasuk golden vector byte, jitter buffer port 1:1 dari Python, aturan adapter/kabel virtual,
-  setting, loopback UDP bersih/lossy, HELLO proaktif, timeout peer, dan **interop dengan `sim_sender.py`**).
-  Harness console + `sim_sender.py`: 600/600 paket, 0 loss, RTT ~0,4 ms; link lossy: lost = paket yang dibuang.
-* `CordMic.exe` (win-x64, self-contained, single-file) dan installer NSIS berhasil di-build; isi installer
-  dicek dengan 7-Zip (exe identik dengan hasil publish, skrip PowerShell ikut). Skrip PowerShell lolos
-  parser PowerShell 7 dan XML scheduled task-nya valid. **Semua ini dicek di Linux, bukan di Windows.**
-* Android 0.2.0 (bind port 50005 di interface tethering): build debug/release, lint 0 error, 3 unit test lulus.
-* **v0.3.0 (ganti nama UsbMic → CordMic)**: build ulang semuanya; APK `dev.cordmic` versi 0.3.0 (versionCode 3) berisi
-  `libcordmic_native.so`, lint 0 error, 3 unit test Kotlin lulus; 17 test Python lulus; 34 test .NET lulus.
-  Langkah upgrade installer (hapus UsbMic lama) dan migrasi setting/startup **belum dicoba di Windows sungguhan**.
-
-**Belum dites**:
-* Aplikasi Windows di Windows sungguhan: tampilan panduan/ikon tray, WASAPI ke VB-CABLE (NAudio),
-  deteksi adapter, UAC/runas, installer + uninstaller, aturan firewall, scheduled task metric.
-* Aplikasi di HP sungguhan (AAudio di S24 FE, foreground service, notifikasi, discovery lewat
-  rndis/ncm, perilaku saat kabel dicabut-colok).
-* Output WASAPI/VB-Cable sungguhan (PortAudio tidak tersedia di box; `audio_out.py` belum pernah
-  memutar suara), mode exclusive, ikon tray, dan Windows Firewall.
-* Latensi end-to-end nyata dan clock drift jangka panjang HP vs PC.
-
----
-
-## 8. Roadmap
-
-1. **Uji lapangan** di S24 FE + Windows 11 dan tuning `--jitter-ms`/blocksize berdasarkan statistik.
-2. **Kompensasi clock drift**: buang atau sisipkan 1 sampel saat buffer menjauh dari target,
-   bukan drop paket.
-3. **Opus** (mode 48 kHz, frame 5 ms/2.5 ms, FEC) sebagai opsi; PCM tetap default.
-4. **Auto-reconnect di HP**: deteksi kabel/tethering lewat broadcast `ACTION_USB_STATE` dan notifikasi
-   "nyalakan tethering". (Sisi Windows sudah: v0.2.0 memantau adapter RNDIS/NCM dan mengirim HELLO
-   proaktif ke HP.)
-5. ~~Receiver native~~ **selesai di v0.2.0** (`windows-app/`, tray + installer). Berikutnya: tanda tangan
-   kode (Authenticode) untuk installer agar SmartScreen tidak memperingatkan.
-6. **Driver audio virtual sendiri** (misalnya berbasis contoh SysVAD/"Virtual Audio Driver") agar
-   muncul langsung sebagai "CordMic Microphone" tanpa VB-Cable. Butuh penandatanganan driver
-   (EV cert / attestation signing Microsoft).
-7. PLC lebih baik (ulang paket terakhir dengan fade) dan indikator level mic di app/tray.
+[MIT](LICENSE) © CordMic contributors. VB-CABLE is a separate product by VB-Audio and is not included.
