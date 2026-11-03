@@ -1,39 +1,441 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent">
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="vertical" android:padding="20dp">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/root"
+    android:focusableInTouchMode="true"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="@string/app_name" android:textSize="26sp" android:textStyle="bold" />
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:text="@string/tagline" />
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
+        app:title="@string/app_name"
+        app:titleTextAppearance="@style/TextAppearance.CordMic.AppBar" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="@string/label_pc_ip" />
-        <EditText android:id="@+id/ip" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:hint="@string/hint_auto" android:inputType="text" android:digits="0123456789." android:importantForAutofill="no" />
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:fillViewport="true">
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/label_port" />
-        <EditText android:id="@+id/port" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:inputType="number" android:text="50005" android:importantForAutofill="no" />
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/label_mic_mode" />
-        <Spinner android:id="@+id/preset" android:layout_width="match_parent" android:layout_height="wrap_content" />
+            <LinearLayout
+                android:id="@+id/content"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="24dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintWidth_max="600dp">
 
-        <CheckBox android:id="@+id/aaudio" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:checked="true" android:text="@string/aaudio_option" />
+                <!-- Status: the one thing the screen answers -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/statusCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
 
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="12dp" android:orientation="horizontal">
-            <Button android:id="@+id/start" android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="@string/start" />
-            <Button android:id="@+id/stop" android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="@string/stop" />
-        </LinearLayout>
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
 
-        <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="16dp" android:fontFamily="monospace" android:textSize="13sp" />
-    </LinearLayout>
-</ScrollView>
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:id="@+id/stateIcon"
+                                android:layout_width="44dp"
+                                android:layout_height="44dp"
+                                android:importantForAccessibility="no"
+                                android:padding="10dp"
+                                android:src="@drawable/ic_mic"
+                                app:tint="@color/cm_on_surface_variant" />
+
+                            <TextView
+                                android:id="@+id/stateTitle"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="14dp"
+                                android:layout_weight="1"
+                                android:accessibilityHeading="true"
+                                android:accessibilityLiveRegion="polite"
+                                android:textAppearance="@style/TextAppearance.CordMic.StateTitle"
+                                tools:text="@string/state_idle_title" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/stateMessage"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:textAppearance="@style/TextAppearance.CordMic.Body"
+                            tools:text="@string/state_idle_msg_tether_on" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/hintAction"
+                            style="@style/Widget.CordMic.HintButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:visibility="gone"
+                            app:icon="@drawable/ic_usb"
+                            tools:text="@string/action_open_tethering"
+                            tools:visibility="visible" />
+
+                        <!-- Live numbers, only while streaming. All values come from the running service. -->
+                        <LinearLayout
+                            android:id="@+id/liveBlock"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="20dp"
+                            android:orientation="vertical"
+                            android:visibility="gone"
+                            tools:visibility="visible">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:importantForAccessibility="no"
+                                    android:text="@string/level_label"
+                                    android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+
+                                <TextView
+                                    android:id="@+id/levelValue"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:importantForAccessibility="no"
+                                    android:textAppearance="@style/TextAppearance.CordMic.RowValue"
+                                    tools:text="-18 dB" />
+                            </LinearLayout>
+
+                            <dev.cordmic.LevelMeterView
+                                android:id="@+id/level"
+                                android:layout_width="match_parent"
+                                android:layout_height="10dp"
+                                android:layout_marginTop="8dp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="18dp"
+                                android:baselineAligned="false"
+                                android:orientation="horizontal">
+
+                                <LinearLayout
+                                    android:id="@+id/statSentBox"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:focusable="true"
+                                    android:orientation="vertical">
+                                    <TextView
+                                        android:id="@+id/statSent"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:textAppearance="@style/TextAppearance.CordMic.StatValue"
+                                        tools:text="12,480" />
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/stat_sent"
+                                        android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+                                </LinearLayout>
+
+                                <LinearLayout
+                                    android:id="@+id/statErrorsBox"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:focusable="true"
+                                    android:orientation="vertical">
+                                    <TextView
+                                        android:id="@+id/statErrors"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:textAppearance="@style/TextAppearance.CordMic.StatValue"
+                                        tools:text="0" />
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/stat_errors"
+                                        android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+                                </LinearLayout>
+
+                                <LinearLayout
+                                    android:id="@+id/statReplyBox"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1.2"
+                                    android:focusable="true"
+                                    android:orientation="vertical">
+                                    <TextView
+                                        android:id="@+id/statReply"
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:textAppearance="@style/TextAppearance.CordMic.StatValue"
+                                        tools:text="0.4 s ago" />
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/stat_reply"
+                                        android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+                                </LinearLayout>
+                            </LinearLayout>
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- The one primary action -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/toggle"
+                    style="@style/Widget.CordMic.PrimaryButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="@string/start"
+                    app:icon="@drawable/ic_mic" />
+
+                <!-- Settings -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/settingsCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <LinearLayout
+                            android:id="@+id/settingsHeader"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:minHeight="64dp"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="20dp"
+                            android:paddingVertical="12dp">
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:accessibilityHeading="true"
+                                    android:text="@string/settings_title"
+                                    android:textAppearance="@style/TextAppearance.CordMic.SectionTitle" />
+                                <TextView
+                                    android:id="@+id/settingsSummary"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:textAppearance="@style/TextAppearance.CordMic.Caption"
+                                    tools:text="Auto-detect · port 50005 · Voice recognition" />
+                            </LinearLayout>
+
+                            <ImageView
+                                android:id="@+id/settingsChevron"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:importantForAccessibility="no"
+                                android:src="@drawable/ic_expand_more"
+                                app:tint="@color/cm_on_surface_variant" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/settingsBody"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingBottom="20dp">
+
+                            <TextView
+                                android:id="@+id/settingsLocked"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginBottom="12dp"
+                                android:text="@string/settings_locked"
+                                android:textAppearance="@style/TextAppearance.CordMic.Caption"
+                                android:visibility="gone" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/ipLayout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="@string/label_pc_ip"
+                                app:helperText="@string/helper_pc_ip"
+                                app:placeholderText="@string/ip_auto">
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/ip"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:digits="0123456789."
+                                    android:importantForAutofill="no"
+                                    android:inputType="number|numberDecimal"
+                                    android:maxLines="1" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/portLayout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:hint="@string/label_port"
+                                app:helperText="@string/helper_port">
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/port"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:importantForAutofill="no"
+                                    android:inputType="number"
+                                    android:maxLength="5"
+                                    android:maxLines="1" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/presetLayout"
+                                style="@style/Widget.CordMic.Dropdown"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:hint="@string/label_mic_mode">
+                                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                    android:id="@+id/preset"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="none"
+                                    android:minHeight="56dp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <LinearLayout
+                                android:id="@+id/aaudioRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:background="?attr/selectableItemBackground"
+                                android:gravity="center_vertical"
+                                android:minHeight="64dp"
+                                android:orientation="horizontal">
+                                <LinearLayout
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginEnd="12dp"
+                                    android:layout_weight="1"
+                                    android:importantForAccessibility="no"
+                                    android:orientation="vertical">
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/aaudio_option"
+                                        android:textAppearance="@style/TextAppearance.CordMic.RowValue"
+                                        android:textSize="15sp" />
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginTop="2dp"
+                                        android:text="@string/aaudio_help"
+                                        android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+                                </LinearLayout>
+                                <com.google.android.material.materialswitch.MaterialSwitch
+                                    android:id="@+id/aaudio"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:contentDescription="@string/aaudio_option"
+                                    android:minHeight="48dp" />
+                            </LinearLayout>
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Details (diagnostics) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/detailsCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <LinearLayout
+                            android:id="@+id/detailsHeader"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="?attr/selectableItemBackground"
+                            android:gravity="center_vertical"
+                            android:minHeight="64dp"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="20dp"
+                            android:paddingVertical="12dp">
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:orientation="vertical">
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:accessibilityHeading="true"
+                                    android:text="@string/details_title"
+                                    android:textAppearance="@style/TextAppearance.CordMic.SectionTitle" />
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="2dp"
+                                    android:text="@string/details_summary"
+                                    android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+                            </LinearLayout>
+                            <ImageView
+                                android:id="@+id/detailsChevron"
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:importantForAccessibility="no"
+                                android:src="@drawable/ic_expand_more"
+                                app:tint="@color/cm_on_surface_variant" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/detailsBody"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:paddingHorizontal="20dp"
+                            android:paddingBottom="12dp"
+                            android:visibility="gone" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
+    </androidx.core.widget.NestedScrollView>
+</LinearLayout>

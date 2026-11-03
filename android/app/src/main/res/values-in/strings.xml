@@ -1,32 +1,88 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="tagline">HP → mic PC lewat kabel USB (USB tethering + UDP)</string>
-    <string name="label_pc_ip">IP PC (kosongkan = auto-detect)</string>
-    <string name="hint_auto">auto</string>
+    <!-- Kartu status -->
+    <string name="state_idle_title">Siap dimulai</string>
+    <string name="state_idle_msg_tether_on">USB tethering aktif. Ketuk Mulai untuk menjadikan HP ini mikrofon PC.</string>
+    <string name="state_idle_msg_tether_off">Colok kabel USB dan aktifkan USB tethering, lalu ketuk Mulai.</string>
+    <string name="state_starting_title">Memulai</string>
+    <string name="state_starting_msg">Membuka mikrofon.</string>
+    <string name="state_waiting_title">Menunggu USB tethering</string>
+    <string name="state_waiting_msg">Aktifkan USB tethering di Pengaturan. CordMic tersambung begitu tethering aktif.</string>
+    <string name="state_searching_title">Mencari PC</string>
+    <string name="state_searching_msg">Pastikan CordMic berjalan di PC. Jika tidak ditemukan, isi alamat IP PC di Pengaturan di bawah.</string>
+    <string name="state_streaming_title">Streaming ke PC</string>
+    <string name="state_streaming_msg">Mengirim ke %1$s dengan %2$s.</string>
+    <string name="state_mic_failed_title">Mikrofon tidak tersedia</string>
+    <string name="state_mic_failed_msg">Aplikasi lain mungkin sedang memakai mikrofon. Tutup aplikasi itu, atau hentikan lalu mulai lagi.</string>
+    <string name="state_permission_title">Izin mikrofon diperlukan</string>
+    <string name="state_permission_msg">CordMic memerlukan akses mikrofon untuk mengirim suara kamu ke PC.</string>
+    <string name="action_open_tethering">Buka pengaturan tethering</string>
+    <string name="action_open_app_settings">Buka pengaturan aplikasi</string>
+    <string name="err_no_settings_app">Buka Pengaturan › Koneksi › Hotspot Seluler dan Tethering di HP kamu.</string>
+
+    <string name="level_label">Level input</string>
+    <string name="level_value_db">%1$d dB</string>
+    <string name="level_silent">Hening</string>
+    <string name="level_cd">Level input %1$s</string>
+    <string name="stat_sent">Paket terkirim</string>
+    <string name="stat_errors">Gagal kirim</string>
+    <string name="stat_reply">Balasan PC terakhir</string>
+    <string name="stat_reply_value">%1$s dtk lalu</string>
+
+    <!-- Aksi utama -->
+    <string name="start">Mulai</string>
+    <string name="stop">Hentikan</string>
+    <string name="start_cd">Mulai memakai HP ini sebagai mikrofon PC</string>
+    <string name="stop_cd">Hentikan streaming mikrofon</string>
+
+    <!-- Pengaturan -->
+    <string name="settings_title">Pengaturan</string>
+    <string name="settings_summary">%1$s · port %2$d · %3$s</string>
+    <string name="settings_locked">Hentikan streaming untuk mengubah pengaturan.</string>
+    <string name="ip_auto">Deteksi otomatis</string>
+    <string name="label_pc_ip">Alamat IP PC</string>
+    <string name="helper_pc_ip">Kosongkan agar PC ditemukan otomatis.</string>
     <string name="label_port">Port UDP</string>
-    <string name="label_mic_mode">Mode mic</string>
-    <string name="aaudio_option">AAudio low-latency (native)</string>
-    <string name="start">Start</string>
-    <string name="stop">Stop</string>
-    <string name="preset_voice_recognition">Voice Recognition (latensi rendah, default)</string>
-    <string name="preset_unprocessed">Unprocessed (raw, tanpa filter)</string>
-    <string name="preset_voice_communication">Voice Communication (noise suppression/AEC, +latensi)</string>
-    <string name="st_usb_iface">USB iface : %1$s</string>
-    <string name="st_stopped">Status    : berhenti</string>
-    <string name="st_status">Status    : %1$s</string>
-    <string name="st_engine">Engine    : %1$s</string>
-    <string name="st_sent">Terkirim  : %1$d paket, error %2$d</string>
-    <string name="err_port">Port tidak valid</string>
-    <string name="err_ip">IP tidak valid</string>
-    <string name="err_mic_permission">Izin mikrofon diperlukan</string>
-    <string name="notif_channel">Streaming CordMic</string>
-    <string name="notif_title">CordMic aktif</string>
-    <string name="notif_starting">Memulai…</string>
-    <string name="s_idle">Siaga</string>
-    <string name="s_stopped">Berhenti</string>
-    <string name="s_mic_failed">Gagal membuka mikrofon</string>
-    <string name="s_wait_tether">Menunggu USB tethering… (%1$s)</string>
-    <string name="s_searching">Mencari PC di %1$s…</string>
-    <string name="s_streaming">Streaming ke %1$s:%2$d • %3$s</string>
-    <string name="iface_none">tidak ada (USB tethering mati?)</string>
+    <string name="helper_port">Harus sama dengan port di aplikasi PC (default 50005).</string>
+    <string name="label_mic_mode">Mode mikrofon</string>
+    <string name="preset_voice_recognition">Pengenalan suara (default)</string>
+    <string name="preset_unprocessed">Tanpa pemrosesan</string>
+    <string name="preset_voice_communication">Komunikasi suara</string>
+    <string name="preset_voice_recognition_help">Pemrosesan minimal. Biasanya latensi paling rendah.</string>
+    <string name="preset_unprocessed_help">Sinyal mikrofon mentah tanpa filter.</string>
+    <string name="preset_voice_communication_help">Peredam bising dan peredam gema. Menambah latensi.</string>
+    <string name="aaudio_option">Mesin latensi rendah (AAudio)</string>
+    <string name="aaudio_help">Memakai jalur audio cepat Android. Matikan hanya jika suara putus-putus.</string>
+    <string name="err_port">Isi port dari 1 sampai 65535.</string>
+    <string name="err_ip">Isi alamat IPv4 seperti 192.168.42.10, atau kosongkan.</string>
+    <string name="expand_cd">Tampilkan %1$s</string>
+    <string name="collapse_cd">Sembunyikan %1$s</string>
+
+    <!-- Detail -->
+    <string name="details_title">Detail</string>
+    <string name="details_summary">Koneksi USB, mesin audio, dan buffer</string>
+    <string name="d_usb">Koneksi USB</string>
+    <string name="d_usb_off">Mati</string>
+    <string name="d_engine">Mesin audio</string>
+    <string name="d_mode_low_latency">latensi rendah</string>
+    <string name="d_mode_normal">latensi normal</string>
+    <string name="d_share_exclusive">eksklusif</string>
+    <string name="d_share_shared">bersama</string>
+    <string name="d_rate">Sample rate</string>
+    <string name="d_rate_value">%1$s Hz</string>
+    <string name="d_burst">Ukuran burst</string>
+    <string name="d_frames_ms">%1$s frame (%2$s ms)</string>
+    <string name="d_buffer">Kapasitas buffer</string>
+    <string name="d_xruns">Buffer overrun</string>
+    <string name="d_version">Versi aplikasi</string>
+    <string name="d_not_running">Tersedia saat CordMic berjalan.</string>
+
+    <string name="err_mic_permission">Izin mikrofon diperlukan.</string>
+
+    <!-- Notifikasi -->
+    <string name="notif_channel">Streaming mikrofon</string>
+    <string name="notif_waiting_text">Aktifkan USB tethering untuk tersambung.</string>
+    <string name="notif_searching_text">Buka CordMic di PC kamu.</string>
+    <string name="notif_streaming_text">Mengirim ke %1$s</string>
+    <string name="notif_mic_failed_text">Aplikasi lain mungkin sedang memakai mikrofon.</string>
 </resources>

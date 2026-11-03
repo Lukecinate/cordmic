@@ -14,8 +14,8 @@ android {
         applicationId = "dev.cordmic"
         minSdk = 29
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "0.4.0"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
     }
@@ -49,8 +49,29 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    buildFeatures { buildConfig = true }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            // ./gradlew testDebugUnitTest -PrecordScreenshots --tests dev.cordmic.ScreenshotTest
+            // writes the UI renders to docs/screenshots (Robolectric native graphics, no emulator needed).
+            all { test ->
+                if (project.hasProperty("recordScreenshots")) {
+                    test.systemProperty("cordmic.screenshots.dir", rootProject.file("../docs/screenshots").absolutePath)
+                }
+            }
+        }
+    }
 }
 
 dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("com.google.android.material:material:1.12.0")
     testImplementation("junit:junit:4.13.2")
+    // JVM screenshot tests (Robolectric native graphics, no emulator)
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core:1.6.1")
 }
+

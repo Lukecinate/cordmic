@@ -20,14 +20,16 @@ class MicService : Service() {
     private var streamer: Streamer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var lastText = ""
+    private var lastKey = ""
 
     private val ticker = object : Runnable {
         override fun run() {
             val s = streamer ?: return
-            if (s.status != lastText) {
-                lastText = s.status
-                getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(s.status))
+            val target = s.targetAddress?.let { "${it.address.hostAddress}:${it.port}" }
+            val key = "${s.state}|$target"
+            if (key != lastKey) {
+                lastKey = key
+                getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(s.state, target))
             }
             handler.postDelayed(this, 1000)
         }
@@ -43,9 +45,9 @@ class MicService : Service() {
         createChannel()
         // Android 14 (API 34) requires the type; mic FGS must be started while the app is visible.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_starting)), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            startForeground(NOTIF_ID, buildNotification(Streamer.State.STARTING, null), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
-            startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_starting)))
+            startForeground(NOTIF_ID, buildNotification(Streamer.State.STARTING, null))
         }
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CordMic:stream").apply { acquire(12 * 60 * 60 * 1000L) } // max 12 h
@@ -79,14 +81,22 @@ class MicService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(state: Streamer.State, target: String?): Notification {
+        val phase = Phase.of(state)
+        val text = when (state) {
+            Streamer.State.WAITING_TETHER -> getString(R.string.notif_waiting_text)
+            Streamer.State.SEARCHING -> getString(R.string.notif_searching_text)
+            Streamer.State.STREAMING -> getString(R.string.notif_streaming_text, target ?: getString(R.string.value_none))
+            Streamer.State.MIC_FAILED -> getString(R.string.notif_mic_failed_text)
+            else -> getString(R.string.state_starting_msg)
+        }
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, MicService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE)
         val b = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle(getString(R.string.notif_title))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(getString(UiCopy.title(phase)))
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(open)

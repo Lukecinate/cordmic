@@ -1,33 +1,91 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">CordMic</string>
-    <string name="tagline">Phone → PC microphone over a USB cable (USB tethering + UDP)</string>
-    <string name="label_pc_ip">PC IP (leave empty = auto-detect)</string>
-    <string name="hint_auto">auto</string>
-    <string name="label_port">UDP port</string>
-    <string name="label_mic_mode">Mic mode</string>
-    <string name="aaudio_option">AAudio low-latency (native)</string>
+
+    <!-- Status card -->
+    <string name="state_idle_title">Ready to start</string>
+    <string name="state_idle_msg_tether_on">USB tethering is on. Tap Start to use this phone as your PC microphone.</string>
+    <string name="state_idle_msg_tether_off">Connect the USB cable and turn on USB tethering, then tap Start.</string>
+    <string name="state_starting_title">Starting</string>
+    <string name="state_starting_msg">Opening the microphone.</string>
+    <string name="state_waiting_title">Waiting for USB tethering</string>
+    <string name="state_waiting_msg">Turn on USB tethering in Settings. CordMic connects as soon as it is on.</string>
+    <string name="state_searching_title">Looking for your PC</string>
+    <string name="state_searching_msg">Make sure CordMic is running on your PC. If it is not found, enter the PC IP address in Settings below.</string>
+    <string name="state_streaming_title">Streaming to your PC</string>
+    <string name="state_streaming_msg">Sending to %1$s with %2$s.</string>
+    <string name="state_mic_failed_title">Microphone unavailable</string>
+    <string name="state_mic_failed_msg">Another app may be using the microphone. Close it, or stop and start again.</string>
+    <string name="state_permission_title">Microphone permission needed</string>
+    <string name="state_permission_msg">CordMic needs microphone access to send your voice to the PC.</string>
+    <string name="action_open_tethering">Open tethering settings</string>
+    <string name="action_open_app_settings">Open app settings</string>
+    <string name="err_no_settings_app">Open Settings › Connections › Mobile Hotspot and Tethering on your phone.</string>
+
+    <string name="level_label">Input level</string>
+    <string name="level_value_db">%1$d dB</string>
+    <string name="level_silent">Silent</string>
+    <string name="level_cd">Input level %1$s</string>
+    <string name="stat_sent">Packets sent</string>
+    <string name="stat_errors">Send errors</string>
+    <string name="stat_reply">Last PC reply</string>
+    <string name="stat_reply_value">%1$s s ago</string>
+    <string name="value_none" translatable="false">—</string>
+
+    <!-- Primary action -->
     <string name="start">Start</string>
     <string name="stop">Stop</string>
-    <string name="preset_voice_recognition">Voice Recognition (low latency, default)</string>
-    <string name="preset_unprocessed">Unprocessed (raw, no filters)</string>
-    <string name="preset_voice_communication">Voice Communication (noise suppression/AEC, +latency)</string>
-    <string name="st_usb_iface">USB iface : %1$s</string>
-    <string name="st_stopped">Status    : stopped</string>
-    <string name="st_status">Status    : %1$s</string>
-    <string name="st_engine">Engine    : %1$s</string>
-    <string name="st_sent">Sent      : %1$d packets, %2$d errors</string>
-    <string name="err_port">Invalid port</string>
-    <string name="err_ip">Invalid IP address</string>
-    <string name="err_mic_permission">Microphone permission is required</string>
-    <string name="notif_channel">CordMic streaming</string>
-    <string name="notif_title">CordMic active</string>
-    <string name="notif_starting">Starting…</string>
-    <string name="s_idle">Idle</string>
-    <string name="s_stopped">Stopped</string>
-    <string name="s_mic_failed">Could not open the microphone</string>
-    <string name="s_wait_tether">Waiting for USB tethering… (%1$s)</string>
-    <string name="s_searching">Looking for the PC on %1$s…</string>
-    <string name="s_streaming">Streaming to %1$s:%2$d • %3$s</string>
-    <string name="iface_none">none (is USB tethering off?)</string>
+    <string name="start_cd">Start using this phone as the PC microphone</string>
+    <string name="stop_cd">Stop streaming the microphone</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_summary">%1$s · port %2$d · %3$s</string>
+    <string name="settings_locked">Stop streaming to change settings.</string>
+    <string name="ip_auto">Auto-detect</string>
+    <string name="label_pc_ip">PC IP address</string>
+    <string name="helper_pc_ip">Leave empty to find your PC automatically.</string>
+    <string name="label_port">UDP port</string>
+    <string name="helper_port">Must match the port in the PC app (default 50005).</string>
+    <string name="label_mic_mode">Microphone mode</string>
+    <string name="preset_voice_recognition">Voice recognition (default)</string>
+    <string name="preset_unprocessed">Unprocessed</string>
+    <string name="preset_voice_communication">Voice communication</string>
+    <string name="preset_voice_recognition_help">Minimal processing. Usually the lowest latency.</string>
+    <string name="preset_unprocessed_help">Raw microphone signal without filters.</string>
+    <string name="preset_voice_communication_help">Noise suppression and echo cancellation. Adds latency.</string>
+    <string name="aaudio_option">Low-latency engine (AAudio)</string>
+    <string name="aaudio_help">Uses the fast Android audio path. Turn off only if the audio cuts out.</string>
+    <string name="err_port">Enter a port from 1 to 65535.</string>
+    <string name="err_ip">Enter an IPv4 address such as 192.168.42.10, or leave it empty.</string>
+    <string name="expand_cd">Show %1$s</string>
+    <string name="collapse_cd">Hide %1$s</string>
+
+    <!-- Details -->
+    <string name="details_title">Details</string>
+    <string name="details_summary">USB connection, audio engine and buffer</string>
+    <string name="d_usb">USB connection</string>
+    <string name="d_usb_off">Off</string>
+    <string name="d_engine">Audio engine</string>
+    <string name="d_mode_low_latency">low latency</string>
+    <string name="d_mode_normal">normal latency</string>
+    <string name="d_share_exclusive">exclusive</string>
+    <string name="d_share_shared">shared</string>
+    <string name="d_rate">Sample rate</string>
+    <string name="d_rate_value">%1$s Hz</string>
+    <string name="d_burst">Burst size</string>
+    <string name="d_frames_ms">%1$s frames (%2$s ms)</string>
+    <string name="d_buffer">Buffer capacity</string>
+    <string name="d_xruns">Buffer overruns</string>
+    <string name="d_version">App version</string>
+    <string name="d_not_running">Available while CordMic is running.</string>
+
+    <string name="err_mic_permission">Microphone permission is required.</string>
+
+    <!-- Notification -->
+    <string name="notif_channel">Microphone streaming</string>
+    <string name="notif_waiting_text">Turn on USB tethering to connect.</string>
+    <string name="notif_searching_text">Open CordMic on your PC.</string>
+    <string name="notif_streaming_text">Sending to %1$s</string>
+    <string name="notif_mic_failed_text">Another app may be using the microphone.</string>
 </resources>
