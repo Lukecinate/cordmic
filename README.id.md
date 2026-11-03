@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/logo.png" width="112" height="112" alt="Logo CordMic"></p>
+
 # CordMic
 
 [English](README.md) | **Bahasa Indonesia**
@@ -253,7 +255,7 @@ cordmic/
 │       ├── cpp/aaudio_capture.cpp  capture AAudio low-latency (JNI)
 │       ├── java/dev/cordmic/     MainActivity, MicService, Streamer, Capture, TetherNet, Protocol
 │       └── res/values[-in]/      teks bahasa Inggris dan Indonesia (+ values-night untuk tema gelap)
-├── docs/                         tangkapan layar, ikon aplikasi, THIRD_PARTY_NOTICES.md
+├── docs/                         tangkapan layar, logo (assets/), THIRD_PARTY_NOTICES.md
 ├── third_party/fonts/            Plus Jakarta Sans + lisensi OFL
 ├── windows-app/                  aplikasi Windows, C# / .NET 8
 │   ├── src/CordMic.Core/         protokol, jitter buffer, receiver UDP, setting, tabel teks
@@ -362,7 +364,7 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audionya tidak berubah (header `
 
 [MIT](LICENSE) © CordMic contributors. VB-CABLE adalah produk terpisah dari VB-Audio dan tidak disertakan.
 
-Aset desain: ikon aplikasi dan ikon di dalam aplikasi memakai [Material Icons](https://fonts.google.com/icons)
-(gaya Round, Apache 2.0) dari Google; font UI adalah [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans)
+Aset desain: logo CordMic adalah aset asli proyek ini (dibuat oleh `tools/brand/make_logo.py`); ikon di dalam
+aplikasi memakai [Material Icons](https://fonts.google.com/icons) (gaya Round, Apache 2.0) dari Google; font UI adalah [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans)
 (SIL Open Font License 1.1). Rincian dan pustaka lain ada di
 [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).

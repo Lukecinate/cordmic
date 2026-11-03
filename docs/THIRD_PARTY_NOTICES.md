@@ -16,17 +16,29 @@ CordMic itself is MIT-licensed (see [LICENSE](../LICENSE)). It ships or builds o
 ## Icons
 
 **Material Icons, Round style** by Google: glyphs `mic`, `stop`, `usb`, `search`, `error_outline`
-and `expand_more` in `android/app/src/main/res/drawable-*dpi/` (plus a white copy of `mic` as `ic_notification`), and `mic`, `usb`, `search`,
+and `expand_more` in `android/app/src/main/res/drawable-*dpi/`, and `mic`, `usb`, `search`,
 `error_outline` in `windows-app/src/CordMic.App/Assets/icons/`.
 - License: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 - Source: https://github.com/google/material-design-icons and https://fonts.google.com/icons.
 - The files are PNG renders of the original glyphs. Where a state colour is needed, the Windows app recolours the
   glyph's alpha mask at runtime; the shapes are not changed.
 
-**CordMic app icon** (Android launcher, `cordmic.ico`, tray icons, `docs/cordmic-icon.png`): the Material Icons
-Round `mic` glyph (Apache 2.0, as above) in white on a teal (`#0B6B5D`) rounded square or circle. Tray icon
-colours: teal = streaming, grey = waiting, amber = needs attention, red = error. Delivered as standard files only:
-Android mipmap PNGs + adaptive-icon XML, Windows multi-size `.ico` (16/24/32/48/256 px), PNG for docs.
+## Logo
+
+**CordMic logo** (the "CM" monogram with a plug-shaped notch in the M, white on a teal `#007A7F` tile): an original
+CordMic asset generated for this project, not taken from a third party. The shapes are rebuilt as clean geometry by
+[`tools/brand/make_logo.py`](../tools/brand/make_logo.py) (Pillow), which writes every file from one source:
+- Android: adaptive launcher icon (`mipmap-*/ic_launcher_foreground.png` + `mipmap-anydpi/*.xml`, solid
+  background), white-on-transparent notification icon (`drawable-*/ic_notification.png`) and app-bar logo
+  (`drawable-*/ic_brand.png`).
+- Windows: multi-size `.ico` (16/24/32/48/64/128/256 px) for the app and installer, four tray-state `.ico` files
+  (grey = waiting, teal = streaming, amber = needs attention, red = error), `Assets/logo.png` for the setup guide
+  header, and the installer header/welcome bitmaps (`windows-app/installer/art/*.bmp`).
+- Docs: `docs/assets/logo.png`, `logo-mark.png`, `logo-mark-white.png`, `logo-mark-1024.png`, `play-store-512.png`
+  and `social-preview.png` (the social preview uses Plus Jakarta Sans, see above).
+
+At 16 and 24 px the plug notch is left out and the strokes are slightly heavier so the monogram stays readable.
+The logo is covered by the project's MIT license.
 
 ## Libraries
 
