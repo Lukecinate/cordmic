@@ -39,7 +39,7 @@ internal sealed class WizardForm : Form
         Icon = Theme.AppIcon();
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
-        ClientSize = new Size(680, 620);
+        ClientSize = new Size(680, 720);
         MinimumSize = new Size(620, 520);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Background;

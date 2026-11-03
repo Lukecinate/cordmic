@@ -255,7 +255,7 @@ internal sealed class AppController : ApplicationContext
 
     private ContextMenuStrip BuildMenu()
     {
-        var m = new ContextMenuStrip { ShowImageMargin = false, Font = Theme.Body, Renderer = new QuietMenuRenderer() };
+        var m = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = true, Font = Theme.Body, Renderer = new QuietMenuRenderer() };
         _miHeader = new ToolStripMenuItem("CordMic") { Enabled = false, Font = Theme.Strong, Tag = "header" };
         _miDetail = new ToolStripMenuItem("") { Enabled = false, Tag = "detail" };
         _miOutput = new ToolStripMenuItem(L.T("menu.output"));

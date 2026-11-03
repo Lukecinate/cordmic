@@ -105,11 +105,11 @@ public static class L
         // dialogs
         ["dlg.notCable"] = "\"{0}\" is not a virtual cable. Phone audio will play on this speaker/headset and will NOT appear as a microphone.\n\nUse it anyway? (useful only for a listening test)",
         ["dlg.micMode.title"] = "Mic mode",
-        ["dlg.micMode.body"] = "The microphone mode is chosen in the CordMic phone app (before tapping Start):\n\n" +
-            "• Voice Recognition – lowest latency, natural sound. Recommended for gaming.\n" +
+        ["dlg.micMode.body"] = "The microphone mode is set in the CordMic phone app, under Settings (before tapping Start):\n\n" +
+            "• Voice recognition (default) – minimal processing, usually the lowest latency. Recommended for gaming.\n" +
             "• Unprocessed – raw audio without filters (if the phone supports it).\n" +
-            "• Voice Communication – phone noise suppression + echo cancellation, slightly higher latency.\n\n" +
-            "Tip: with Voice Communication, turn off Noise Suppression/Echo Cancellation in Discord so audio is not processed twice.",
+            "• Voice communication – noise suppression and echo cancellation on the phone, adds latency.\n\n" +
+            "Tip: with Voice communication, turn off Noise Suppression/Echo Cancellation in Discord so audio is not processed twice.",
         ["dlg.noScript"] = "The repair script was not found. Reinstall CordMic with the installer.",
         ["dlg.startupFailed"] = "Could not change the startup setting: {0}",
         // wizard
@@ -132,11 +132,11 @@ public static class L
         ["wiz.cable.other"] = "Already have another virtual cable (VoiceMeeter, VAC)? CordMic recognizes those too.",
         ["wiz.cable.okTitle"] = "Virtual mic ready",
         ["wiz.cable.ok"] = "Found {0}. You can continue.",
-        ["wiz.cable.missing"] = "No virtual mic yet. Install VB-CABLE, then wait a moment.",
+        ["wiz.cable.missing"] = "Install VB-CABLE with the steps below, then wait a moment.",
         ["wiz.phone.title"] = "Connect the phone",
         ["wiz.phone.s1"] = "Connect the phone to the PC with a USB data cable (not a charge-only cable).",
         ["wiz.phone.s2"] = "On the phone: Settings → Connections → Mobile Hotspot and Tethering → USB tethering → turn on.",
-        ["wiz.phone.s3"] = "Open the CordMic app on the phone, choose Voice Recognition mode, then tap Start.",
+        ["wiz.phone.s3"] = "Open CordMic on the phone, keep the microphone mode on Voice recognition, then tap Start.",
         ["wiz.phone.note"] = "Samsung turns USB tethering off every time the cable is unplugged. After replugging, turn the toggle back on – the PC reconnects by itself. No USB debugging or Wi-Fi needed.",
         ["wiz.phone.ok"] = "Phone audio is coming in. Try speaking: the level bar should move.",
         ["wiz.phone.silent"] = "Connected, but no audio yet. Tap Start on the phone.",
@@ -147,7 +147,7 @@ public static class L
         ["wiz.apps.s2"] = "Zoom: Settings → Audio → Microphone → CABLE Output.",
         ["wiz.apps.s3"] = "Games without a mic option: make CABLE Output the default recording device in Windows.",
         ["wiz.apps.sound"] = "Open Windows Sound settings",
-        ["wiz.apps.note"] = "Speak now: the bar below should move. CordMic keeps running in the tray (bottom right) – a teal icon means streaming. Right-click the icon to change the jitter buffer or device.",
+        ["wiz.apps.note"] = "Speak now: the level bar in the status card should move. CordMic keeps running in the tray (bottom right) – a teal icon means streaming. Right-click the icon to change the jitter buffer or device.",
     };
 
     public static readonly IReadOnlyDictionary<string, string> Id = new Dictionary<string, string>
@@ -183,7 +183,7 @@ public static class L
         ["status.connected.detail"] = "Sekitar {0} ms di sisi PC, pulang-pergi {1} ms, {2}% hilang dalam 10 dtk terakhir.",
         ["balloon.lost.title"] = "Mic HP terputus",
         ["balloon.lost.noAdapter"] = "Cek kabel dan nyalakan lagi Tethering USB di HP.",
-        ["balloon.lost.adapter"] = "Buka CordMic di HP dan tekan Start.",
+        ["balloon.lost.adapter"] = "Buka CordMic di HP lalu ketuk Mulai.",
         ["menu.output"] = "Perangkat output",
         ["menu.jitter"] = "Jitter buffer",
         ["menu.micMode"] = "Mode mic (diatur di HP)…",
@@ -202,11 +202,11 @@ public static class L
         ["jitter.safe"] = "Aman (20 ms) – kalau suara putus-putus",
         ["dlg.notCable"] = "\"{0}\" bukan kabel virtual. Suara HP akan keluar di speaker/headset ini dan TIDAK muncul sebagai mikrofon.\n\nTetap pakai? (berguna hanya untuk tes dengar)",
         ["dlg.micMode.title"] = "Mode mic",
-        ["dlg.micMode.body"] = "Mode mikrofon dipilih di aplikasi CordMic di HP (sebelum menekan Start):\n\n" +
-            "• Voice Recognition – latensi paling rendah, suara natural. Disarankan untuk game.\n" +
-            "• Unprocessed – mentah tanpa filter (kalau HP mendukung).\n" +
-            "• Voice Communication – peredam bising + echo cancel dari HP, latensi sedikit lebih tinggi.\n\n" +
-            "Tips: kalau sudah pakai Voice Communication, matikan Noise Suppression/Echo Cancellation di Discord supaya tidak diproses dua kali.",
+        ["dlg.micMode.body"] = "Mode mikrofon diatur di aplikasi CordMic di HP, bagian Pengaturan (sebelum mengetuk Mulai):\n\n" +
+            "• Pengenalan suara (default) – pemrosesan minimal, biasanya latensi paling rendah. Disarankan untuk game.\n" +
+            "• Tanpa pemrosesan – sinyal mentah tanpa filter (kalau HP mendukung).\n" +
+            "• Komunikasi suara – peredam bising dan peredam gema di HP, menambah latensi.\n\n" +
+            "Tips: kalau sudah pakai Komunikasi suara, matikan Noise Suppression/Echo Cancellation di Discord supaya tidak diproses dua kali.",
         ["dlg.noScript"] = "Skrip perbaikan tidak ditemukan. Pasang ulang CordMic lewat installer.",
         ["dlg.startupFailed"] = "Gagal mengubah startup: {0}",
         ["wiz.title"] = "CordMic – Panduan penyiapan",
@@ -228,11 +228,11 @@ public static class L
         ["wiz.cable.other"] = "Sudah punya kabel virtual lain (VoiceMeeter, VAC)? CordMic juga mengenalinya.",
         ["wiz.cable.okTitle"] = "Mic virtual siap",
         ["wiz.cable.ok"] = "{0} ditemukan. Bisa lanjut.",
-        ["wiz.cable.missing"] = "Belum ada mic virtual. Pasang VB-CABLE, lalu tunggu sebentar.",
+        ["wiz.cable.missing"] = "Pasang VB-CABLE dengan langkah di bawah, lalu tunggu sebentar.",
         ["wiz.phone.title"] = "Sambungkan HP",
         ["wiz.phone.s1"] = "Colok HP ke PC dengan kabel USB data (bukan kabel charge saja).",
         ["wiz.phone.s2"] = "Di HP: Pengaturan → Koneksi → Hotspot Seluler dan Tethering → Tethering USB → nyalakan.",
-        ["wiz.phone.s3"] = "Buka aplikasi CordMic di HP, pilih mode Voice Recognition, lalu ketuk Mulai.",
+        ["wiz.phone.s3"] = "Buka CordMic di HP, biarkan mode mikrofon di Pengenalan suara, lalu ketuk Mulai.",
         ["wiz.phone.note"] = "Samsung mematikan Tethering USB setiap kabel dicabut. Setelah colok ulang, nyalakan lagi toggle-nya – PC akan tersambung sendiri. Tidak perlu USB debugging atau Wi-Fi.",
         ["wiz.phone.ok"] = "Suara HP masuk. Coba bicara: bar level harus bergerak.",
         ["wiz.phone.silent"] = "Terhubung, tapi belum ada suara. Ketuk Mulai di HP.",
@@ -243,6 +243,6 @@ public static class L
         ["wiz.apps.s2"] = "Zoom: Settings → Audio → Microphone → CABLE Output.",
         ["wiz.apps.s3"] = "Game tanpa pilihan mic: jadikan CABLE Output perangkat rekaman default di Windows.",
         ["wiz.apps.sound"] = "Buka pengaturan Sound Windows",
-        ["wiz.apps.note"] = "Bicara sekarang: bar di bawah harus bergerak. CordMic tetap jalan di tray (pojok kanan bawah) – ikon teal berarti streaming. Klik kanan ikon untuk ganti jitter buffer atau perangkat.",
+        ["wiz.apps.note"] = "Bicara sekarang: bar level di kartu status harus bergerak. CordMic tetap jalan di tray (pojok kanan bawah) – ikon teal berarti streaming. Klik kanan ikon untuk ganti jitter buffer atau perangkat.",
     };
 }
