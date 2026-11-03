@@ -1,4 +1,4 @@
-; CordMic installer (NSIS 3, Unicode). Build on Linux:  makensis -V2 cordmic.nsi
+; CordMic installer (NSIS 3, Unicode). Build:  makensis -V2 -DVERSION=x.y.z cordmic.nsi
 ; Input: ../publish (dotnet publish win-x64 single-file) and tools/*.ps1
 
 Unicode true
@@ -7,9 +7,9 @@ SetCompressorDictSize 64
 
 !define APPNAME   "CordMic"
 !ifndef VERSION
-  !define VERSION "0.3.0"
+  !define VERSION "0.3.1"
 !endif
-!define PUBLISHER "In-house"
+!define PUBLISHER "CordMic contributors"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CordMic"
 !define RUNKEY    "Software\Microsoft\Windows\CurrentVersion\Run"
 ; Pre-0.3.0 product name (upgrade path: the old install is removed cleanly, user settings are kept).
@@ -32,7 +32,7 @@ VIAddVersionKey /LANG=0 "FileDescription" "CordMic Setup"
 VIAddVersionKey /LANG=0 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=0 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=0 "CompanyName" "${PUBLISHER}"
-VIAddVersionKey /LANG=0 "LegalCopyright" "${PUBLISHER}"
+VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright (c) ${PUBLISHER}. MIT License."
 
 !include "MUI2.nsh"
 !include "x64.nsh"
@@ -43,27 +43,58 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "${PUBLISHER}"
 !define MUI_ABORTWARNING
 !define MUI_COMPONENTSPAGE_NODESC
 
-!define MUI_WELCOMEPAGE_TITLE "Pasang CordMic"
-!define MUI_WELCOMEPAGE_TEXT "CordMic menjadikan HP Android sebagai mikrofon PC lewat kabel USB (USB tethering), tanpa Wi-Fi dan tanpa USB debugging.$\r$\n$\r$\nInstaller ini akan:$\r$\n  • memasang aplikasi tray CordMic$\r$\n  • membuka port UDP 50005 di firewall (hanya jaringan lokal)$\r$\n  • membuat adapter HP berprioritas rendah agar game tetap pakai LAN/Wi-Fi$\r$\n$\r$\nMic virtual (VB-CABLE) dipasang terpisah dari situs resminya; panduan akan muncul setelah instalasi."
+!define MUI_WELCOMEPAGE_TITLE "$(TxtWelcomeTitle)"
+!define MUI_WELCOMEPAGE_TEXT "$(TxtWelcomeText)"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_FINISHPAGE_TITLE "CordMic sudah terpasang"
-!define MUI_FINISHPAGE_TEXT "CordMic berjalan di tray (pojok kanan bawah). Panduan penyiapan akan terbuka saat aplikasi dijalankan."
+!define MUI_FINISHPAGE_TITLE "$(TxtFinishTitle)"
+!define MUI_FINISHPAGE_TEXT "$(TxtFinishText)"
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Jalankan CordMic sekarang"
+!define MUI_FINISHPAGE_RUN_TEXT "$(TxtFinishRun)"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchUnelevated
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
+; English is the default; Indonesian is picked automatically when the Windows UI language is Indonesian.
+!insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "Indonesian"
+
+LangString TxtWelcomeTitle ${LANG_ENGLISH} "Install CordMic"
+LangString TxtWelcomeTitle ${LANG_INDONESIAN} "Pasang CordMic"
+LangString TxtWelcomeText ${LANG_ENGLISH} "CordMic turns an Android phone into a PC microphone over a USB cable (USB tethering), with no Wi-Fi and no USB debugging.$\r$\n$\r$\nThis installer will:$\r$\n  • install the CordMic tray app$\r$\n  • open UDP port 50005 in the firewall (local network only)$\r$\n  • give the phone adapter a low priority so games keep using LAN/Wi-Fi$\r$\n$\r$\nThe virtual mic (VB-CABLE) is installed separately from its official site; a setup guide opens after installation."
+LangString TxtWelcomeText ${LANG_INDONESIAN} "CordMic menjadikan HP Android sebagai mikrofon PC lewat kabel USB (USB tethering), tanpa Wi-Fi dan tanpa USB debugging.$\r$\n$\r$\nInstaller ini akan:$\r$\n  • memasang aplikasi tray CordMic$\r$\n  • membuka port UDP 50005 di firewall (hanya jaringan lokal)$\r$\n  • membuat adapter HP berprioritas rendah agar game tetap pakai LAN/Wi-Fi$\r$\n$\r$\nMic virtual (VB-CABLE) dipasang terpisah dari situs resminya; panduan akan muncul setelah instalasi."
+LangString TxtFinishTitle ${LANG_ENGLISH} "CordMic is installed"
+LangString TxtFinishTitle ${LANG_INDONESIAN} "CordMic sudah terpasang"
+LangString TxtFinishText ${LANG_ENGLISH} "CordMic runs in the system tray (bottom right). The setup guide opens when the app starts."
+LangString TxtFinishText ${LANG_INDONESIAN} "CordMic berjalan di tray (pojok kanan bawah). Panduan penyiapan akan terbuka saat aplikasi dijalankan."
+LangString TxtFinishRun ${LANG_ENGLISH} "Run CordMic now"
+LangString TxtFinishRun ${LANG_INDONESIAN} "Jalankan CordMic sekarang"
+LangString TxtNeed64 ${LANG_ENGLISH} "CordMic requires 64-bit Windows."
+LangString TxtNeed64 ${LANG_INDONESIAN} "CordMic membutuhkan Windows 64-bit."
+LangString TxtRemoveLegacy ${LANG_ENGLISH} "Removing the old ${LEGACYNAME} installation…"
+LangString TxtRemoveLegacy ${LANG_INDONESIAN} "Menghapus instalasi lama ${LEGACYNAME}…"
+LangString TxtClosing ${LANG_ENGLISH} "Closing running CordMic…"
+LangString TxtClosing ${LANG_INDONESIAN} "Menutup CordMic yang sedang berjalan…"
+LangString TxtShortcutDesc ${LANG_ENGLISH} "Use your phone as a PC microphone over USB"
+LangString TxtShortcutDesc ${LANG_INDONESIAN} "HP sebagai mikrofon PC lewat USB"
+LangString TxtConfigure ${LANG_ENGLISH} "Configuring the firewall (UDP 50005) and phone adapter priority…"
+LangString TxtConfigure ${LANG_INDONESIAN} "Mengatur firewall (UDP 50005) dan prioritas adapter HP…"
+LangString TxtPsFailed ${LANG_ENGLISH} "PowerShell setup failed ($0). Using netsh for the firewall."
+LangString TxtPsFailed ${LANG_INDONESIAN} "PowerShell setup gagal ($0). Memakai netsh untuk firewall."
+LangString SecMainName ${LANG_ENGLISH} "CordMic (required)"
+LangString SecMainName ${LANG_INDONESIAN} "CordMic (wajib)"
+LangString SecStartupName ${LANG_ENGLISH} "Start automatically with Windows"
+LangString SecStartupName ${LANG_INDONESIAN} "Jalan otomatis saat Windows mulai"
+LangString SecDesktopName ${LANG_ENGLISH} "Desktop shortcut"
+LangString SecDesktopName ${LANG_INDONESIAN} "Shortcut di Desktop"
 
 Function .onInit
   ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "CordMic membutuhkan Windows 64-bit."
+    MessageBox MB_ICONSTOP "$(TxtNeed64)"
     Abort
   ${EndIf}
   SetRegView 64
@@ -92,7 +123,7 @@ Function RemoveLegacyUsbMic
   ${AndIf} $2 == ""
     Return
   ${EndIf}
-  DetailPrint "Menghapus instalasi lama ${LEGACYNAME}…"
+  DetailPrint "$(TxtRemoveLegacy)"
   nsExec::Exec '"$SYSDIR\taskkill.exe" /IM ${LEGACYNAME}.exe /F'
   Pop $0
   Sleep 700
@@ -120,9 +151,9 @@ Function RemoveLegacyUsbMic
   DeleteRegKey HKLM "${LEGACYKEY}"
 FunctionEnd
 
-Section "CordMic (wajib)" SecMain
+Section "$(SecMainName)" SecMain
   SectionIn RO
-  DetailPrint "Menutup CordMic yang sedang berjalan…"
+  DetailPrint "$(TxtClosing)"
   nsExec::Exec '"$SYSDIR\taskkill.exe" /IM CordMic.exe /F'
   Pop $0
   Sleep 700
@@ -138,7 +169,7 @@ Section "CordMic (wajib)" SecMain
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
   SetShellVarContext all
-  CreateShortcut "$SMPROGRAMS\CordMic.lnk" "$INSTDIR\CordMic.exe" "" "$INSTDIR\CordMic.exe" 0 SW_SHOWNORMAL "" "HP sebagai mikrofon PC lewat USB"
+  CreateShortcut "$SMPROGRAMS\CordMic.lnk" "$INSTDIR\CordMic.exe" "" "$INSTDIR\CordMic.exe" 0 SW_SHOWNORMAL "" "$(TxtShortcutDesc)"
 
   WriteRegStr   HKLM "${UNINSTKEY}" "DisplayName" "CordMic"
   WriteRegStr   HKLM "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
@@ -150,21 +181,21 @@ Section "CordMic (wajib)" SecMain
   WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
   WriteRegDWORD HKLM "${UNINSTKEY}" "EstimatedSize" 150000
 
-  DetailPrint "Mengatur firewall (UDP 50005) dan prioritas adapter HP…"
+  DetailPrint "$(TxtConfigure)"
   nsExec::ExecToLog '"${PS}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\tools\cordmic-setup.ps1" -Action Install -InstallDir "$INSTDIR\tools"'
   Pop $0
   ${If} $0 != 0
-    DetailPrint "PowerShell setup gagal ($0). Memakai netsh untuk firewall."
+    DetailPrint "$(TxtPsFailed)"
     nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="CordMic (UDP 50005)" dir=in action=allow protocol=UDP localport=50005 program="$INSTDIR\CordMic.exe" remoteip=localsubnet profile=any'
     Pop $0
   ${EndIf}
 SectionEnd
 
-Section "Jalan otomatis saat Windows mulai" SecStartup
+Section "$(SecStartupName)" SecStartup
   WriteRegStr HKCU "${RUNKEY}" "CordMic" '"$INSTDIR\CordMic.exe" --tray'
 SectionEnd
 
-Section /o "Shortcut di Desktop" SecDesktop
+Section /o "$(SecDesktopName)" SecDesktop
   SetShellVarContext current
   CreateShortcut "$DESKTOP\CordMic.lnk" "$INSTDIR\CordMic.exe"
 SectionEnd
