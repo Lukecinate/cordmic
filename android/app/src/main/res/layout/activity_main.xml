@@ -5,32 +5,32 @@
         android:orientation="vertical" android:padding="20dp">
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="CordMic" android:textSize="26sp" android:textStyle="bold" />
+            android:text="@string/app_name" android:textSize="26sp" android:textStyle="bold" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            android:text="HP → mic PC lewat kabel USB (USB tethering + UDP)" />
+            android:text="@string/tagline" />
 
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="IP PC (kosongkan = auto-detect)" />
+            android:text="@string/label_pc_ip" />
         <EditText android:id="@+id/ip" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:hint="auto" android:inputType="text" android:digits="0123456789." android:importantForAutofill="no" />
+            android:hint="@string/hint_auto" android:inputType="text" android:digits="0123456789." android:importantForAutofill="no" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Port UDP" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/label_port" />
         <EditText android:id="@+id/port" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:inputType="number" android:text="50005" android:importantForAutofill="no" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Mode mic" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/label_mic_mode" />
         <Spinner android:id="@+id/preset" android:layout_width="match_parent" android:layout_height="wrap_content" />
 
         <CheckBox android:id="@+id/aaudio" android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:checked="true" android:text="AAudio low-latency (native)" />
+            android:checked="true" android:text="@string/aaudio_option" />
 
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="12dp" android:orientation="horizontal">
             <Button android:id="@+id/start" android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="Start" />
+                android:layout_weight="1" android:text="@string/start" />
             <Button android:id="@+id/stop" android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1" android:text="Stop" />
+                android:layout_weight="1" android:text="@string/stop" />
         </LinearLayout>
 
         <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content"

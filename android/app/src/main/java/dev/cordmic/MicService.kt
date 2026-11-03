@@ -1,5 +1,6 @@
 package dev.cordmic
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -42,9 +43,9 @@ class MicService : Service() {
         createChannel()
         // Android 14 (API 34) requires the type; mic FGS must be started while the app is visible.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(NOTIF_ID, buildNotification("Memulai…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_starting)), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
-            startForeground(NOTIF_ID, buildNotification("Memulai…"))
+            startForeground(NOTIF_ID, buildNotification(getString(R.string.notif_starting)))
         }
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CordMic:stream").apply { acquire(12 * 60 * 60 * 1000L) } // max 12 h
@@ -54,7 +55,7 @@ class MicService : Service() {
             preset = intent?.getIntExtra(EXTRA_PRESET, 6) ?: 6,
             useAAudio = intent?.getBooleanExtra(EXTRA_AAUDIO, true) ?: true,
         )
-        streamer = Streamer(cfg).also { current = it; it.start() }
+        streamer = Streamer(applicationContext, cfg).also { current = it; it.start() }
         handler.post(ticker)
         // Not sticky: Android 14 forbids restarting a microphone FGS from the background.
         return START_NOT_STICKY
@@ -74,7 +75,7 @@ class MicService : Service() {
     }
 
     private fun createChannel() {
-        val ch = NotificationChannel(CHANNEL, "CordMic streaming", NotificationManager.IMPORTANCE_LOW)
+        val ch = NotificationChannel(CHANNEL, getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW)
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
@@ -85,11 +86,11 @@ class MicService : Service() {
             PendingIntent.FLAG_IMMUTABLE)
         val b = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_mic)
-            .setContentTitle("CordMic aktif")
+            .setContentTitle(getString(R.string.notif_title))
             .setContentText(text)
             .setOngoing(true)
             .setContentIntent(open)
-            .addAction(Notification.Action.Builder(null, "Stop", stop).build())
+            .addAction(Notification.Action.Builder(null, getString(R.string.stop), stop).build())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
@@ -104,6 +105,8 @@ class MicService : Service() {
         const val EXTRA_AAUDIO = "aaudio"
         private const val CHANNEL = "cordmic"
         private const val NOTIF_ID = 1
+        // Streamer holds only the application context, which cannot leak an Activity.
+        @SuppressLint("StaticFieldLeak")
         @Volatile var current: Streamer? = null
 
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, MicService::class.java).setAction(ACTION_STOP))

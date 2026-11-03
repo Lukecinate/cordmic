@@ -32,5 +32,5 @@ object TetherNet {
         return cands.firstOrNull { USB_NAMES.containsMatchIn(it.name) }
     }
 
-    fun describe(): String = find()?.let { "${it.name} ${it.local.hostAddress}/${it.prefix}" } ?: "tidak ada (USB tethering mati?)"
+    fun describe(none: String = "none"): String = find()?.let { "${it.name} ${it.local.hostAddress}/${it.prefix}" } ?: none
 }

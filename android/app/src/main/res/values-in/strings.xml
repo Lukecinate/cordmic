@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tagline">HP → mic PC lewat kabel USB (USB tethering + UDP)</string>
+    <string name="label_pc_ip">IP PC (kosongkan = auto-detect)</string>
+    <string name="hint_auto">auto</string>
+    <string name="label_port">Port UDP</string>
+    <string name="label_mic_mode">Mode mic</string>
+    <string name="aaudio_option">AAudio low-latency (native)</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="preset_voice_recognition">Voice Recognition (latensi rendah, default)</string>
+    <string name="preset_unprocessed">Unprocessed (raw, tanpa filter)</string>
+    <string name="preset_voice_communication">Voice Communication (noise suppression/AEC, +latensi)</string>
+    <string name="st_usb_iface">USB iface : %1$s</string>
+    <string name="st_stopped">Status    : berhenti</string>
+    <string name="st_status">Status    : %1$s</string>
+    <string name="st_engine">Engine    : %1$s</string>
+    <string name="st_sent">Terkirim  : %1$d paket, error %2$d</string>
+    <string name="err_port">Port tidak valid</string>
+    <string name="err_ip">IP tidak valid</string>
+    <string name="err_mic_permission">Izin mikrofon diperlukan</string>
+    <string name="notif_channel">Streaming CordMic</string>
+    <string name="notif_title">CordMic aktif</string>
+    <string name="notif_starting">Memulai…</string>
+    <string name="s_idle">Siaga</string>
+    <string name="s_stopped">Berhenti</string>
+    <string name="s_mic_failed">Gagal membuka mikrofon</string>
+    <string name="s_wait_tether">Menunggu USB tethering… (%1$s)</string>
+    <string name="s_searching">Mencari PC di %1$s…</string>
+    <string name="s_streaming">Streaming ke %1$s:%2$d • %3$s</string>
+    <string name="iface_none">tidak ada (USB tethering mati?)</string>
+</resources>
