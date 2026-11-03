@@ -19,7 +19,7 @@ internal sealed class AppController : ApplicationContext
     private readonly FileLog _log;
     private readonly SynchronizationContext _ui;
     private readonly NotifyIcon _tray;
-    private readonly ContextMenuStrip _menu;
+    private ContextMenuStrip _menu;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly NetWatcher _net = new();
     private readonly AudioEngine _audio;
@@ -39,7 +39,7 @@ internal sealed class AppController : ApplicationContext
     private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miOutput = null!, _miJitter = null!,
                               _miStartup = null!, _miFixRoute = null!;
 
-    public AppStatus Status { get; private set; } = new(Health.Waiting, "Memulai…", "", "CordMic");
+    public AppStatus Status { get; private set; } = new(Health.Waiting, L.T("status.starting"), "", "CordMic");
     public StatsSnapshot? Stats { get; private set; }
     public TetherAdapter? Adapter => _net.Current;
     public string? CableName { get; private set; }
@@ -53,6 +53,7 @@ internal sealed class AppController : ApplicationContext
         _log = new FileLog(Paths.Log);
         var migrated = Migration.Run();
         _settings = AppSettings.Load(Paths.Settings);
+        ApplyLanguage();
         Log($"CordMic {Application.ProductVersion} start, exe={Paths.ExePath}");
         foreach (var m in migrated) Log(m);
 
@@ -105,7 +106,7 @@ internal sealed class AppController : ApplicationContext
         catch (Exception ex)
         {
             rx.Dispose();
-            _rxError = $"Port UDP {_settings.Port} dipakai aplikasi lain (mis. receiver Python). Tutup lalu tunggu.";
+            _rxError = L.T("status.portBusy.detail", _settings.Port);
             if (_nextRxTry == DateTime.MinValue || Status.Health != Health.Error) Log($"bind udp {_settings.Port} failed: {ex.Message}");
             _nextRxTry = DateTime.UtcNow.AddSeconds(5);
         }
@@ -175,8 +176,8 @@ internal sealed class AppController : ApplicationContext
         _peerSince = DateTime.MinValue;
         _lossWin.Clear();
         if (wasLong)
-            _tray.ShowBalloonTip(4000, "Mic HP terputus",
-                _net.Current is null ? "Cek kabel dan nyalakan lagi Tethering USB di HP." : "Buka CordMic di HP dan tekan Start.",
+            _tray.ShowBalloonTip(4000, L.T("balloon.lost.title"),
+                _net.Current is null ? L.T("balloon.lost.noAdapter") : L.T("balloon.lost.adapter"),
                 ToolTipIcon.Warning);
     }
 
@@ -211,21 +212,21 @@ internal sealed class AppController : ApplicationContext
         var a = _net.Current;
         AppStatus st;
         if (_rx is null)
-            st = new(Health.Error, "Port sibuk", _rxError ?? "Tidak bisa membuka port UDP.", "CordMic: port UDP sibuk\nTutup aplikasi lain yang memakai port 50005");
+            st = new(Health.Error, L.T("status.portBusy.title"), _rxError ?? L.T("status.portBusy.fallback"), L.T("status.portBusy.tip"));
         else if (WantedOutput() is null)
         {
             bool manual = _settings.OutputDeviceId is not null;
             st = manual
-                ? new(Health.Warn, "Perangkat output hilang", $"\"{_settings.OutputDeviceName}\" tidak ditemukan. Pilih lagi di menu Perangkat output.", "CordMic: perangkat output tidak ada\nPilih ulang di menu")
-                : new(Health.Warn, "Mic virtual belum ada", "Pasang VB-CABLE dulu. Buka Panduan penyiapan.", "CordMic: mic virtual belum terpasang\nKlik dua kali untuk panduan");
+                ? new(Health.Warn, L.T("status.outputGone.title"), L.T("status.outputGone.detail", _settings.OutputDeviceName), L.T("status.outputGone.tip"))
+                : new(Health.Warn, L.T("status.noCable.title"), L.T("status.noCable.detail"), L.T("status.noCable.tip"));
         }
         else if (!_audio.Playing)
-            st = new(Health.Error, "Output audio error", _audio.LastError ?? "Membuka perangkat audio…", "CordMic: output audio error\nMencoba lagi otomatis");
+            st = new(Health.Error, L.T("status.audioError.title"), _audio.LastError ?? L.T("status.audioError.fallback"), L.T("status.audioError.tip"));
         else if (s?.Peer is null)
         {
             st = a is null
-                ? new(Health.Waiting, "Menunggu HP", "Colok kabel USB dan nyalakan Tethering USB di HP.", "CordMic: menunggu HP\nColok kabel & nyalakan Tethering USB")
-                : new(Health.Waiting, "HP terdeteksi", $"Adapter {a.Description} ({a.PhoneIp}). Buka CordMic di HP lalu tekan Start.", "CordMic: HP terdeteksi\nBuka CordMic di HP, tekan Start");
+                ? new(Health.Waiting, L.T("status.waiting.title"), L.T("status.waiting.detail"), L.T("status.waiting.tip"))
+                : new(Health.Waiting, L.T("status.detected.title"), L.T("status.detected.detail", a.Description, a.PhoneIp), L.T("status.detected.tip"));
         }
         else
         {
@@ -233,10 +234,12 @@ internal sealed class AppController : ApplicationContext
             var rtt = s.RttMs is { } r ? $"{r:F1}" : "-";
             bool silent = s.SecondsSinceAudio > 1.5;
             bool viaPhone = a?.CarriesInternet == true;
-            var tip = $"CordMic: terhubung\nLatensi ~{lat:F0} ms (sisi PC) · RTT {rtt} ms\nLoss {RecentLossPct:F1}% · buffer {s.DepthMs:F0} ms";
-            if (silent) st = new(Health.Warn, "Terhubung, audio berhenti", "HP tersambung tapi tidak mengirim suara. Cek aplikasi di HP.", "CordMic: terhubung tapi tidak ada suara\nCek aplikasi di HP");
-            else if (viaPhone) st = new(Health.Warn, "Terhubung (cek jaringan)", "Internet PC lewat HP. Pakai menu \"Perbaiki prioritas jaringan\" agar game tetap pakai LAN/Wi-Fi.", tip + "\n! Internet lewat HP");
-            else st = new(Health.Ok, "Terhubung", $"Latensi ~{lat:F0} ms sisi PC, RTT {rtt} ms, loss {RecentLossPct:F1}% (10 dtk).", tip);
+            var latS = lat.ToString("F0", System.Globalization.CultureInfo.InvariantCulture);
+            var lossS = RecentLossPct.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+            var tip = L.T("status.connected.tip", latS, rtt, lossS, s.DepthMs.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
+            if (silent) st = new(Health.Warn, L.T("status.silent.title"), L.T("status.silent.detail"), L.T("status.silent.tip"));
+            else if (viaPhone) st = new(Health.Warn, L.T("status.viaPhone.title"), L.T("status.viaPhone.detail"), tip + L.T("status.viaPhone.tipSuffix"));
+            else st = new(Health.Ok, L.T("status.connected.title"), L.T("status.connected.detail", latS, rtt, lossS), tip);
         }
         Status = st;
 
@@ -255,10 +258,10 @@ internal sealed class AppController : ApplicationContext
         var m = new ContextMenuStrip { ShowImageMargin = false, Font = Theme.Body };
         _miHeader = new ToolStripMenuItem("CordMic") { Enabled = false, Font = Theme.Strong };
         _miDetail = new ToolStripMenuItem("") { Enabled = false };
-        _miOutput = new ToolStripMenuItem("Perangkat output");
+        _miOutput = new ToolStripMenuItem(L.T("menu.output"));
         _miOutput.DropDownOpening += (_, _) => FillOutputMenu();
         _miOutput.DropDownItems.Add("…");
-        _miJitter = new ToolStripMenuItem("Jitter buffer");
+        _miJitter = new ToolStripMenuItem(L.T("menu.jitter"));
         foreach (var p in Enum.GetValues<JitterPreset>())
         {
             var it = new ToolStripMenuItem(Presets.Label(p)) { Tag = p };
@@ -269,18 +272,29 @@ internal sealed class AppController : ApplicationContext
         {
             foreach (ToolStripMenuItem it in _miJitter.DropDownItems) it.Checked = (JitterPreset)it.Tag! == _settings.Jitter;
         };
-        var miMode = new ToolStripMenuItem("Mode mic (diatur di HP)…", null, (_, _) => ShowMicModeInfo());
-        var miWizard = new ToolStripMenuItem("Panduan penyiapan…", null, (_, _) => ShowWizard());
-        _miFixRoute = new ToolStripMenuItem("Perbaiki prioritas jaringan HP…", null, (_, _) => FixRoute()) { Visible = false };
-        var miLog = new ToolStripMenuItem("Buka log", null, (_, _) => OpenLog());
-        _miStartup = new ToolStripMenuItem("Jalan saat Windows mulai", null, (_, _) => ToggleStartup()) { CheckOnClick = false };
-        var miQuit = new ToolStripMenuItem("Keluar", null, (_, _) => Quit());
+        var miMode = new ToolStripMenuItem(L.T("menu.micMode"), null, (_, _) => ShowMicModeInfo());
+        var miWizard = new ToolStripMenuItem(L.T("menu.wizard"), null, (_, _) => ShowWizard());
+        _miFixRoute = new ToolStripMenuItem(L.T("menu.fixRoute"), null, (_, _) => FixRoute()) { Visible = false };
+        var miLog = new ToolStripMenuItem(L.T("menu.openLog"), null, (_, _) => OpenLog());
+        _miStartup = new ToolStripMenuItem(L.T("menu.startup"), null, (_, _) => ToggleStartup()) { CheckOnClick = false };
+        var miLang = new ToolStripMenuItem(L.T("menu.language"));
+        foreach (var (code, label) in new[] { (L.Auto, L.T("menu.language.auto")), (L.English, "English"), (L.Indonesian, "Bahasa Indonesia") })
+        {
+            var it = new ToolStripMenuItem(label) { Tag = code };
+            it.Click += (_, _) => SetLanguage((string)it.Tag!);
+            miLang.DropDownItems.Add(it);
+        }
+        miLang.DropDownOpening += (_, _) =>
+        {
+            foreach (ToolStripMenuItem it in miLang.DropDownItems) it.Checked = (string)it.Tag! == (_settings.Language ?? L.Auto);
+        };
+        var miQuit = new ToolStripMenuItem(L.T("menu.quit"), null, (_, _) => Quit());
         m.Opening += (_, _) => { try { _miStartup.Checked = Startup.IsEnabled(); } catch (Exception) { } };
         m.Items.AddRange(new ToolStripItem[]
         {
             _miHeader, _miDetail, new ToolStripSeparator(),
             _miOutput, _miJitter, miMode, new ToolStripSeparator(),
-            miWizard, _miFixRoute, miLog, _miStartup, new ToolStripSeparator(), miQuit,
+            miWizard, _miFixRoute, miLog, _miStartup, miLang, new ToolStripSeparator(), miQuit,
         });
         return m;
     }
@@ -289,7 +303,7 @@ internal sealed class AppController : ApplicationContext
     {
         RefreshDevices();
         _miOutput.DropDownItems.Clear();
-        var auto = new ToolStripMenuItem(CableName is null ? "Otomatis (belum ada mic virtual)" : $"Otomatis: {CableName}")
+        var auto = new ToolStripMenuItem(CableName is null ? L.T("menu.output.autoNone") : L.T("menu.output.auto", CableName))
         { Checked = _settings.OutputDeviceId is null };
         auto.Click += (_, _) => SetOutput(null);
         _miOutput.DropDownItems.Add(auto);
@@ -297,7 +311,7 @@ internal sealed class AppController : ApplicationContext
         foreach (var d in _devices.OrderBy(d => DeviceRules.VirtualCableRank(d.Name) is var r && r >= 0 ? r : 99).ThenBy(d => d.Name))
         {
             var mic = DeviceRules.MicNameFor(d.Name);
-            var it = new ToolStripMenuItem(mic is null ? d.Name : $"{d.Name}  →  mic: {mic}") { Checked = _settings.OutputDeviceId == d.Id };
+            var it = new ToolStripMenuItem(mic is null ? d.Name : L.T("menu.output.micFor", d.Name, mic)) { Checked = _settings.OutputDeviceId == d.Id };
             it.Click += (_, _) => SetOutput(d);
             _miOutput.DropDownItems.Add(it);
         }
@@ -308,7 +322,7 @@ internal sealed class AppController : ApplicationContext
         if (d is not null && DeviceRules.VirtualCableRank(d.Name) < 0)
         {
             var ok = MessageBox.Show(
-                $"\"{d.Name}\" bukan kabel virtual. Suara HP akan keluar di speaker/headset ini dan TIDAK muncul sebagai mikrofon.\n\nTetap pakai? (berguna hanya untuk tes dengar)",
+                L.T("dlg.notCable", d.Name),
                 "CordMic", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
             if (ok != DialogResult.Yes) return;
         }
@@ -321,6 +335,26 @@ internal sealed class AppController : ApplicationContext
         Tick();
     }
 
+    private void ApplyLanguage()
+    {
+        L.Set(L.Resolve(_settings.Language, Native.OsUiLanguage()));
+    }
+
+    private void SetLanguage(string code)
+    {
+        _settings.Language = code;
+        Save();
+        ApplyLanguage();
+        Log($"language -> {code} ({L.Current})");
+        var old = _menu;
+        _menu = BuildMenu();
+        _tray.ContextMenuStrip = _menu;
+        old.Dispose();
+        _shownHealth = null;
+        if (_wizard is { IsDisposed: false }) { _wizard.Close(); ShowWizard(); }
+        UpdateStatus();
+    }
+
     private void SetJitter(JitterPreset p)
     {
         _settings.Jitter = p;
@@ -330,18 +364,14 @@ internal sealed class AppController : ApplicationContext
     }
 
     private void ShowMicModeInfo() => MessageBox.Show(
-        "Mode mikrofon dipilih di aplikasi CordMic di HP (sebelum menekan Start):\n\n" +
-        "• Voice Recognition – latensi paling rendah, suara natural. Disarankan untuk game.\n" +
-        "• Unprocessed – mentah tanpa filter (kalau HP mendukung).\n" +
-        "• Voice Communication – peredam bising + echo cancel dari HP, latensi sedikit lebih tinggi.\n\n" +
-        "Tips: kalau sudah pakai Voice Communication, matikan Noise Suppression/Echo Cancellation di Discord supaya tidak diproses dua kali.",
-        "Mode mic", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        L.T("dlg.micMode.body"),
+        L.T("dlg.micMode.title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     private void FixRoute()
     {
         if (!File.Exists(Paths.MetricScript))
         {
-            MessageBox.Show("Skrip perbaikan tidak ditemukan. Pasang ulang CordMic lewat installer.", "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(L.T("dlg.noScript"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         try
@@ -363,7 +393,7 @@ internal sealed class AppController : ApplicationContext
     private void ToggleStartup()
     {
         try { Startup.Set(!Startup.IsEnabled()); Log("startup -> " + Startup.IsEnabled()); }
-        catch (Exception ex) { MessageBox.Show("Gagal mengubah startup: " + ex.Message, "CordMic"); }
+        catch (Exception ex) { MessageBox.Show(L.T("dlg.startupFailed", ex.Message), "CordMic"); }
     }
 
     public void ShowWizard()

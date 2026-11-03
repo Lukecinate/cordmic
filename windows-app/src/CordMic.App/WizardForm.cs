@@ -30,7 +30,7 @@ internal sealed class WizardForm : Form
     public WizardForm(AppController app)
     {
         _app = app;
-        Text = "CordMic – Panduan penyiapan";
+        Text = L.T("wiz.title");
         Icon = Theme.AppIcon();
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
@@ -59,8 +59,8 @@ internal sealed class WizardForm : Form
             Dock = DockStyle.Right, FlowDirection = FlowDirection.RightToLeft, AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(0, 14, 28, 0), WrapContents = false,
         };
-        _next = Theme.Primary("Lanjut");
-        _back = Theme.Secondary("Kembali");
+        _next = Theme.Primary(L.T("wiz.next"));
+        _back = Theme.Secondary(L.T("wiz.back"));
         _next.Margin = new Padding(8, 0, 0, 0);
         buttons.Controls.Add(_next);
         buttons.Controls.Add(_back);
@@ -86,10 +86,10 @@ internal sealed class WizardForm : Form
     private void GoTo(int step)
     {
         _step = Math.Clamp(step, 0, 2);
-        _stepLabel.Text = $"Langkah {_step + 1} dari 3";
+        _stepLabel.Text = L.T("wiz.step", _step + 1);
         _stepLabel.Location = new Point(_stepLabel.Parent!.ClientSize.Width - 32 - _stepLabel.PreferredWidth, 21);
         _back.Visible = _step > 0;
-        _next.Text = _step == 2 ? "Selesai" : "Lanjut";
+        _next.Text = _step == 2 ? L.T("wiz.finish") : L.T("wiz.next");
         _dot = null; _status = null; _meter = null;
 
         var col = new FlowLayoutPanel
@@ -114,30 +114,26 @@ internal sealed class WizardForm : Form
 
     private void BuildCable(FlowLayoutPanel col)
     {
-        col.Controls.Add(Theme.Text("Pasang mic virtual", Theme.Title, maxWidth: ContentWidth));
+        col.Controls.Add(Theme.Text(L.T("wiz.cable.title"), Theme.Title, maxWidth: ContentWidth));
         col.Controls.Add(Theme.Text(
-            "CordMic mengirim suara HP ke kabel audio virtual. Discord, Zoom, dan game membacanya sebagai mikrofon bernama \"CABLE Output\".",
+            L.T("wiz.cable.body"),
             maxWidth: ContentWidth));
         col.Controls.Add(StatusRow());
-        var open = Theme.Secondary("Buka halaman unduhan VB-CABLE");
+        var open = Theme.Secondary(L.T("wiz.cable.open"));
         open.Margin = new Padding(0, 6, 0, 16);
         open.Click += (_, _) => OpenUrl(CableUrl);
         col.Controls.Add(open);
         col.Controls.Add(Steps(
-            "Unduh paket VB-CABLE Driver (gratis) dari situs resmi VB-Audio.",
-            "Ekstrak zip, klik kanan VBCABLE_Setup_x64.exe → Run as administrator → Install Driver.",
-            "Kembali ke sini. Halaman ini mengecek otomatis. Kalau belum terdeteksi setelah 1 menit, restart PC."));
-        col.Controls.Add(Theme.Text("Sudah punya kabel virtual lain (VoiceMeeter, VAC)? CordMic juga mengenalinya.", Theme.Small, Theme.Muted, ContentWidth));
+            L.T("wiz.cable.s1"), L.T("wiz.cable.s2"), L.T("wiz.cable.s3")));
+        col.Controls.Add(Theme.Text(L.T("wiz.cable.other"), Theme.Small, Theme.Muted, ContentWidth));
     }
 
     private void BuildPhone(FlowLayoutPanel col)
     {
-        col.Controls.Add(Theme.Text("Sambungkan HP", Theme.Title, maxWidth: ContentWidth));
+        col.Controls.Add(Theme.Text(L.T("wiz.phone.title"), Theme.Title, maxWidth: ContentWidth));
         col.Controls.Add(Steps(
-            "Colok HP ke PC dengan kabel USB data (bukan kabel charge saja).",
-            "Di HP: Pengaturan → Koneksi → Hotspot Seluler dan Tethering → Tethering USB → nyalakan.",
-            "Buka aplikasi CordMic di HP, pilih mode Voice Recognition, lalu tekan Start."));
-        col.Controls.Add(Note("Samsung mematikan Tethering USB setiap kabel dicabut. Setelah colok ulang, nyalakan lagi toggle-nya – PC akan tersambung sendiri. Tidak perlu USB debugging atau Wi-Fi."));
+            L.T("wiz.phone.s1"), L.T("wiz.phone.s2"), L.T("wiz.phone.s3")));
+        col.Controls.Add(Note(L.T("wiz.phone.note")));
         col.Controls.Add(StatusRow());
         _meter = new LevelMeter();
         col.Controls.Add(_meter);
@@ -145,16 +141,14 @@ internal sealed class WizardForm : Form
 
     private void BuildApps(FlowLayoutPanel col)
     {
-        col.Controls.Add(Theme.Text("Pilih mic di aplikasi", Theme.Title, maxWidth: ContentWidth));
+        col.Controls.Add(Theme.Text(L.T("wiz.apps.title"), Theme.Title, maxWidth: ContentWidth));
         col.Controls.Add(Steps(
-            "Discord: User Settings → Voice & Video → Input Device → CABLE Output (VB-Audio Virtual Cable).",
-            "Zoom: Settings → Audio → Microphone → CABLE Output.",
-            "Game tanpa pilihan mic: jadikan CABLE Output perangkat rekaman default di Windows."));
-        var sound = Theme.Secondary("Buka pengaturan Sound Windows");
+            L.T("wiz.apps.s1"), L.T("wiz.apps.s2"), L.T("wiz.apps.s3")));
+        var sound = Theme.Secondary(L.T("wiz.apps.sound"));
         sound.Margin = new Padding(0, 0, 0, 14);
         sound.Click += (_, _) => Run("control.exe", "mmsys.cpl,,1");
         col.Controls.Add(sound);
-        col.Controls.Add(Note("Bicara sekarang: bar di bawah harus bergerak. CordMic tetap jalan di tray (pojok kanan bawah) – ikon hijau berarti terhubung. Klik kanan ikon untuk ganti jitter buffer atau perangkat."));
+        col.Controls.Add(Note(L.T("wiz.apps.note")));
         col.Controls.Add(StatusRow());
         _meter = new LevelMeter();
         col.Controls.Add(_meter);
@@ -177,18 +171,18 @@ internal sealed class WizardForm : Form
         {
             case 0:
                 if (_app.CableName is { } cable)
-                    SetStatus(Theme.Ok, $"Terdeteksi: {cable}. Siap lanjut.");
+                    SetStatus(Theme.Ok, L.T("wiz.cable.ok", cable));
                 else
-                    SetStatus(Theme.Warn, "Belum ada mic virtual. Pasang VB-CABLE, lalu tunggu sebentar.");
-                _next.Text = _app.CableName is null ? "Lewati dulu" : "Lanjut";
+                    SetStatus(Theme.Warn, L.T("wiz.cable.missing"));
+                _next.Text = _app.CableName is null ? L.T("wiz.skip") : L.T("wiz.next");
                 break;
             case 1:
                 if (connected)
-                    SetStatus(Theme.Ok, s!.SecondsSinceAudio < 1.5 ? "Terhubung. Suara HP masuk – coba bicara." : "Terhubung, tapi belum ada suara. Tekan Start di HP.");
+                    SetStatus(Theme.Ok, s!.SecondsSinceAudio < 1.5 ? L.T("wiz.phone.ok") : L.T("wiz.phone.silent"));
                 else if (_app.Adapter is { } a)
-                    SetStatus(Theme.Wait, $"HP terdeteksi ({a.PhoneIp}). Menunggu tombol Start di aplikasi HP…");
+                    SetStatus(Theme.Wait, L.T("wiz.phone.detected", a.PhoneIp));
                 else
-                    SetStatus(Theme.Wait, "Menunggu kabel dan Tethering USB…");
+                    SetStatus(Theme.Wait, L.T("wiz.phone.waiting"));
                 break;
             default:
                 var color = st.Health switch { Health.Ok => Theme.Ok, Health.Warn => Theme.Warn, Health.Error => Theme.Bad, _ => Theme.Wait };

@@ -44,7 +44,7 @@ internal static class Migration
     }
 }
 
-/// <summary>"Jalan saat Windows mulai" = HKCU Run value (per user, no admin needed). The installer sets the same value.</summary>
+/// <summary>"Start with Windows" = HKCU Run value (per user, no admin needed). The installer sets the same value.</summary>
 internal static class Startup
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";

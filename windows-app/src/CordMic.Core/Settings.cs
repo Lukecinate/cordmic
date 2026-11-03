@@ -17,6 +17,8 @@ public sealed class AppSettings
     public int OutputChannels { get; set; } = 2;
     /// <summary>WASAPI shared-mode buffer request in ms.</summary>
     public int OutputLatencyMs { get; set; } = 10;
+    /// <summary>UI language: "auto" (follow Windows), "en" or "id".</summary>
+    public string Language { get; set; } = L.Auto;
 
     private static readonly JsonSerializerOptions Opts = new() { WriteIndented = true };
 

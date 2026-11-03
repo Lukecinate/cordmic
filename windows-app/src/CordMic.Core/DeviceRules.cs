@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace CordMic.Core;
 
-/// <summary>Pure name-matching rules (unit-tested on Linux, used by the Windows app).</summary>
+/// <summary>Pure name-matching rules (platform-independent and unit-tested; used by the Windows app).</summary>
 public static class DeviceRules
 {
     // Windows adapter descriptions seen for Android USB tethering:
@@ -50,8 +50,8 @@ public static class Presets
     public static double Ms(JitterPreset p) => p switch { JitterPreset.Low => 5, JitterPreset.Safe => 20, _ => 10 };
     public static string Label(JitterPreset p) => p switch
     {
-        JitterPreset.Low => "Rendah (5 ms) – kabel bagus, latensi minimum",
-        JitterPreset.Safe => "Aman (20 ms) – kalau suara putus-putus",
-        _ => "Normal (10 ms) – disarankan",
+        JitterPreset.Low => L.T("jitter.low"),
+        JitterPreset.Safe => L.T("jitter.safe"),
+        _ => L.T("jitter.normal"),
     };
 }
