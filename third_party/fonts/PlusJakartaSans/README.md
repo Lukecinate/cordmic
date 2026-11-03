@@ -1,6 +1,6 @@
 # Plus Jakarta Sans
 
-Used by the Android app (`android/app/src/main/res/font/`).
+Used by the Android app (`android/app/src/main/res/font/`) and embedded in the Windows app (Regular and SemiBold, `windows-app/src/CordMic.App/Assets/fonts/`, with Segoe UI as fallback).
 
 - Source: [google/fonts `ofl/plusjakartasans`](https://github.com/google/fonts/tree/main/ofl/plusjakartasans),
   upstream project [tokotype/PlusJakartaSans](https://github.com/tokotype/PlusJakartaSans).
