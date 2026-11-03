@@ -2,6 +2,41 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-11-03
+
+New CordMic logo across both apps, the installer and the docs. No change to audio, protocol, ports or settings;
+0.4.1 works with 0.4.0 and 0.3.x on the other side.
+
+### Changed
+- **New logo:** a "CM" monogram with a plug-shaped notch in the M, white on a teal (`#007A7F`) rounded tile. It
+  replaces the generic microphone icon on the Android launcher (adaptive icon), the Windows app, installer and tray
+  icons, and the README.
+- The app accent colour is aligned to the logo teal (`#0B6B5D` → `#007A7F`; dark theme `#5EC6CA`). Contrast stays
+  at WCAG AA for text and controls in both themes.
+- Small sizes are tuned for legibility: at 16 and 24 px (tray, taskbar, notification) the plug notch is left out
+  and the strokes are slightly heavier.
+- Tray icons keep their state colours (grey = waiting, teal = streaming, amber = needs attention, red = error) on
+  the same rounded tile with the white monogram.
+
+### Added
+- The logo in the Android app bar and in the Windows setup guide header; installer header and welcome-page
+  bitmaps.
+- Android notification icon in the CordMic monogram (white on transparent).
+- `docs/assets/`: logo (512 px), transparent marks, a 512 px store icon and a 1280×640 social preview image.
+- `tools/brand/make_logo.py`, which regenerates every logo file (PNG, ICO, BMP) from one geometric definition.
+
+### Removed
+- `docs/cordmic-icon.png` (replaced by `docs/assets/logo.png`).
+
+### Catatan rilis (Bahasa Indonesia)
+- **Logo baru:** monogram "CM" dengan takik berbentuk colokan pada huruf M, putih di atas kotak teal (`#007A7F`).
+  Dipakai di ikon peluncur Android, ikon aplikasi, installer dan tray Windows, serta README.
+- Warna aksen aplikasi disamakan dengan teal logo (`#007A7F`; tema gelap `#5EC6CA`), kontras tetap memenuhi WCAG AA.
+- Pada ukuran 16 dan 24 px takik colokan dihilangkan dan garis sedikit dipertebal agar tetap terbaca.
+- Logo tampil di app bar Android, header panduan penyiapan Windows, serta header dan halaman sambutan installer.
+- Ikon notifikasi Android memakai monogram CordMic; aset logo dan gambar pratinjau sosial ada di `docs/assets/`.
+- Tidak ada perubahan pada audio, protokol, atau pengaturan.
+
 ## [0.4.0] - 2026-11-03
 
 "Quiet utility" redesign of the Android and Windows apps. The audio protocol, ports and streaming behaviour are
