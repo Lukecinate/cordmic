@@ -1,2 +1,2 @@
-"""CordMic Windows receiver (prototype)."""
-__version__ = "0.3.0"
+"""CordMic Windows receiver (Python reference implementation)."""
+__version__ = "0.3.1"

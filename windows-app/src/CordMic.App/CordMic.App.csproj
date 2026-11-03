@@ -11,11 +11,11 @@
     <ApplicationIcon>Assets\cordmic.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <Product>CordMic</Product>
-    <Company>In-house</Company>
-    <Description>CordMic - HP Android sebagai mikrofon PC lewat kabel USB</Description>
-    <Copyright>In-house</Copyright>
+    <Company>CordMic contributors</Company>
+    <Description>CordMic - use an Android phone as a low-latency PC microphone over USB</Description>
+    <Copyright>Copyright (c) CordMic contributors. MIT License.</Copyright>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>

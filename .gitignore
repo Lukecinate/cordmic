@@ -12,3 +12,10 @@ dist/
 *.apk
 *.exe
 .pytest_cache/
+
+# Signing material (never commit)
+*.jks
+*.keystore
+keystore.properties
+*signing*.properties
+*.zip

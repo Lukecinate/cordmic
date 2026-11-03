@@ -4,7 +4,7 @@ Design goals: lowest possible latency with bounded depth.
 * Packets are stored by sequence number; playout pulls in order.
 * Playback starts (and restarts after an underrun) once `target` packets are buffered.
 * A missing packet while later packets are already waiting is treated as lost:
-  silence is played for it (packet-loss concealment = silence in this prototype).
+  silence is played for it (packet-loss concealment = silence).
 * If depth exceeds `max_depth`, the oldest packets are dropped down to `target`
   so latency can never creep up (clock drift / bursts).
 Thread-safe: push() from the network thread, pull() from the audio callback.
