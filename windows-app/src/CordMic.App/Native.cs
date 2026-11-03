@@ -4,6 +4,9 @@ namespace CordMic.App;
 
 internal static partial class Native
 {
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr AddFontMemResourceEx(IntPtr pbFont, uint cbFont, IntPtr pdv, ref uint pcFonts);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool DestroyIcon(IntPtr hIcon);
 

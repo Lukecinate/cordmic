@@ -11,7 +11,7 @@
     <ApplicationIcon>Assets\cordmic.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.3.1</Version>
+    <Version>0.4.0</Version>
     <Product>CordMic</Product>
     <Company>CordMic contributors</Company>
     <Description>CordMic - use an Android phone as a low-latency PC microphone over USB</Description>
@@ -34,5 +34,8 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\cordmic.ico" LogicalName="cordmic.ico" />
+    <EmbeddedResource Include="Assets\tray-*.ico" LogicalName="%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\fonts\*.ttf" LogicalName="fonts.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\icons\*.png" LogicalName="icons.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

@@ -246,7 +246,7 @@ internal sealed class AppController : ApplicationContext
         if (_shownHealth != st.Health) { _tray.Icon = IconFor(st.Health); _shownHealth = st.Health; }
         var tt = st.Tooltip.Length > 127 ? st.Tooltip[..127] : st.Tooltip;
         if (_tray.Text != tt) _tray.Text = tt;
-        _miHeader.Text = "CordMic – " + st.Title;
+        _miHeader.Text = st.Title;
         _miDetail.Text = st.Detail.Length > 90 ? st.Detail[..90] + "…" : st.Detail;
         _miFixRoute.Visible = a?.CarriesInternet == true;
     }
@@ -255,9 +255,9 @@ internal sealed class AppController : ApplicationContext
 
     private ContextMenuStrip BuildMenu()
     {
-        var m = new ContextMenuStrip { ShowImageMargin = false, Font = Theme.Body };
-        _miHeader = new ToolStripMenuItem("CordMic") { Enabled = false, Font = Theme.Strong };
-        _miDetail = new ToolStripMenuItem("") { Enabled = false };
+        var m = new ContextMenuStrip { ShowImageMargin = false, Font = Theme.Body, Renderer = new QuietMenuRenderer() };
+        _miHeader = new ToolStripMenuItem("CordMic") { Enabled = false, Font = Theme.Strong, Tag = "header" };
+        _miDetail = new ToolStripMenuItem("") { Enabled = false, Tag = "detail" };
         _miOutput = new ToolStripMenuItem(L.T("menu.output"));
         _miOutput.DropDownOpening += (_, _) => FillOutputMenu();
         _miOutput.DropDownItems.Add("…");
@@ -437,9 +437,7 @@ internal sealed class AppController : ApplicationContext
     private Icon IconFor(Health h)
     {
         if (_icons.TryGetValue(h, out var i)) return i;
-        int size = SystemInformation.SmallIconSize.Width;
-        var c = h switch { Health.Ok => Theme.Ok, Health.Warn => Theme.Warn, Health.Error => Theme.Bad, _ => Theme.Wait };
-        return _icons[h] = Theme.TrayIcon(c, Math.Max(16, size));
+        return _icons[h] = Theme.TrayIcon(h);
     }
 
     private void Save()

@@ -1,16 +1,19 @@
 using System.Diagnostics;
+using System.Globalization;
 using CordMic.Core;
 
 namespace CordMic.App;
 
 /// <summary>
-/// First-run guide, three steps, one task per screen. Live status rows poll the controller every 500 ms,
-/// so the user just follows the instructions and watches the dot turn green.
+/// First-run guide in the "Quiet utility" layout: a status card on top (one glance tells you whether the
+/// phone is acting as your mic), the steps in a second card, one primary action in the footer.
+/// Live rows poll the controller every 500 ms. Numbers are only shown when they are measured.
 /// </summary>
 internal sealed class WizardForm : Form
 {
     private const string CableUrl = "https://vb-audio.com/Cable/";
     private const int ContentWidth = 600;
+    private const int Inner = ContentWidth - 40;
 
     private readonly AppController _app;
     private readonly Label _stepLabel;
@@ -21,9 +24,11 @@ internal sealed class WizardForm : Form
     private DateTime _lastRecheck = DateTime.MinValue;
 
     // live widgets (rebuilt per step)
-    private Dot? _dot;
-    private Label? _status;
+    private StateBadge? _badge;
+    private Label? _stateTitle, _stateMsg;
     private LevelMeter? _meter;
+    private Control? _statsRow;
+    private Label? _latency, _rtt, _loss;
 
     public bool Finished { get; private set; }
 
@@ -34,30 +39,30 @@ internal sealed class WizardForm : Form
         Icon = Theme.AppIcon();
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
-        ClientSize = new Size(680, 540);
-        MinimumSize = new Size(600, 480);
+        ClientSize = new Size(680, 620);
+        MinimumSize = new Size(620, 520);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Theme.Surface;
+        BackColor = Theme.Background;
         ForeColor = Theme.Ink;
         Font = Theme.Body;
         MaximizeBox = false;
 
-        // header
-        var header = new Panel { Dock = DockStyle.Top, Height = 56, Padding = new Padding(32, 0, 32, 0), BackColor = Theme.Surface };
-        var brand = new Label { Text = "CordMic", Font = Theme.Brand, AutoSize = true, Location = new Point(32, 18), ForeColor = Theme.Ink };
+        // header: brand left, step counter right
+        var header = new Panel { Dock = DockStyle.Top, Height = 56, BackColor = Theme.Background };
+        var brand = new Label { Text = "CordMic", Font = Theme.Brand, AutoSize = true, Location = new Point(40, 18), ForeColor = Theme.Ink };
         _stepLabel = new Label { Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
         header.Controls.Add(brand);
         header.Controls.Add(_stepLabel);
-        header.Resize += (_, _) => _stepLabel.Location = new Point(header.ClientSize.Width - 32 - _stepLabel.Width, 21);
-        header.Paint += (_, e) => { using var p = new Pen(Theme.Line); e.Graphics.DrawLine(p, 0, header.Height - 1, header.Width, header.Height - 1); };
+        header.Resize += (_, _) => PlaceStepLabel();
 
-        // footer
-        var footer = new Panel { Dock = DockStyle.Bottom, Height = 68, BackColor = Theme.Surface };
+        // footer: one primary action, Back is secondary
+        var footer = new Panel { Dock = DockStyle.Bottom, Height = 72, BackColor = Theme.Surface };
         footer.Paint += (_, e) => { using var p = new Pen(Theme.Line); e.Graphics.DrawLine(p, 0, 0, footer.Width, 0); };
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Right, FlowDirection = FlowDirection.RightToLeft, AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(0, 14, 28, 0), WrapContents = false,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(0, 16, 36, 0), WrapContents = false,
+            BackColor = Theme.Surface,
         };
         _next = Theme.Primary(L.T("wiz.next"));
         _back = Theme.Secondary(L.T("wiz.back"));
@@ -69,7 +74,7 @@ internal sealed class WizardForm : Form
         _back.Click += (_, _) => GoTo(_step - 1);
         AcceptButton = _next;
 
-        _content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(40, 28, 40, 12), AutoScroll = true, BackColor = Theme.Surface };
+        _content = new Panel { Dock = DockStyle.Fill, Padding = new Padding(40, 8, 40, 16), AutoScroll = true, BackColor = Theme.Background };
 
         Controls.Add(_content);
         Controls.Add(header);
@@ -81,21 +86,26 @@ internal sealed class WizardForm : Form
         FormClosed += (_, _) => _poll.Dispose();
     }
 
+    private void PlaceStepLabel()
+    {
+        if (_stepLabel.Parent is { } p) _stepLabel.Location = new Point(p.ClientSize.Width - 40 - _stepLabel.PreferredWidth, 21);
+    }
+
     // ---------------------------------------------------------------- steps
 
     private void GoTo(int step)
     {
         _step = Math.Clamp(step, 0, 2);
         _stepLabel.Text = L.T("wiz.step", _step + 1);
-        _stepLabel.Location = new Point(_stepLabel.Parent!.ClientSize.Width - 32 - _stepLabel.PreferredWidth, 21);
+        PlaceStepLabel();
         _back.Visible = _step > 0;
         _next.Text = _step == 2 ? L.T("wiz.finish") : L.T("wiz.next");
-        _dot = null; _status = null; _meter = null;
+        _badge = null; _stateTitle = _stateMsg = null; _meter = null; _statsRow = null; _latency = _rtt = _loss = null;
 
         var col = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink, Location = new Point(40, 28), BackColor = Theme.Surface,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Location = new Point(40, 8), BackColor = Theme.Background,
         };
         switch (_step)
         {
@@ -114,44 +124,31 @@ internal sealed class WizardForm : Form
 
     private void BuildCable(FlowLayoutPanel col)
     {
-        col.Controls.Add(Theme.Text(L.T("wiz.cable.title"), Theme.Title, maxWidth: ContentWidth));
-        col.Controls.Add(Theme.Text(
-            L.T("wiz.cable.body"),
-            maxWidth: ContentWidth));
-        col.Controls.Add(StatusRow());
-        var open = Theme.Secondary(L.T("wiz.cable.open"));
-        open.Margin = new Padding(0, 6, 0, 16);
-        open.Click += (_, _) => OpenUrl(CableUrl);
-        col.Controls.Add(open);
-        col.Controls.Add(Steps(
-            L.T("wiz.cable.s1"), L.T("wiz.cable.s2"), L.T("wiz.cable.s3")));
-        col.Controls.Add(Theme.Text(L.T("wiz.cable.other"), Theme.Small, Theme.Muted, ContentWidth));
+        col.Controls.Add(Heading(L.T("wiz.cable.title")));
+        col.Controls.Add(StatusCard(live: false));
+        var card = StepsCard(L.T("wiz.cable.body"), L.T("wiz.cable.s1"), L.T("wiz.cable.s2"), L.T("wiz.cable.s3"));
+        card.Controls.Add(Action(L.T("wiz.cable.open"), () => OpenUrl(CableUrl)));
+        card.Controls.Add(Theme.Text(L.T("wiz.cable.other"), Theme.Small, Theme.Muted, Inner));
+        col.Controls.Add(card);
     }
 
     private void BuildPhone(FlowLayoutPanel col)
     {
-        col.Controls.Add(Theme.Text(L.T("wiz.phone.title"), Theme.Title, maxWidth: ContentWidth));
-        col.Controls.Add(Steps(
-            L.T("wiz.phone.s1"), L.T("wiz.phone.s2"), L.T("wiz.phone.s3")));
-        col.Controls.Add(Note(L.T("wiz.phone.note")));
-        col.Controls.Add(StatusRow());
-        _meter = new LevelMeter();
-        col.Controls.Add(_meter);
+        col.Controls.Add(Heading(L.T("wiz.phone.title")));
+        col.Controls.Add(StatusCard(live: true));
+        var card = StepsCard(null, L.T("wiz.phone.s1"), L.T("wiz.phone.s2"), L.T("wiz.phone.s3"));
+        card.Controls.Add(Theme.Text(L.T("wiz.phone.note"), Theme.Small, Theme.Muted, Inner));
+        col.Controls.Add(card);
     }
 
     private void BuildApps(FlowLayoutPanel col)
     {
-        col.Controls.Add(Theme.Text(L.T("wiz.apps.title"), Theme.Title, maxWidth: ContentWidth));
-        col.Controls.Add(Steps(
-            L.T("wiz.apps.s1"), L.T("wiz.apps.s2"), L.T("wiz.apps.s3")));
-        var sound = Theme.Secondary(L.T("wiz.apps.sound"));
-        sound.Margin = new Padding(0, 0, 0, 14);
-        sound.Click += (_, _) => Run("control.exe", "mmsys.cpl,,1");
-        col.Controls.Add(sound);
-        col.Controls.Add(Note(L.T("wiz.apps.note")));
-        col.Controls.Add(StatusRow());
-        _meter = new LevelMeter();
-        col.Controls.Add(_meter);
+        col.Controls.Add(Heading(L.T("wiz.apps.title")));
+        col.Controls.Add(StatusCard(live: true));
+        var card = StepsCard(null, L.T("wiz.apps.s1"), L.T("wiz.apps.s2"), L.T("wiz.apps.s3"));
+        card.Controls.Add(Action(L.T("wiz.apps.sound"), () => Run("control.exe", "mmsys.cpl,,1")));
+        card.Controls.Add(Theme.Text(L.T("wiz.apps.note"), Theme.Small, Theme.Muted, Inner));
+        col.Controls.Add(card);
     }
 
     // ---------------------------------------------------------------- live status
@@ -163,75 +160,137 @@ internal sealed class WizardForm : Form
             _lastRecheck = DateTime.UtcNow;
             _app.RecheckDevices();
         }
-        if (_status is null || _dot is null) return;
+        if (_badge is null) return;
         var st = _app.Status;
         var s = _app.Stats;
         bool connected = s?.Peer is not null;
+        bool audio = connected && s!.SecondsSinceAudio < 1.5;
         switch (_step)
         {
             case 0:
                 if (_app.CableName is { } cable)
-                    SetStatus(Theme.Ok, L.T("wiz.cable.ok", cable));
+                    SetStatus(Health.Ok, "mic", L.T("wiz.cable.okTitle"), L.T("wiz.cable.ok", cable));
                 else
-                    SetStatus(Theme.Warn, L.T("wiz.cable.missing"));
+                    SetStatus(Health.Warn, "error_outline", L.T("status.noCable.title"), L.T("wiz.cable.missing"));
                 _next.Text = _app.CableName is null ? L.T("wiz.skip") : L.T("wiz.next");
                 break;
             case 1:
                 if (connected)
-                    SetStatus(Theme.Ok, s!.SecondsSinceAudio < 1.5 ? L.T("wiz.phone.ok") : L.T("wiz.phone.silent"));
+                    SetStatus(audio ? Health.Ok : Health.Warn, audio ? "mic" : "error_outline",
+                        audio ? L.T("status.connected.title") : L.T("status.silent.title"),
+                        audio ? L.T("wiz.phone.ok") : L.T("wiz.phone.silent"));
                 else if (_app.Adapter is { } a)
-                    SetStatus(Theme.Wait, L.T("wiz.phone.detected", a.PhoneIp));
+                    SetStatus(Health.Waiting, "search", L.T("status.detected.title"), L.T("wiz.phone.detected", a.PhoneIp));
                 else
-                    SetStatus(Theme.Wait, L.T("wiz.phone.waiting"));
+                    SetStatus(Health.Waiting, "usb", L.T("status.waiting.title"), L.T("wiz.phone.waiting"));
                 break;
             default:
-                var color = st.Health switch { Health.Ok => Theme.Ok, Health.Warn => Theme.Warn, Health.Error => Theme.Bad, _ => Theme.Wait };
-                SetStatus(color, $"{st.Title}. {st.Detail}");
+                var glyph = st.Health switch
+                {
+                    Health.Ok => "mic",
+                    Health.Waiting => _app.Adapter is null ? "usb" : "search",
+                    _ => "error_outline",
+                };
+                SetStatus(st.Health, glyph, st.Title, st.Detail);
                 break;
         }
         if (_meter is not null) _meter.Dbfs = connected && s!.SecondsSinceAudio < 1.0 ? s.LevelDbfs : -90;
+        if (_statsRow is not null)
+        {
+            // Only measured values; hidden while nothing is connected.
+            _statsRow.Visible = connected;
+            if (connected)
+            {
+                var inv = CultureInfo.InvariantCulture;
+                SetText(_latency!, _app.EstLatencyMs() is { } lat ? $"~{lat.ToString("F0", inv)} ms" : "–");
+                SetText(_rtt!, s!.RttMs is { } r ? $"{r.ToString("F1", inv)} ms" : "–");
+                SetText(_loss!, $"{_app.RecentLossPct.ToString("F1", inv)} %");
+            }
+        }
     }
 
-    private void SetStatus(Color c, string text)
+    private void SetStatus(Health h, string glyph, string title, string msg)
     {
-        if (_dot!.DotColor != c) _dot.DotColor = c;
-        if (_status!.Text != text) _status.Text = text;
+        _badge!.Set(h, glyph);
+        SetText(_stateTitle!, title);
+        SetText(_stateMsg!, msg);
+        _stateTitle!.AccessibleName = title + ". " + msg;
     }
+
+    private static void SetText(Label l, string t) { if (l.Text != t) l.Text = t; }
 
     // ---------------------------------------------------------------- building blocks
 
-    private Control StatusRow()
+    private static Label Heading(string text)
     {
-        var row = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 4, 0, 8) };
-        _dot = new Dot();
-        _status = Theme.Text("…", Theme.Strong, maxWidth: ContentWidth - 24);
-        _status.Margin = new Padding(0, 2, 0, 0);
-        row.Controls.Add(_dot);
-        row.Controls.Add(_status);
-        return row;
+        var l = Theme.Text(text, Theme.Title, maxWidth: ContentWidth);
+        l.Margin = new Padding(0, 4, 0, 14);
+        l.AccessibleRole = AccessibleRole.StaticText;
+        return l;
     }
 
-    private static Control Steps(params string[] items)
+    /// <summary>Hero card: state badge + plain-language title + one next step; on live steps also level and stats.</summary>
+    private Card StatusCard(bool live)
     {
-        var t = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 4, 0, 10) };
-        t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 28));
+        var card = new Card(ContentWidth);
+        var row = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 0, 0, 8), BackColor = Theme.Surface };
+        _badge = new StateBadge();
+        var text = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty, BackColor = Theme.Surface };
+        _stateTitle = Theme.Text("…", Theme.StateTitle, maxWidth: Inner - 52);
+        _stateTitle.Margin = new Padding(0, 0, 0, 4);
+        _stateTitle.AccessibleRole = AccessibleRole.Alert;
+        _stateMsg = Theme.Text("", Theme.Body, Theme.Muted, Inner - 52);
+        text.Controls.Add(_stateTitle);
+        text.Controls.Add(_stateMsg);
+        row.Controls.Add(_badge);
+        row.Controls.Add(text);
+        card.Controls.Add(row);
+        if (!live) return card;
+
+        var lvl = Theme.Text(L.T("wiz.level"), Theme.Small, Theme.Muted, Inner);
+        lvl.Margin = new Padding(0, 4, 0, 0);
+        card.Controls.Add(lvl);
+        _meter = new LevelMeter { Width = Inner, AccessibleName = L.T("wiz.level") };
+        card.Controls.Add(_meter);
+
+        var stats = new TableLayoutPanel { ColumnCount = 3, RowCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Width = Inner, Margin = new Padding(0, 0, 0, 8), BackColor = Theme.Surface, Visible = false };
+        for (int i = 0; i < 3; i++) stats.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Inner / 3f));
+        Label Val() { var l = Theme.Text("–", Theme.StatValue, maxWidth: Inner / 3); l.Margin = new Padding(0, 2, 0, 0); return l; }
+        Label Cap(string k) { var l = Theme.Text(L.T(k), Theme.Small, Theme.Muted, Inner / 3); l.Margin = Padding.Empty; return l; }
+        _latency = Val(); _rtt = Val(); _loss = Val();
+        stats.Controls.Add(Cap("wiz.stat.latency"), 0, 0); stats.Controls.Add(_latency, 0, 1);
+        stats.Controls.Add(Cap("wiz.stat.rtt"), 1, 0); stats.Controls.Add(_rtt, 1, 1);
+        stats.Controls.Add(Cap("wiz.stat.loss"), 2, 0); stats.Controls.Add(_loss, 2, 1);
+        _statsRow = stats;
+        card.Controls.Add(stats);
+        return card;
+    }
+
+    private static Card StepsCard(string? intro, params string[] items)
+    {
+        var card = new Card(ContentWidth);
+        if (intro is not null) card.Controls.Add(Theme.Text(intro, maxWidth: Inner));
+        var t = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 2, 0, 4), BackColor = Theme.Surface };
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
         t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         for (int i = 0; i < items.Length; i++)
         {
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            t.Controls.Add(new Label { Text = $"{i + 1}.", Font = Theme.Strong, ForeColor = Theme.Accent, AutoSize = true, Margin = new Padding(0, 0, 0, 10) }, 0, i);
-            t.Controls.Add(Theme.Text(items[i], maxWidth: ContentWidth - 32), 1, i);
+            t.Controls.Add(new Label { Text = $"{i + 1}", Font = Theme.Strong, ForeColor = Theme.Accent, AutoSize = true, Margin = new Padding(0, 0, 0, 12), BackColor = Theme.Surface }, 0, i);
+            var l = Theme.Text(items[i], maxWidth: Inner - 34);
+            l.Margin = new Padding(0, 0, 0, 12);
+            t.Controls.Add(l, 1, i);
         }
-        return t;
+        card.Controls.Add(t);
+        return card;
     }
 
-    private static Control Note(string text)
+    private static Button Action(string text, Action onClick)
     {
-        var p = new Panel { BackColor = Theme.Note, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(14, 12, 14, 4), Margin = new Padding(0, 4, 0, 14) };
-        var l = Theme.Text(text, maxWidth: ContentWidth - 28);
-        l.BackColor = Theme.Note;
-        p.Controls.Add(l);
-        return p;
+        var b = Theme.Secondary(text);
+        b.Margin = new Padding(0, 0, 0, 14);
+        b.Click += (_, _) => onClick();
+        return b;
     }
 
     private static void OpenUrl(string url)
