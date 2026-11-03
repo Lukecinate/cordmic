@@ -7,7 +7,7 @@ SetCompressorDictSize 64
 
 !define APPNAME   "CordMic"
 !ifndef VERSION
-  !define VERSION "0.4.0"
+  !define VERSION "0.4.1"
 !endif
 !define PUBLISHER "CordMic contributors"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CordMic"
@@ -41,6 +41,12 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright (c) ${PUBLISHER}. MIT Licens
 !define MUI_ICON   "..\src\CordMic.App\Assets\cordmic.ico"
 !define MUI_UNICON "..\src\CordMic.App\Assets\cordmic.ico"
 !define MUI_ABORTWARNING
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "art\header.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP "art\header.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "art\welcome.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "art\welcome.bmp"
 !define MUI_COMPONENTSPAGE_NODESC
 
 !define MUI_WELCOMEPAGE_TITLE "$(TxtWelcomeTitle)"

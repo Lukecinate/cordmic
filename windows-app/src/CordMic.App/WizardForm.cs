@@ -49,7 +49,13 @@ internal sealed class WizardForm : Form
 
         // header: brand left, step counter right
         var header = new Panel { Dock = DockStyle.Top, Height = 56, BackColor = Theme.Background };
-        var brand = new Label { Text = "CordMic", Font = Theme.Brand, AutoSize = true, Location = new Point(40, 18), ForeColor = Theme.Ink };
+        var logo = new PictureBox
+        {
+            Image = Theme.Logo(), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(26, 26), Location = new Point(40, 16),
+            BackColor = Color.Transparent,
+        };
+        var brand = new Label { Text = "CordMic", Font = Theme.Brand, AutoSize = true, Location = new Point(74, 18), ForeColor = Theme.Ink };
+        header.Controls.Add(logo);
         _stepLabel = new Label { Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
         header.Controls.Add(brand);
         header.Controls.Add(_stepLabel);

@@ -20,9 +20,9 @@ internal static class Theme
     public static readonly Color Outline = Color.FromArgb(0xC9, 0xCD, 0xD3);
     public static readonly Color Line = Color.FromArgb(0xE3, 0xE5, 0xE9);
     // accent + states
-    public static readonly Color Accent = Color.FromArgb(0x0B, 0x6B, 0x5D);
-    public static readonly Color AccentHover = Color.FromArgb(0x08, 0x57, 0x4B);
-    public static readonly Color AccentSoft = Color.FromArgb(0xDD, 0xEF, 0xEB);
+    public static readonly Color Accent = Color.FromArgb(0x00, 0x7A, 0x7F);
+    public static readonly Color AccentHover = Color.FromArgb(0x00, 0x66, 0x6A);
+    public static readonly Color AccentSoft = Color.FromArgb(0xD9, 0xEE, 0xEF);
     public static readonly Color Amber = Color.FromArgb(0x8A, 0x53, 0x00);
     public static readonly Color AmberSoft = Color.FromArgb(0xFB, 0xEF, 0xD9);
     public static readonly Color MeterAmber = Color.FromArgb(0xD9, 0x9A, 0x1E);
@@ -132,7 +132,14 @@ internal static class Theme
 
     public static Icon AppIcon() => LoadIcon("cordmic.ico", SystemInformation.IconSize.Width) ?? SystemIcons.Application;
 
-    /// <summary>Tray icon for a state, from the embedded multi-size .ico files (16/24/32/48/256).</summary>
+    /// <summary>The CordMic logo tile (embedded 96 px PNG), drawn scaled in the wizard header.</summary>
+    public static Image? Logo()
+    {
+        using var st = typeof(Theme).Assembly.GetManifestResourceStream("logo.png");
+        return st is null ? null : new Bitmap(st);
+    }
+
+    /// <summary>Tray icon for a state, from the embedded multi-size .ico files (16/24/32/48/64/128/256).</summary>
     public static Icon TrayIcon(Health h)
     {
         var name = h switch { Health.Ok => "tray-streaming.ico", Health.Warn => "tray-warning.ico", Health.Error => "tray-error.ico", _ => "tray-waiting.ico" };
