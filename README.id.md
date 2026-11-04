@@ -391,3 +391,7 @@ Aset desain: logo CordMic adalah aset asli proyek ini (dibuat oleh `tools/brand/
 aplikasi memakai [Material Icons](https://fonts.google.com/icons) (gaya Round, Apache 2.0) dari Google; font UI adalah [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans)
 (SIL Open Font License 1.1). Rincian dan pustaka lain ada di
 [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
+
+## Pembuat
+
+CordMic dikembangkan oleh [Lukecinate (Rozan Abid)](https://github.com/Lukecinate).
