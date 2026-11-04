@@ -53,6 +53,15 @@ The logo is covered by the project's MIT license.
 | xUnit (tests only, not shipped) | .NET tests | Apache 2.0 |
 | NSIS (build tool, not a runtime dependency) | Windows installer | zlib/libpng |
 
+Python reference receiver (`windows-receiver/`, optional, installed with `pip install -r requirements.txt`; not bundled
+in the installer or releases):
+
+| Component | License |
+|---|---|
+| [sounddevice](https://github.com/spatialaudio/python-sounddevice) (uses PortAudio) | MIT |
+| [pystray](https://github.com/moses-palmer/pystray) | LGPL-3.0 |
+| [Pillow](https://github.com/python-pillow/Pillow) | MIT-CMU (HPND) |
+
 ## Not included
 
 [VB-CABLE](https://vb-audio.com/Cable/) is a separate product by VB-Audio. CordMic does not include or redistribute
