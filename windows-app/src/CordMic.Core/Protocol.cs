@@ -24,10 +24,19 @@ public static class Protocol
         _ => throw new ArgumentOutOfRangeException(nameof(rate)),
     };
 
-    public static ushort MakeFlags(int codec = CodecPcm16, int channels = 1, int sampleRate = 48000)
+    /// <summary>
+    /// Bits 0–11 match 0.4.2. Bits 12–14 are optional status added in 0.5.0 (0 on older senders):
+    /// noise cancellation, AGC, capture path is AAudio. Receivers that do not know them ignore them.
+    /// </summary>
+    public static ushort MakeFlags(int codec = CodecPcm16, int channels = 1, int sampleRate = 48000,
+        bool noiseCancellation = false, bool agc = false, bool aaudio = false)
     {
         if (channels < 1 || channels > 16) throw new ArgumentOutOfRangeException(nameof(channels));
-        return (ushort)((codec & 0x0F) | ((channels - 1) << 4) | (RateToCode(sampleRate) << 8));
+        int v = (codec & 0x0F) | ((channels - 1) << 4) | (RateToCode(sampleRate) << 8);
+        if (noiseCancellation) v |= 1 << 12;
+        if (agc) v |= 1 << 13;
+        if (aaudio) v |= 1 << 14;
+        return (ushort)v;
     }
 
     public static void WriteHeader(Span<byte> dst, byte type, uint seq, ulong tsUs, ushort frames = 0, ushort flags = 0)
@@ -83,4 +92,90 @@ public readonly record struct PacketHeader(byte Type, uint Seq, ulong TsUs, usho
     public int Codec => Flags & 0x0F;
     public int Channels => ((Flags >> 4) & 0x0F) + 1;
     public int SampleRate => Protocol.RateFromCode((Flags >> 8) & 0x0F);
+    public bool NoiseCancellation => (Flags & 0x1000) != 0;
+    public bool Agc => (Flags & 0x2000) != 0;
+    public bool AAudio => (Flags & 0x4000) != 0;
+}
+
+/// <summary>
+/// Optional 4-byte payloads on PING (PC → phone) and PONG (phone → PC), added in 0.5.0.
+/// Version stays 1. A 0.4.2 peer ignores the payload; a missing or non-magic payload is "no status".
+/// PING: magic, flags (bit0 NC, bit1 AGC), gain 0–24, change counter (0 = do not override the phone).
+/// PONG: magic, flags (bit0 NC, bit1 AGC, bit2 AAudio, bit3 exclusive, bit4 low-latency), gain 0–24, engine (1 AAudio, 2 AudioRecord).
+/// </summary>
+public static class LinkControl
+{
+    public const byte Magic = 0xC5;
+    public const int Size = 4;
+
+    public static void WritePing(Span<byte> dst, bool noiseCancellation, bool agc, int gainDb, byte changeSeq)
+    {
+        if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
+        dst[0] = Magic;
+        dst[1] = (byte)((noiseCancellation ? 1 : 0) | (agc ? 2 : 0));
+        dst[2] = (byte)Math.Clamp(gainDb, 0, VoiceChain.MaxGainDb);
+        dst[3] = changeSeq;
+    }
+
+    public static bool TryReadPing(ReadOnlySpan<byte> src, out bool noiseCancellation, out bool agc, out int gainDb, out byte changeSeq)
+    {
+        noiseCancellation = false; agc = false; gainDb = 0; changeSeq = 0;
+        if (src.Length < Size || src[0] != Magic) return false;
+        noiseCancellation = (src[1] & 1) != 0;
+        agc = (src[1] & 2) != 0;
+        gainDb = Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb);
+        changeSeq = src[3];
+        return true;
+    }
+
+    /// <summary>Writes the status block and returns how many bytes were used (4, plus the device name).</summary>
+    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null)
+    {
+        if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
+        dst[0] = Magic;
+        int f = (noiseCancellation ? 1 : 0) | (agc ? 2 : 0) | (aaudio ? 4 : 0) | (exclusive ? 8 : 0) | (lowLatency ? 16 : 0);
+        dst[1] = (byte)f;
+        dst[2] = (byte)Math.Clamp(gainDb, 0, VoiceChain.MaxGainDb);
+        dst[3] = (byte)(aaudio ? 1 : 2);
+        int n = 0;
+        if (!string.IsNullOrEmpty(deviceName))
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(deviceName);
+            n = Math.Min(bytes.Length, Math.Max(0, dst.Length - Size));
+            bytes.AsSpan(0, n).CopyTo(dst[Size..]);
+        }
+        return Size + n;
+    }
+
+    public static bool TryReadPong(ReadOnlySpan<byte> src, out PhoneLink phone)
+    {
+        phone = default;
+        if (src.Length < Size || src[0] != Magic) return false;
+        int f = src[1];
+        string name = "";
+        if (src.Length > Size)
+        {
+            int n = src.Length - Size;
+            while (n > 0 && src[Size + n - 1] == 0) n--;
+            name = System.Text.Encoding.UTF8.GetString(src.Slice(Size, n)).Trim();
+            if (name.Length > 40) name = name[..40];
+        }
+        phone = new PhoneLink(true, (f & 1) != 0, (f & 2) != 0, (f & 4) != 0 || src[3] == 1,
+            (f & 8) != 0, (f & 16) != 0, Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb), name);
+        return true;
+    }
+}
+
+/// <summary>What the phone last reported about its capture path and voice chain. <see cref="Known"/> is false for a 0.4.2 peer.</summary>
+public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "")
+{
+    public string Mode =>
+        !Known ? "?" :
+        !AAudio ? "AudioRecord" :
+        Exclusive ? "AAudio-excl" :
+        LowLatency ? "AAudio-ll" : "AAudio";
+
+    public string NoiseText => !Known ? "?" : NoiseCancellation ? "on" : "off";
+    public string AgcText => !Known ? "?" : Agc ? "on" : "off";
+    public string GainText => !Known || GainDb < 0 ? "?" : $"+{GainDb}dB";
 }

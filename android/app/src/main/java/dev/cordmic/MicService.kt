@@ -56,6 +56,8 @@ class MicService : Service() {
             port = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_PORT) ?: Protocol.DEFAULT_PORT,
             preset = intent?.getIntExtra(EXTRA_PRESET, 6) ?: 6,
             useAAudio = intent?.getBooleanExtra(EXTRA_AAUDIO, true) ?: true,
+            noiseCancellation = intent?.getBooleanExtra(EXTRA_NC, true) ?: true,
+            gainDb = intent?.getIntExtra(EXTRA_GAIN, VoiceChain.DEFAULT_GAIN_DB) ?: VoiceChain.DEFAULT_GAIN_DB,
         )
         streamer = Streamer(applicationContext, cfg).also { current = it; it.start() }
         handler.post(ticker)
@@ -113,6 +115,8 @@ class MicService : Service() {
         const val EXTRA_PORT = "port"
         const val EXTRA_PRESET = "preset"
         const val EXTRA_AAUDIO = "aaudio"
+        const val EXTRA_NC = "nc"
+        const val EXTRA_GAIN = "gain"
         private const val CHANNEL = "cordmic"
         private const val NOTIF_ID = 1
         // Streamer holds only the application context, which cannot leak an Activity.

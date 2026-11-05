@@ -34,6 +34,7 @@ internal sealed class AppController : ApplicationContext
     private readonly Dictionary<Health, Icon> _icons = new();
     private readonly Queue<(DateTime t, long exp, long lost)> _lossWin = new();
 
+    private bool _armed = true;
     private Receiver? _rx;
     private string? _rxError;
     private DateTime _nextRxTry = DateTime.MinValue;
@@ -42,13 +43,21 @@ internal sealed class AppController : ApplicationContext
     private DateTime _peerSince = DateTime.MinValue;
     private List<RenderDevice> _devices = new();
     private Health? _shownHealth;
-    private WizardForm? _wizard;
+    private MainForm? _window;
 
     private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miOutput = null!, _miJitter = null!, _miOutMode = null!,
                               _miStartup = null!, _miFixRoute = null!;
 
     public AppStatus Status { get; private set; } = new(Health.Waiting, L.T("status.starting"), "", "CordMic");
     public StatsSnapshot? Stats { get; private set; }
+    public bool Armed => _armed;
+    public JitterPreset Jitter => _settings.Jitter;
+    public string? OutputDeviceId => _settings.OutputDeviceId;
+    public IReadOnlyList<RenderDevice> Devices => _devices;
+    public bool DisplayedNc => Stats?.Phone.Known == true ? Stats.Phone.NoiseCancellation : _settings.NoiseCancellation;
+    public int DisplayedGain => Stats?.Phone is { Known: true, GainDb: >= 0 } p ? p.GainDb : Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb);
+    /// <summary>Name of the output the controller would open right now, for the connect window.</summary>
+    public string? WantedOutputName => WantedOutput()?.Name;
     public TetherAdapter? Adapter => _net.Current;
     public string? CableName { get; private set; }
     public string? ActiveOutput => _audio.ActiveName;
@@ -101,8 +110,18 @@ internal sealed class AppController : ApplicationContext
 
     private void EnsureReceiver()
     {
+        if (!_armed)
+        {
+            if (_rx is not null) { _audio.Stop(); _rx.Dispose(); _rx = null; Stats = null; }
+            return;
+        }
         if (_rx is not null || DateTime.UtcNow < _nextRxTry) return;
-        var rx = new Receiver(_settings.Port, "0.0.0.0", Presets.Ms(_settings.Jitter)) { Log = Log, RxThreadInit = Native.BoostAudioThread };
+        var rx = new Receiver(_settings.Port, "0.0.0.0", Presets.Ms(_settings.Jitter))
+        {
+            Log = Log, RxThreadInit = Native.BoostAudioThread,
+            NoiseCancellation = _settings.NoiseCancellation, Agc = true,
+            MicGainDb = Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb),
+        };
         try
         {
             rx.Start();
@@ -151,6 +170,7 @@ internal sealed class AppController : ApplicationContext
         try
         {
             _audio.Start(want.Id, _rx, _settings.OutputChannels, _settings.OutputLatencyMs, _settings.OutputMode, Log);
+            _rx.SetRenderPeriodMs(_audio.PeriodMs);
             Log($"output -> {want.Name} ({_audio.Describe})");
             if (_settings.OutputMode == OutputMode.Exclusive && _audio.ActiveMode != OutputMode.Exclusive)
                 _tray.ShowBalloonTip(5000, "CordMic", L.T("outmode.fellBack", want.Name), ToolTipIcon.Info);
@@ -346,7 +366,7 @@ internal sealed class AppController : ApplicationContext
         }
     }
 
-    private void SetOutput(RenderDevice? d)
+    public void SetOutput(RenderDevice? d)
     {
         if (d is not null && DeviceRules.VirtualCableRank(d.Name) < 0)
         {
@@ -380,11 +400,11 @@ internal sealed class AppController : ApplicationContext
         _tray.ContextMenuStrip = _menu;
         old.Dispose();
         _shownHealth = null;
-        if (_wizard is { IsDisposed: false }) { _wizard.Close(); ShowWizard(); }
+        if (_window is { IsDisposed: false }) { _window.Close(); ShowWizard(); }
         UpdateStatus();
     }
 
-    private void SetJitter(JitterPreset p)
+    public void SetJitter(JitterPreset p)
     {
         _settings.Jitter = p;
         Save();
@@ -425,7 +445,7 @@ internal sealed class AppController : ApplicationContext
         catch (System.ComponentModel.Win32Exception) { Log("route fix cancelled at UAC"); }
     }
 
-    private void OpenLog()
+    public void OpenLog()
     {
         try { Process.Start(new ProcessStartInfo(File.Exists(Paths.Log) ? Paths.Log : Paths.LogDir) { UseShellExecute = true }); }
         catch (Exception ex) { Log("open log failed: " + ex.Message); }
@@ -439,19 +459,63 @@ internal sealed class AppController : ApplicationContext
 
     public void ShowWizard()
     {
-        if (_wizard is { IsDisposed: false }) { _wizard.Activate(); if (_wizard.WindowState == FormWindowState.Minimized) _wizard.WindowState = FormWindowState.Normal; return; }
-        _wizard = new WizardForm(this);
-        _wizard.FormClosed += (_, _) =>
+        if (_window is { IsDisposed: false }) { _window.Activate(); if (_window.WindowState == FormWindowState.Minimized) _window.WindowState = FormWindowState.Normal; return; }
+        _window = new MainForm(this);
+        _window.FormClosed += (_, _) =>
         {
-            if (!_settings.FirstRunDone && (CableName is not null || _wizard!.Finished))
-            {
-                _settings.FirstRunDone = true;
-                Save();
-            }
-            _wizard = null;
+            if (!_settings.FirstRunDone) { _settings.FirstRunDone = true; Save(); }
+            _window = null;
         };
-        _wizard.Show();
-        _wizard.Activate();
+        _window.Show();
+        _window.Activate();
+    }
+
+    public void SetArmed(bool on)
+    {
+        if (_armed == on)
+        {
+            if (on) { _nextRxTry = DateTime.MinValue; _nextAudioTry = DateTime.MinValue; Tick(); }
+            return;
+        }
+        _armed = on;
+        Log(on ? "connect" : "disconnect");
+        if (!on) { _audio.Stop(); _rx?.Dispose(); _rx = null; Stats = null; }
+        else { _nextRxTry = DateTime.MinValue; _nextAudioTry = DateTime.MinValue; }
+        Tick();
+    }
+
+    /// <summary>Error state: stay armed and try the socket and the output device again now.</summary>
+    public void RetryConnect()
+    {
+        _armed = true;
+        _nextRxTry = DateTime.MinValue;
+        _nextAudioTry = DateTime.MinValue;
+        if (_rx is null) { Tick(); return; }
+        _audio.Stop();
+        Tick();
+    }
+
+    public void SetNoiseCancellation(bool on)
+    {
+        _settings.NoiseCancellation = on;
+        Save();
+        if (_rx is { } rx) { rx.NoiseCancellation = on; rx.NotifyLinkControlChanged(); }
+        Log("noise cancellation -> " + (on ? "on" : "off"));
+    }
+
+    public void SetMicGain(int db)
+    {
+        db = Math.Clamp(db, 0, VoiceChain.MaxGainDb);
+        _settings.MicGainDb = db;
+        Save();
+        if (_rx is { } rx) { rx.MicGainDb = db; rx.Agc = true; rx.NotifyLinkControlChanged(); }
+        Log($"mic gain -> +{db} dB");
+    }
+
+    public void SetStartup(bool on)
+    {
+        try { Startup.Set(on); Log("startup -> " + on); }
+        catch (Exception ex) { MessageBox.Show(L.T("dlg.startupFailed", ex.Message), "CordMic"); }
     }
 
     /// <summary>Wizard step 1 polls this so a freshly installed cable shows up without restarting.</summary>
@@ -461,7 +525,7 @@ internal sealed class AppController : ApplicationContext
     {
         _timer.Stop();
         _tray.Visible = false;
-        _wizard?.Close();
+        _window?.Close();
         _audio.Dispose();
         _rx?.Dispose();
         _net.Dispose();

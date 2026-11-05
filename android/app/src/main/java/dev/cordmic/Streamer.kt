@@ -1,6 +1,7 @@
 package dev.cordmic
 
 import android.content.Context
+import android.os.Build
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -23,6 +24,8 @@ class Streamer(context: Context, private val cfg: Config) {
         val useAAudio: Boolean = true,
         val sampleRate: Int = 48000,
         val frames: Int = 240,     // 5 ms @ 48 kHz
+        val noiseCancellation: Boolean = true,
+        val gainDb: Int = VoiceChain.DEFAULT_GAIN_DB,
     )
 
     @Volatile private var running = false
@@ -43,6 +46,12 @@ class Streamer(context: Context, private val cfg: Config) {
     /** elapsedRealtime of the last HELLO/PING from the PC, 0 = never. */
     val lastHeardAt: Long get() = lastHeard
     private val peak = AtomicInteger(0)
+    private val voice = VoiceChain(cfg.sampleRate)
+    /** Live voice-chain controls. The PC can push a new value on PING; the phone UI writes these too. */
+    @Volatile var noiseCancellation: Boolean = cfg.noiseCancellation
+    @Volatile var gainDb: Int = cfg.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB)
+    @Volatile private var ctrlSeq = -1
+    val noiseLatencyMs: Double get() = if (noiseCancellation) voice.noiseLatencyMs else 0.0
     @Volatile var sent = 0L; private set
     @Volatile var sendErrors = 0L; private set
     private var audioThread: Thread? = null
@@ -125,7 +134,7 @@ class Streamer(context: Context, private val cfg: Config) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val buf = ByteArray(Protocol.HEADER_SIZE + cfg.frames * 2)
         val pkt = DatagramPacket(buf, buf.size)
-        val flags = Protocol.flags(1, 0)
+        var flags = Protocol.flags(1, 0)
         var engine: CaptureEngine? = null
         var seq = 0
         var lastDiscover = 0L
@@ -144,7 +153,11 @@ class Streamer(context: Context, private val cfg: Config) {
                 Log.w(TAG, "read returned $n, reopening ${engine.name}")
                 engine.close(); engine = null; continue
             }
-            // Level meter: one pass over 240 samples, read by the UI via takePeak().
+            voice.noiseCancellation = noiseCancellation
+            voice.agc = true
+            voice.gainDb = gainDb
+            voice.process(buf, Protocol.HEADER_SIZE, n)
+            // Level meter after gain, so the bar matches what the PC receives.
             val p = pcm16Peak(buf, Protocol.HEADER_SIZE, n)
             peak.accumulateAndGet(p) { a, b -> if (a > b) a else b }
             val now = SystemClock.elapsedRealtime()
@@ -159,6 +172,7 @@ class Streamer(context: Context, private val cfg: Config) {
                 if (now - lastDiscover > 500) { lastDiscover = now; sendDiscover(s) }
                 continue
             }
+            flags = Protocol.flags(1, 0, noiseCancellation, agc = true, aaudio = engine.name == "AAudio")
             Protocol.writeHeader(buf, Protocol.T_AUDIO, seq++, nowUs(), n, flags)
             pkt.setData(buf, 0, Protocol.HEADER_SIZE + n * 2)
             pkt.socketAddress = t
@@ -182,7 +196,7 @@ class Streamer(context: Context, private val cfg: Config) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val rb = ByteArray(256)
         val rp = DatagramPacket(rb, rb.size)
-        val tb = ByteArray(Protocol.HEADER_SIZE)
+        val tb = ByteArray(Protocol.HEADER_SIZE + 64)
         while (running) {
             val s = sock
             if (s == null || s.isClosed) { SystemClock.sleep(100); continue }
@@ -201,8 +215,24 @@ class Streamer(context: Context, private val cfg: Config) {
                     }
                     Protocol.T_PING -> {
                         lastHeard = SystemClock.elapsedRealtime()
+                        Protocol.readPingControl(rb, rp.length)?.let { c ->
+                            if (c.changeSeq != 0 && c.changeSeq != ctrlSeq) {
+                                ctrlSeq = c.changeSeq
+                                noiseCancellation = c.noiseCancellation
+                                gainDb = c.gainDb
+                            }
+                        }
+                        val st = engineStats
+                        val n = Protocol.writePongStatus(
+                            tb, Protocol.HEADER_SIZE,
+                            noiseCancellation, agc = true,
+                            aaudio = engineName == "AAudio",
+                            exclusive = st?.exclusive == true,
+                            lowLatency = st?.lowLatency == true,
+                            gainDb, Build.MODEL,
+                        )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
-                        s.send(DatagramPacket(tb, tb.size, rp.socketAddress))
+                        s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))
                     }
                 }
             } catch (_: SocketTimeoutException) {

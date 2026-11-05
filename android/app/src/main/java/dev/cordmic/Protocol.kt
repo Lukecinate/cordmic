@@ -15,8 +15,53 @@ object Protocol {
     const val T_BYE: Byte = 6
     const val DEFAULT_PORT = 50005
 
-    /** codec PCM16 (0), channels-1 in bits 4-7, rate code (0 = 48 kHz) in bits 8-11. */
-    fun flags(channels: Int = 1, rateCode: Int = 0): Int = ((channels - 1) shl 4) or (rateCode shl 8)
+    /**
+     * Bits 0–11 match 0.4.2 (codec, channels-1, rate). Bits 12–14 were added in 0.5.0 and stay 0 on older
+     * senders: noise cancellation, AGC, capture path is AAudio. A 0.4.2 receiver ignores them.
+     */
+    fun flags(channels: Int = 1, rateCode: Int = 0, noiseCancellation: Boolean = false, agc: Boolean = false, aaudio: Boolean = false): Int {
+        var v = ((channels - 1) shl 4) or (rateCode shl 8)
+        if (noiseCancellation) v = v or (1 shl 12)
+        if (agc) v = v or (1 shl 13)
+        if (aaudio) v = v or (1 shl 14)
+        return v
+    }
+
+    const val LINK_MAGIC: Byte = 0xC5.toByte()
+    const val LINK_SIZE = 4
+
+    /** PC → phone. changeSeq 0 means "do not override the phone". */
+    fun readPingControl(buf: ByteArray, len: Int): PingControl? {
+        if (len < HEADER_SIZE + LINK_SIZE || buf[HEADER_SIZE] != LINK_MAGIC) return null
+        val f = buf[HEADER_SIZE + 1].toInt() and 0xFF
+        return PingControl(
+            noiseCancellation = f and 1 != 0,
+            agc = f and 2 != 0,
+            gainDb = (buf[HEADER_SIZE + 2].toInt() and 0xFF).coerceIn(0, VoiceChain.MAX_GAIN_DB),
+            changeSeq = buf[HEADER_SIZE + 3].toInt() and 0xFF,
+        )
+    }
+
+    /** Writes the pong status at [off] and returns how many bytes were used. */
+    fun writePongStatus(buf: ByteArray, off: Int, noiseCancellation: Boolean, agc: Boolean, aaudio: Boolean,
+                        exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String): Int {
+        buf[off] = LINK_MAGIC
+        var f = 0
+        if (noiseCancellation) f = f or 1
+        if (agc) f = f or 2
+        if (aaudio) f = f or 4
+        if (exclusive) f = f or 8
+        if (lowLatency) f = f or 16
+        buf[off + 1] = f.toByte()
+        buf[off + 2] = gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toByte()
+        buf[off + 3] = (if (aaudio) 1 else 2).toByte()
+        val name = deviceName.encodeToByteArray()
+        val n = minOf(name.size, buf.size - off - LINK_SIZE)
+        if (n > 0) name.copyInto(buf, off + LINK_SIZE, 0, n)
+        return LINK_SIZE + maxOf(0, n)
+    }
+
+    data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Int, val changeSeq: Int)
 
     fun writeHeader(buf: ByteArray, type: Byte, seq: Int, tsUs: Long, frames: Int, flags: Int) {
         val bb = ByteBuffer.wrap(buf, 0, HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)

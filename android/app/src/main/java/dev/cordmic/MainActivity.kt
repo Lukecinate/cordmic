@@ -30,6 +30,7 @@ import androidx.core.view.updatePadding
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.slider.Slider
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.shape.ShapeAppearanceModel
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -46,6 +47,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var preset: MaterialAutoCompleteTextView
     private lateinit var presetLayout: TextInputLayout
     private lateinit var aaudio: MaterialSwitch
+    private lateinit var noiseCancel: MaterialSwitch
+    private lateinit var gain: Slider
+    private lateinit var gainValue: TextView
+    private var applyingRemote = false
     private lateinit var toggle: MaterialButton
     private lateinit var hintAction: MaterialButton
     private lateinit var stateIcon: ImageView
@@ -101,6 +106,9 @@ class MainActivity : AppCompatActivity() {
         port = findViewById(R.id.port); portLayout = findViewById(R.id.portLayout)
         preset = findViewById(R.id.preset); presetLayout = findViewById(R.id.presetLayout)
         aaudio = findViewById(R.id.aaudio)
+        noiseCancel = findViewById(R.id.noiseCancel)
+        gain = findViewById(R.id.gain)
+        gainValue = findViewById(R.id.gainValue)
         toggle = findViewById(R.id.toggle)
         hintAction = findViewById(R.id.hintAction)
         stateIcon = findViewById(R.id.stateIcon)
@@ -115,6 +123,9 @@ class MainActivity : AppCompatActivity() {
         port.setText(p.getInt("port", Protocol.DEFAULT_PORT).toString())
         presetIndex = p.getInt("preset", 0).coerceIn(0, presets.lastIndex)
         aaudio.isChecked = p.getBoolean("aaudio", true)
+        noiseCancel.isChecked = p.getBoolean("nc", true)
+        gain.value = p.getInt("gain", VoiceChain.DEFAULT_GAIN_DB).coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
+        showGain()
 
         preset.setAdapter(ArrayAdapter(this, R.layout.item_dropdown, presets.map { getString(it.label) }))
         preset.setOnItemClickListener { _, _, pos, _ -> presetIndex = pos; showPreset() }
@@ -123,6 +134,19 @@ class MainActivity : AppCompatActivity() {
         ip.doOnTextChange { ipLayout.error = null; updateSummary() }
         port.doOnTextChange { portLayout.error = null; updateSummary() }
         findViewById<View>(R.id.aaudioRow).setOnClickListener { if (aaudio.isEnabled) aaudio.toggle() }
+        findViewById<View>(R.id.ncRow).setOnClickListener { noiseCancel.toggle() }
+        noiseCancel.setOnCheckedChangeListener { _, checked ->
+            if (applyingRemote) return@setOnCheckedChangeListener
+            getPreferences(MODE_PRIVATE).edit().putBoolean("nc", checked).apply()
+            MicService.current?.noiseCancellation = checked
+        }
+        gain.addOnChangeListener { _, value, fromUser ->
+            showGain()
+            if (!fromUser || applyingRemote) return@addOnChangeListener
+            val db = value.toInt()
+            getPreferences(MODE_PRIVATE).edit().putInt("gain", db).apply()
+            MicService.current?.gainDb = db
+        }
 
         toggle.setOnClickListener {
             if (currentState().running) MicService.stop(this) else startClicked()
@@ -248,6 +272,15 @@ class MainActivity : AppCompatActivity() {
         for (v in listOf(ipLayout, portLayout, presetLayout, aaudio, findViewById(R.id.aaudioRow))) v.isEnabled = !ui.running
         setChevron(R.id.settingsChevron, R.id.settingsHeader, expanded, R.string.settings_title)
         updateSummary()
+        val liveStreamer = MicService.current
+        if (liveStreamer != null && !gain.isPressed) {
+            applyingRemote = true
+            if (noiseCancel.isChecked != liveStreamer.noiseCancellation) noiseCancel.isChecked = liveStreamer.noiseCancellation
+            val g = liveStreamer.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
+            if (gain.value != g) gain.value = g
+            applyingRemote = false
+            showGain()
+        }
 
         // Details
         findViewById<View>(R.id.detailsBody).isVisible = detailsExpanded
@@ -276,6 +309,10 @@ class MainActivity : AppCompatActivity() {
         val portNum = port.text?.toString()?.toIntOrNull() ?: Protocol.DEFAULT_PORT
         findViewById<TextView>(R.id.settingsSummary).text =
             getString(R.string.settings_summary, host, portNum, getString(presets[presetIndex].label))
+    }
+
+    private fun showGain() {
+        gainValue.text = getString(R.string.gain_value, gain.value.toInt())
     }
 
     private fun showPreset() {
@@ -365,13 +402,17 @@ class MainActivity : AppCompatActivity() {
         if (host.isNotEmpty() && !isIpv4(host)) { ipLayout.error = getString(R.string.err_ip); ok = false }
         if (!ok || portNum == null) { settingsOverride = true; render(currentState(), immediate = true); return }
         permissionDenied = false
+        val gainDb = gain.value.toInt()
         getPreferences(MODE_PRIVATE).edit().putString("ip", host).putInt("port", portNum)
-            .putInt("preset", presetIndex).putBoolean("aaudio", aaudio.isChecked).apply()
+            .putInt("preset", presetIndex).putBoolean("aaudio", aaudio.isChecked)
+            .putBoolean("nc", noiseCancel.isChecked).putInt("gain", gainDb).apply()
         val i = Intent(this, MicService::class.java)
             .putExtra(MicService.EXTRA_HOST, host)
             .putExtra(MicService.EXTRA_PORT, portNum)
             .putExtra(MicService.EXTRA_PRESET, presets[presetIndex].source)
             .putExtra(MicService.EXTRA_AAUDIO, aaudio.isChecked)
+            .putExtra(MicService.EXTRA_NC, noiseCancel.isChecked)
+            .putExtra(MicService.EXTRA_GAIN, gainDb)
         startForegroundService(i)
     }
 

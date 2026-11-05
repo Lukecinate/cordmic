@@ -15,8 +15,12 @@ public sealed class AppSettings
     public bool FirstRunDone { get; set; }
     /// <summary>Output channels sent to WASAPI (VB-Cable default is stereo).</summary>
     public int OutputChannels { get; set; } = 2;
-    /// <summary>WASAPI buffer request in ms, used only by the NAudio fallback path.</summary>
+    /// <summary>Nominal WASAPI buffer hint in ms. The renderer uses the device period; this remains for older settings files.</summary>
     public int OutputLatencyMs { get; set; } = 10;
+    /// <summary>Phone noise suppression, pushed over the ping payload (0.5.0). Default on.</summary>
+    public bool NoiseCancellation { get; set; } = true;
+    /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +12, with AGC able to use the rest of the +24 cap.</summary>
+    public int MicGainDb { get; set; } = 12;
     /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public OutputMode OutputMode { get; set; } = OutputMode.LowLatency;

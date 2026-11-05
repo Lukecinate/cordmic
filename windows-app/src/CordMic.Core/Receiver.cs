@@ -8,10 +8,16 @@ public sealed record StatsSnapshot(
     string? Peer, long Received, long Expected, long Lost, double LossPct, long Reordered, long Late,
     long Concealed, long Underruns, long OverflowDrops, double DepthMs, double? RttMs, double? RttMinMs,
     double ArrivalJitterMs, double PacketMs, double LevelDbfs, double SecondsSinceAudio,
-    double BufferAvgMs = double.NaN, double BufferMinMs = double.NaN, long CatchUpDrops = 0)
+    double BufferAvgMs = double.NaN, double BufferMinMs = double.NaN, long CatchUpDrops = 0,
+    double RenderPeriodMs = 0, double JitterTargetMs = 0, int JitterTargetPackets = 0,
+    double UnderrunPerMin = double.NaN, double OverflowPerMin = double.NaN,
+    PhoneLink Phone = default)
 {
     /// <summary>Jitter-buffer delay to show: the time-averaged depth once a window completed, else the instantaneous depth.</summary>
     public double BufferMs => double.IsNaN(BufferAvgMs) ? DepthMs : BufferAvgMs;
+
+    static string Ms(double v, string fmt = "F1") => double.IsNaN(v) ? "-" : v.ToString(fmt);
+    static string Rate(double perMin) => double.IsNaN(perMin) ? "-" : perMin.ToString("F1");
 
     public string Line() =>
         $"peer={Peer ?? "-"} rx={Received} lost={Lost} ({LossPct:F2}%) reord={Reordered} late={Late} " +
@@ -19,7 +25,12 @@ public sealed record StatsSnapshot(
         $"jitter={ArrivalJitterMs:F2}ms rtt={(RttMs is { } r ? r.ToString("F2") : "-")}ms " +
         $"(min {(RttMinMs is { } m ? m.ToString("F2") : "-")}) pkt={PacketMs:F1}ms level={LevelDbfs:F0}dBFS " +
         $"bufavg={(double.IsNaN(BufferAvgMs) ? "-" : BufferAvgMs.ToString("F1"))}ms " +
-        $"bufmin={(double.IsNaN(BufferMinMs) ? "-" : BufferMinMs.ToString("F1"))}ms catchup={CatchUpDrops}";
+        $"bufmin={(double.IsNaN(BufferMinMs) ? "-" : BufferMinMs.ToString("F1"))}ms catchup={CatchUpDrops} " +
+        $"period={(RenderPeriodMs > 0 ? RenderPeriodMs.ToString("F1") : "-")}ms " +
+        $"jtarget={Ms(JitterTargetMs)}ms/{JitterTargetPackets}pkt " +
+        $"urate={Rate(UnderrunPerMin)}/min orate={Rate(OverflowPerMin)}/min " +
+        $"nc={Phone.NoiseText} agc={Phone.AgcText} gain={Phone.GainText} phone={Phone.Mode}" +
+        (string.IsNullOrEmpty(Phone.Name) ? "" : $" dev={Phone.Name.Replace(' ', '_')}");
 }
 
 /// <summary>
@@ -54,6 +65,15 @@ public sealed class Receiver : IDisposable
     private double? _rttMs, _rttMin;
     private double _levelDb = -120;
     private IPEndPoint[] _probes = Array.Empty<IPEndPoint>();
+    private double _renderPeriodMs;
+    private readonly PingBackoff _pingBackoff = new();
+    private long _pingMuteUntil;
+    private bool _pingDropLogged;
+    private byte _ctrlSeq;
+    private PhoneLink _phone;
+    private long _rateTicks, _rateUnderruns, _rateOverflows;
+    private double _underrunPerMin = double.NaN, _overflowPerMin = double.NaN;
+    private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size];
 
     public int Port { get; private set; }
     public int FramesPerPacket { get; private set; }
@@ -83,20 +103,72 @@ public sealed class Receiver : IDisposable
 
     private JitterBuffer MakeJb(int fpp)
     {
-        double pktMs = fpp * 1000.0 / _sampleRate;
-        int target = Math.Max(1, (int)Math.Round(_jitterMs / pktMs, MidpointRounding.ToEven));
         FramesPerPacket = fpp;
+        double pktMs = fpp * 1000.0 / _sampleRate;
+        int target = JitterPolicy.EffectiveTargetPackets(_jitterMs, _renderPeriodMs, pktMs);
         return new JitterBuffer(fpp, _channels, target, sampleRate: _sampleRate);
     }
 
     public double JitterMs => _jitterMs;
+    /// <summary>WASAPI engine period the jitter target was floored against. 0 until the renderer reports it.</summary>
+    public double RenderPeriodMs => _renderPeriodMs;
+    /// <summary>Target actually in use (preset, raised when the render period cannot sustain it).</summary>
+    public double EffectiveJitterMs => _jb.Target * FramesPerPacket * 1000.0 / _sampleRate;
 
-    /// <summary>Change the jitter-buffer target at runtime (rebuilds the buffer; a few ms glitch).</summary>
+    /// <summary>Voice-chain settings pushed to a 0.5.0 phone on the next ping. A 0.4.2 phone ignores the payload.</summary>
+    public bool NoiseCancellation { get; set; } = true;
+    public bool Agc { get; set; } = true;
+    public int MicGainDb { get; set; } = VoiceChain.DefaultGainDb;
+    public PhoneLink Phone => _phone;
+
+    /// <summary>Bumps the control counter so the phone applies <see cref="NoiseCancellation"/> and <see cref="MicGainDb"/>.</summary>
+    public byte ControlSeq => _ctrlSeq;
+    public void NotifyLinkControlChanged() => _ctrlSeq = (byte)(_ctrlSeq == 255 ? 1 : _ctrlSeq + 1);
+
+    /// <summary>Change the jitter-buffer target at runtime (rebuilds the buffer when the packet count changes).</summary>
     public void SetJitterMs(double ms)
     {
         _jitterMs = ms;
-        _jb = MakeJb(FramesPerPacket);
-        Log?.Invoke($"jitter target {ms:F0} ms = {_jb.Target} pkt");
+        ApplyTarget(force: true);
+    }
+
+    /// <summary>
+    /// Tell the buffer how much audio one render callback consumes. The effective target is raised to
+    /// one full pull plus one packet so the callback cannot empty the buffer. No-op when the packet
+    /// count does not change.
+    /// </summary>
+    public void SetRenderPeriodMs(double periodMs)
+    {
+        if (periodMs < 0) periodMs = 0;
+        if (Math.Abs(periodMs - _renderPeriodMs) < 0.05 && _jb.Target == TargetPackets()) return;
+        _renderPeriodMs = periodMs;
+        ApplyTarget(force: false);
+    }
+
+    private int TargetPackets()
+    {
+        double pktMs = Math.Max(1, FramesPerPacket) * 1000.0 / _sampleRate;
+        return JitterPolicy.EffectiveTargetPackets(_jitterMs, _renderPeriodMs, pktMs);
+    }
+
+    private void ApplyTarget(bool force)
+    {
+        int target = TargetPackets();
+        double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
+        if (!force && _jb.Target == target && _jb.FramesPerPacket == FramesPerPacket)
+        {
+            LogTarget(pktMs, target);
+            return;
+        }
+        if (_jb.Target != target || _jb.FramesPerPacket != FramesPerPacket)
+            _jb = new JitterBuffer(FramesPerPacket, _channels, target, sampleRate: _sampleRate);
+        LogTarget(pktMs, target);
+    }
+
+    private void LogTarget(double pktMs, int target)
+    {
+        string period = _renderPeriodMs > 0 ? $"{_renderPeriodMs:F1} ms" : "n/a";
+        Log?.Invoke($"jitter target {target * pktMs:F1} ms = {target} pkt (preset {_jitterMs:F0} ms, render period {period})");
     }
 
     /// <summary>Endpoints (phone IP : port) that get a HELLO every second while no phone is connected.</summary>
@@ -123,6 +195,7 @@ public sealed class Receiver : IDisposable
                 try { ps.IOControl(unchecked((int)0x9800000C), new byte[4], null); } catch (Exception) { }
             ps.Bind(new IPEndPoint(_bind, 0));
             ps.ReceiveTimeout = 50;
+            try { ps.SendBufferSize = 64 * 1024; } catch (SocketException) { }
             _pingSock = ps;
         }
         catch (Exception e) { _pingSock = null; Log?.Invoke($"ping socket unavailable, using main socket: {e.Message}"); }
@@ -200,7 +273,7 @@ public sealed class Receiver : IDisposable
                     SetPeer(new IPEndPoint(addr.Address, addr.Port));
                     break;
                 case Protocol.TPong:
-                    OnPong(h, arrival);
+                    OnPong(h, buf.AsSpan(Protocol.HeaderSize, Math.Max(0, n - Protocol.HeaderSize)), arrival);
                     break;
                 case Protocol.TPing:
                     Send(Protocol.Encode(Protocol.TPong, h.Seq, h.TsUs), addr);
@@ -213,7 +286,7 @@ public sealed class Receiver : IDisposable
         }
     }
 
-    private void OnPong(in PacketHeader h, ulong arrival)
+    private void OnPong(in PacketHeader h, ReadOnlySpan<byte> payload, ulong arrival)
     {
         double rtt = ((long)arrival - (long)h.TsUs) / 1000.0;
         if (rtt >= 0 && rtt < 5000)
@@ -221,6 +294,7 @@ public sealed class Receiver : IDisposable
             {
                 _rttMs = _rttMs is { } r ? 0.8 * r + 0.2 * rtt : rtt;
                 _rttMin = _rttMin is { } m ? Math.Min(m, rtt) : rtt;
+                if (LinkControl.TryReadPong(payload, out var phone)) _phone = phone;
             }
     }
 
@@ -267,6 +341,10 @@ public sealed class Receiver : IDisposable
             double db = peak > 0 ? 20 * Math.Log10(peak / 32768.0) : -120;
             _levelDb = db > _levelDb ? db : _levelDb * 0.9 + db * 0.1;
             _lastAudioTicks = Stopwatch.GetTimestamp();
+            // 0.5.0 sets bits 12–14. All-zero flags are what 0.4.2 sends, so they do not count as a report.
+            if ((h.Flags & 0x7000) != 0)
+                _phone = new PhoneLink(true, h.NoiseCancellation, h.Agc, h.AAudio, _phone.Exclusive, _phone.LowLatency,
+                    _phone.Known ? _phone.GainDb : -1, _phone.Name);
         }
         _jb.Push(h.Seq, payload);
     }
@@ -292,7 +370,8 @@ public sealed class Receiver : IDisposable
                     {
                         int n = ps.ReceiveFrom(buf, ref from);
                         ulong arrival = NowUs();
-                        if (Protocol.TryDecode(buf.AsSpan(0, n), out var h, out _) && h.Type == Protocol.TPong) OnPong(h, arrival);
+                        if (Protocol.TryDecode(buf.AsSpan(0, n), out var h, out _) && h.Type == Protocol.TPong)
+                            OnPong(h, buf.AsSpan(Protocol.HeaderSize, Math.Max(0, n - Protocol.HeaderSize)), arrival);
                     }
                     catch (SocketException) { }
                     catch (ObjectDisposedException) { return; }
@@ -303,13 +382,31 @@ public sealed class Receiver : IDisposable
             var peer = Peer;
             if (peer != null)
             {
+                long nowTicks = Stopwatch.GetTimestamp();
+                if (nowTicks < _pingMuteUntil) continue;
                 _pingSeq++;
-                var ping = Protocol.Encode(Protocol.TPing, _pingSeq, NowUs());
+                LinkControl.WritePing(_pingPkt.AsSpan(Protocol.HeaderSize), NoiseCancellation, Agc, MicGainDb, _ctrlSeq);
+                Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)
                 {
-                    try { p2.SendTo(ping, peer); } catch (Exception e) { Log?.Invoke($"ping send failed: {e.Message}"); }
+                    try
+                    {
+                        p2.SendTo(_pingPkt, peer);
+                        if (_pingBackoff.OnSuccess()) Log?.Invoke("ping send recovered");
+                    }
+                    catch (SocketException e) when (PingBackoff.IsNoBuffer(e.ErrorCode) || PingBackoff.IsNoBuffer((int)e.SocketErrorCode))
+                    {
+                        // WSAENOBUFS: the stack is out of buffer space. Wait, and don't log every ping.
+                        if (_pingBackoff.OnNoBuffer())
+                            Log?.Invoke($"ping send paused ({e.SocketErrorCode}); backing off {_pingBackoff.Delay.TotalMilliseconds:F0} ms");
+                        _pingMuteUntil = Stopwatch.GetTimestamp() + (long)(_pingBackoff.Delay.TotalSeconds * Stopwatch.Frequency);
+                    }
+                    catch (Exception e)
+                    {
+                        if (!_pingDropLogged) { Log?.Invoke($"ping send failed: {e.Message}"); _pingDropLogged = true; }
+                    }
                 }
-                else Send(ping, peer);
+                else Send(_pingPkt, peer);
             }
             else if (DateTime.UtcNow - lastProbe >= probeEvery)
             {
@@ -328,12 +425,29 @@ public sealed class Receiver : IDisposable
             var jb = _jb;
             var js = jb.Stats;
             var peer = Peer;
+            long now = Stopwatch.GetTimestamp();
+            if (_rateTicks == 0)
+            {
+                _rateTicks = now; _rateUnderruns = js.Underruns; _rateOverflows = js.OverflowDrops;
+            }
+            else
+            {
+                double sec = Seconds(now - _rateTicks);
+                if (sec >= 10)
+                {
+                    _underrunPerMin = (js.Underruns - _rateUnderruns) / sec * 60.0;
+                    _overflowPerMin = (js.OverflowDrops - _rateOverflows) / sec * 60.0;
+                    _rateTicks = now; _rateUnderruns = js.Underruns; _rateOverflows = js.OverflowDrops;
+                }
+            }
+            double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
             return new StatsSnapshot(
                 peer?.ToString(), _received, expected, lost, expected > 0 ? 100.0 * lost / expected : 0,
                 _reordered, js.Late, js.Concealed, js.Underruns, js.OverflowDrops, jb.DepthMs(_sampleRate),
-                _rttMs, _rttMin, _jitterUs / 1000.0, FramesPerPacket * 1000.0 / _sampleRate, _levelDb,
-                _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(Stopwatch.GetTimestamp() - _lastAudioTicks),
-                jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops);
+                _rttMs, _rttMin, _jitterUs / 1000.0, pktMs, _levelDb,
+                _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(now - _lastAudioTicks),
+                jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops,
+                _renderPeriodMs, jb.Target * pktMs, jb.Target, _underrunPerMin, _overflowPerMin, _phone);
         }
     }
 

@@ -14,21 +14,31 @@ static std::vector<int16_t> gTmp;
 
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_cordmic_AAudioCapture_nativeOpen(JNIEnv *, jclass, jint sampleRate, jint channels,
-                                         jint inputPreset, jboolean exclusive) {
+                                         jint inputPreset, jboolean exclusive, jint performanceMode) {
     if (gStream) return 0;
-    AAudioStreamBuilder *b = nullptr;
-    aaudio_result_t r = AAudio_createStreamBuilder(&b);
-    if (r != AAUDIO_OK) return r;
-    AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
-    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-    AAudioStreamBuilder_setSharingMode(b, exclusive ? AAUDIO_SHARING_MODE_EXCLUSIVE
-                                                    : AAUDIO_SHARING_MODE_SHARED);
-    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
-    AAudioStreamBuilder_setSampleRate(b, sampleRate);
-    AAudioStreamBuilder_setChannelCount(b, channels);
-    AAudioStreamBuilder_setInputPreset(b, inputPreset);  // API 28+
-    r = AAudioStreamBuilder_openStream(b, &gStream);
-    AAudioStreamBuilder_delete(b);
+    auto open = [&](bool capCapacity) -> aaudio_result_t {
+        AAudioStreamBuilder *b = nullptr;
+        aaudio_result_t hr = AAudio_createStreamBuilder(&b);
+        if (hr != AAUDIO_OK) return hr;
+        AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
+        AAudioStreamBuilder_setPerformanceMode(b, performanceMode);
+        AAudioStreamBuilder_setSharingMode(b, exclusive ? AAUDIO_SHARING_MODE_EXCLUSIVE
+                                                        : AAUDIO_SHARING_MODE_SHARED);
+        AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+        AAudioStreamBuilder_setSampleRate(b, sampleRate);
+        AAudioStreamBuilder_setChannelCount(b, channels);
+        AAudioStreamBuilder_setInputPreset(b, inputPreset);  // API 28+
+        if (capCapacity) AAudioStreamBuilder_setBufferCapacityInFrames(b, sampleRate / 50); // 20 ms ceiling
+        hr = AAudioStreamBuilder_openStream(b, &gStream);
+        AAudioStreamBuilder_delete(b);
+        return hr;
+    };
+    // Prefer a short capacity so the HAL cannot queue a long capture buffer. Some devices reject the hint.
+    aaudio_result_t r = open(true);
+    if (r != AAUDIO_OK) {
+        gStream = nullptr;
+        r = open(false);
+    }
     if (r != AAUDIO_OK) {
         LOGE("openStream failed: %s", AAudio_convertResultToText(r));
         gStream = nullptr;
@@ -48,10 +58,13 @@ Java_dev_cordmic_AAudioCapture_nativeOpen(JNIEnv *, jclass, jint sampleRate, jin
         gStream = nullptr;
         return r;
     }
-    LOGI("opened: rate=%d burst=%d perf=%d sharing=%d cap=%d",
+    // One burst is the smallest buffer the stream will accept; a larger one only adds capture latency.
+    int32_t burst = AAudioStream_getFramesPerBurst(gStream);
+    if (burst > 0) AAudioStream_setBufferSizeInFrames(gStream, burst);
+    LOGI("opened: rate=%d burst=%d perf=%d sharing=%d cap=%d buf=%d",
          AAudioStream_getSampleRate(gStream), AAudioStream_getFramesPerBurst(gStream),
          AAudioStream_getPerformanceMode(gStream), AAudioStream_getSharingMode(gStream),
-         AAudioStream_getBufferCapacityInFrames(gStream));
+         AAudioStream_getBufferCapacityInFrames(gStream), AAudioStream_getBufferSizeInFrames(gStream));
     return 0;
 }
 
