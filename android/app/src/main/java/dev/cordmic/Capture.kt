@@ -78,7 +78,7 @@ class AAudioCapture(private val rate: Int, private val preset: Int) : CaptureEng
     }
 
     override fun stats(): EngineStats {
-        val i = nativeInfo() // [rate, burst, perfMode, sharingMode, capacity, xruns]
+        val i = nativeInfo() // [rate, burst, perfMode, sharingMode, bufferSize, xruns]
         return EngineStats(name, i[0], framesPerBurst = i[1], lowLatency = i[2] == PERF_LOW_LATENCY,
             exclusive = i[3] == SHARING_EXCLUSIVE, bufferFrames = i[4], xruns = i[5])
     }

@@ -2,7 +2,7 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.5.0] - 2026-11-05
+## [0.5.0] - 2026-11-06
 
 Lower, steadier PC playback, a louder voice with a noise gate, and a one-page desktop window. Wire version stays 1.
 0.4.2 peers still connect: the new flag bits and the 4-byte PING/PONG payload are ignored when they are absent.
@@ -30,6 +30,10 @@ period plus a jitter buffer that was averaging about 15 ms because it kept refil
   the device refuses.
 - **WSAENOBUFS on the ping socket.** The send backs off from 250 ms to 4 s and logs once per episode, then once when
   it recovers.
+- **AAudio details reported HAL capacity.** After shrinking the capture buffer to one burst, the details line now
+  shows that actual buffer size rather than the larger capacity the HAL reserved.
+- Status text no longer tells you to open a setup-guide wizard (that page is gone). It points at Settings for the
+  VB-CABLE download link.
 
 ### Added
 - **Noise cancellation** (default on), on the phone, before the packet is sent. A 256-point spectral gate. Algorithmic
@@ -41,7 +45,8 @@ period plus a jitter buffer that was averaging about 15 ms because it kept refil
 - **Stats line** now appends `period`, `jtarget`, `urate`, `orate`, `nc`, `agc`, `gain`, `phone` and, when the phone
   sends it, `dev`.
 - **Desktop window.** One page: a round connect button (disconnected / searching / connected / error) with a short
-  colour ease, a status line (phone name or IP, live delay), and a settings panel. The tray icon and menu stay.
+  colour ease, a status line (phone name or IP, live delay), and a settings panel (output device, output mode,
+  latency, noise cancellation, gain). The tray icon and menu stay.
 - AAudio tries exclusive low-latency, then shared low-latency, then shared with no performance hint, and sets the
   capture buffer to one burst. Release builds shrink with R8.
 
@@ -61,7 +66,9 @@ period plus a jitter buffer that was averaging about 15 ms because it kept refil
 - Target jitter sekarang minimal satu tarikan render ditambah satu paket (periode 10 ms → lantai 15 ms). Callback
   hanya menulis satu periode. IAudioClient3 meminta periode shared terpendek yang perangkat izinkan.
 - Peredam bising (default nyala) menambah **5,3 ms**. Gain mic default **+12 dB** (0…+24) plus AGC dan pembatas.
-- Jendela PC satu halaman: satu tombol bulat seperti aplikasi VPN, satu baris status, panel pengaturan. Ikon tray tetap.
+- Jendela PC satu halaman: satu tombol bulat seperti aplikasi VPN, satu baris status, panel pengaturan (termasuk mode output). Ikon tray tetap.
+- Detail AAudio menampilkan ukuran buffer sebenarnya (satu burst), bukan kapasitas HAL. Teks status tidak lagi
+  mengarah ke wizard panduan yang sudah dihapus.
 - NAudio dihapus. Jalur panas jitter tidak mengalokasi. R8 mengecilkan build rilis Android. Protokol tetap versi 1.
 
 ## [0.4.2] - 2026-11-03

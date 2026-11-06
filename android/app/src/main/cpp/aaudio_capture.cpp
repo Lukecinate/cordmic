@@ -81,7 +81,8 @@ Java_dev_cordmic_AAudioCapture_nativeRead(JNIEnv *env, jclass, jbyteArray dst, j
     return r;
 }
 
-// [sampleRate, framesPerBurst, performanceMode, sharingMode, bufferCapacity, xRunCount]
+// [sampleRate, framesPerBurst, performanceMode, sharingMode, bufferSize, xRunCount]
+// bufferSize is the actual size after setBufferSizeInFrames (one burst), not HAL capacity.
 extern "C" JNIEXPORT jintArray JNICALL
 Java_dev_cordmic_AAudioCapture_nativeInfo(JNIEnv *env, jclass) {
     jint v[6] = {0, 0, 0, 0, 0, 0};
@@ -90,7 +91,7 @@ Java_dev_cordmic_AAudioCapture_nativeInfo(JNIEnv *env, jclass) {
         v[1] = AAudioStream_getFramesPerBurst(gStream);
         v[2] = AAudioStream_getPerformanceMode(gStream);
         v[3] = AAudioStream_getSharingMode(gStream);
-        v[4] = AAudioStream_getBufferCapacityInFrames(gStream);
+        v[4] = AAudioStream_getBufferSizeInFrames(gStream);
         v[5] = AAudioStream_getXRunCount(gStream);
     }
     jintArray a = env->NewIntArray(6);

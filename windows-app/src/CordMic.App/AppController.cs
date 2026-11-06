@@ -52,6 +52,7 @@ internal sealed class AppController : ApplicationContext
     public StatsSnapshot? Stats { get; private set; }
     public bool Armed => _armed;
     public JitterPreset Jitter => _settings.Jitter;
+    public OutputMode OutputMode => _settings.OutputMode;
     public string? OutputDeviceId => _settings.OutputDeviceId;
     public IReadOnlyList<RenderDevice> Devices => _devices;
     public bool DisplayedNc => Stats?.Phone.Known == true ? Stats.Phone.NoiseCancellation : _settings.NoiseCancellation;
@@ -412,7 +413,7 @@ internal sealed class AppController : ApplicationContext
         Log($"jitter preset -> {p} ({Presets.Ms(p)} ms)");
     }
 
-    private void SetOutputMode(OutputMode m)
+    public void SetOutputMode(OutputMode m)
     {
         if (_settings.OutputMode == m) return;
         _settings.OutputMode = m;

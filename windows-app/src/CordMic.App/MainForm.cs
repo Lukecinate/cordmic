@@ -14,7 +14,7 @@ internal sealed class MainForm : Form
     private readonly ConnectOrb _orb;
     private readonly Label _state, _detail;
     private readonly Panel _settings;
-    private readonly ComboBox _output, _latency;
+    private readonly ComboBox _output, _latency, _outMode;
     private readonly CheckBox _nc, _startup;
     private readonly TrackBar _gain;
     private readonly Label _gainValue, _noCable;
@@ -77,7 +77,7 @@ internal sealed class MainForm : Form
             AutoSize = false, Height = Sx(48), BackColor = Color.Transparent,
         };
 
-        _settings = BuildSettings(out _output, out _latency, out _nc, out _gain, out _gainValue, out _startup, out _noCable);
+        _settings = BuildSettings(out _output, out _latency, out _outMode, out _nc, out _gain, out _gainValue, out _startup, out _noCable);
         _settings.Visible = false;
 
         Controls.Add(header);
@@ -92,7 +92,7 @@ internal sealed class MainForm : Form
         Resize += (_, _) => LayoutHero();
     }
 
-    private Panel BuildSettings(out ComboBox output, out ComboBox latency, out CheckBox nc, out TrackBar gain,
+    private Panel BuildSettings(out ComboBox output, out ComboBox latency, out ComboBox outMode, out CheckBox nc, out TrackBar gain,
         out Label gainValue, out CheckBox startup, out Label noCable)
     {
         var p = new Panel { BackColor = Theme.Surface, Width = ClientSize.Width };
@@ -114,6 +114,12 @@ internal sealed class MainForm : Form
         foreach (var preset in Enum.GetValues<JitterPreset>())
             latencyBox.Items.Add(new PresetItem(preset, Presets.Label(preset)));
         latencyBox.SelectedIndexChanged += (_, _) => { if (!_suppress && latencyBox.SelectedItem is PresetItem it) _app.SetJitter(it.Preset); };
+
+        outMode = Combo(p, x, ref y, w, L.T("menu.outmode"));
+        var outModeBox = outMode;
+        foreach (var om in OutputModes.All)
+            outModeBox.Items.Add(new OutModeItem(om, OutputModes.Label(om)));
+        outModeBox.SelectedIndexChanged += (_, _) => { if (!_suppress && outModeBox.SelectedItem is OutModeItem it) _app.SetOutputMode(it.Mode); };
 
         nc = new CheckBox
         {
@@ -177,6 +183,7 @@ internal sealed class MainForm : Form
         y += Sx(28);
         p.Controls.Add(output);
         p.Controls.Add(latency);
+        p.Controls.Add(outMode);
         p.Controls.Add(nc);
         p.Controls.Add(gainLabel);
         p.Controls.Add(gainValue);
@@ -284,6 +291,8 @@ internal sealed class MainForm : Form
             catch (Exception) { }
             for (int i = 0; i < _latency.Items.Count; i++)
                 if (_latency.Items[i] is PresetItem it && it.Preset == _app.Jitter) { if (_latency.SelectedIndex != i) _latency.SelectedIndex = i; break; }
+            for (int i = 0; i < _outMode.Items.Count; i++)
+                if (_outMode.Items[i] is OutModeItem it && it.Mode == _app.OutputMode) { if (_outMode.SelectedIndex != i) _outMode.SelectedIndex = i; break; }
         }
         finally { _suppress = false; }
     }
@@ -327,6 +336,7 @@ internal sealed class MainForm : Form
     }
 
     private sealed record PresetItem(JitterPreset Preset, string Label) { public override string ToString() => Label; }
+    private sealed record OutModeItem(OutputMode Mode, string Label) { public override string ToString() => Label; }
     private sealed record DeviceItem(RenderDevice? Device, string Label) { public override string ToString() => Label; }
 }
 
