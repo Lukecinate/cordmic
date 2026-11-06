@@ -229,7 +229,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
                 }
                 len = len shl 1
             }
-            if (invert) for (k in 0 until n) { re[k] /= n; im[k] /= n }
+            if (invert) for (k in 0 until n) { re[k] = re[k] / n; im[k] = im[k] / n }
         }
     }
 }

@@ -34,6 +34,8 @@ period plus a jitter buffer that was averaging about 15 ms because it kept refil
   shows that actual buffer size rather than the larger capacity the HAL reserved.
 - Status text no longer tells you to open a setup-guide wizard (that page is gone). It points at Settings for the
   VB-CABLE download link.
+- **Android VoiceChain did not compile.** Kotlin rejects `DoubleArray[i] /= n` when `n` is an `Int` (the inverse FFT
+  scale). The phone app and its unit tests were never built in the 0.5.0 PR; the scale is now a plain assignment.
 
 ### Added
 - **Noise cancellation** (default on), on the phone, before the packet is sent. A 256-point spectral gate. Algorithmic
