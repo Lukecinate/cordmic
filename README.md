@@ -342,8 +342,8 @@ Release signing is read from a properties file outside the repository
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (52 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer and catch-up, separate ping socket, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
-| Kotlin (17 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, English/Indonesian string parity, level meter and IP helpers, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+| .NET (70 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer and catch-up, render-period floor and allocation-free hot path, voice chain, ping backoff, separate ping socket, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
+| Kotlin (22 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, voice-chain delay/gain/limiter, English/Indonesian string parity, level meter and IP helpers, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 ## Python receiver (developer tool)
 

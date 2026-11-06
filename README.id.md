@@ -337,8 +337,8 @@ release lokal ditandatangani dengan debug key.
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, loopback UDP (bersih dan lossy) |
-| .NET (52 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer dan catch-up, socket ping terpisah, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks |
-| Kotlin (17 test) | `cd android && ./gradlew testDebugUnitTest` | kompatibilitas byte header dengan Python, kesamaan teks Inggris/Indonesia, helper level meter dan IP, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+| .NET (70 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer dan catch-up, lantai periode render dan jalur panas tanpa alokasi, rantai suara, backoff ping, socket ping terpisah, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks |
+| Kotlin (22 test) | `cd android && ./gradlew testDebugUnitTest` | kompatibilitas byte header dengan Python, jeda/gain/limiter rantai suara, kesamaan teks Inggris/Indonesia, helper level meter dan IP, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 ## Receiver Python (alat developer)
 
