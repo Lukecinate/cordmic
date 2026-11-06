@@ -17,7 +17,7 @@ CordMic itself is MIT-licensed (see [LICENSE](../LICENSE)). It ships or builds o
 
 **Material Icons, Round style** by Google: glyphs `mic`, `stop`, `usb`, `search`, `error_outline`
 and `expand_more` in `android/app/src/main/res/drawable-*dpi/`, and `mic`, `usb`, `search`,
-`error_outline` in `windows-app/src/CordMic.App/Assets/icons/`.
+`error_outline` and `settings` in `windows-app/src/CordMic.App/Assets/icons/`.
 - License: Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 - Source: https://github.com/google/material-design-icons and https://fonts.google.com/icons.
 - The files are PNG renders of the original glyphs. Where a state colour is needed, the Windows app recolours the

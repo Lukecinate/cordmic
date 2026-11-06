@@ -14,6 +14,7 @@ internal sealed class MainForm : Form
     private readonly ConnectOrb _orb;
     private readonly Label _state, _detail;
     private readonly Panel _settings;
+    private readonly Button _settingsBtn;
     private readonly ComboBox _output, _latency, _outMode;
     private readonly CheckBox _nc, _startup;
     private readonly TrackBar _gain;
@@ -37,31 +38,60 @@ internal sealed class MainForm : Form
         AutoScaleDimensions = new SizeF(96, 96);
         ClientSize = new Size(Sx(392), Sx(500));
 
-        var header = new Panel { Bounds = new Rectangle(0, 0, ClientSize.Width, Sx(56)), BackColor = Theme.Background };
+        double dpi = DeviceDpi;
+        int headerH = HeaderLayout.Px(HeaderLayout.Height, dpi);
+        var header = new TableLayoutPanel
+        {
+            ColumnCount = 3, RowCount = 1,
+            Location = Point.Empty, Size = new Size(ClientSize.Width, headerH),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            BackColor = Theme.Background, Margin = Padding.Empty,
+            Padding = new Padding(
+                HeaderLayout.Px(HeaderLayout.PadLeft, dpi),
+                HeaderLayout.Px(HeaderLayout.PadY, dpi),
+                HeaderLayout.Px(HeaderLayout.PadRight, dpi),
+                HeaderLayout.Px(HeaderLayout.PadY, dpi)),
+            GrowStyle = TableLayoutPanelGrowStyle.FixedSize,
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
+        int logoS = HeaderLayout.Px(HeaderLayout.LogoSize, dpi);
         var logo = new PictureBox
         {
             Image = Theme.Logo(), SizeMode = PictureBoxSizeMode.Zoom,
-            Bounds = new Rectangle(Sx(24), Sx(14), Sx(28), Sx(28)), BackColor = Color.Transparent,
+            Size = new Size(logoS, logoS), BackColor = Color.Transparent, TabStop = false,
+            Margin = new Padding(0, 0, HeaderLayout.Px(HeaderLayout.LogoTitleGap, dpi), 0),
+            Anchor = AnchorStyles.Left,
         };
         var brand = new Label
         {
             Text = "CordMic", Font = Theme.Title, ForeColor = Theme.Ink, AutoSize = true,
-            Location = new Point(Sx(60), Sx(14)), BackColor = Color.Transparent,
+            Margin = Padding.Empty, BackColor = Color.Transparent, Anchor = AnchorStyles.Left,
+            UseMnemonic = false,
         };
-        var gear = new Button
+        int gearS = HeaderLayout.Px(HeaderLayout.SettingsButton, dpi);
+        int glyphS = HeaderLayout.Px(HeaderLayout.SettingsGlyph, dpi);
+        _settingsBtn = new Button
         {
-            Text = L.T("ui.settings"), Font = Theme.Small, ForeColor = Theme.Muted,
-            FlatStyle = FlatStyle.Flat, BackColor = Theme.Background, Cursor = Cursors.Hand,
-            AutoSize = true, Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Text = string.Empty, Size = new Size(gearS, gearS), MinimumSize = new Size(gearS, gearS),
+            FlatStyle = FlatStyle.Flat, BackColor = Theme.Background, UseVisualStyleBackColor = false,
+            Cursor = Cursors.Hand, Margin = Padding.Empty, Padding = Padding.Empty,
+            Image = Theme.Glyph("settings", Theme.Muted, glyphS),
+            ImageAlign = ContentAlignment.MiddleCenter,
+            AccessibleName = L.T("ui.settings"), AccessibleRole = AccessibleRole.PushButton,
+            Anchor = AnchorStyles.None,
         };
-        gear.FlatAppearance.BorderSize = 0;
-        gear.FlatAppearance.MouseOverBackColor = Theme.SurfaceMuted;
-        gear.FlatAppearance.MouseDownBackColor = Theme.Line;
-        gear.Click += (_, _) => SetSettings(!_settingsOpen);
-        header.Controls.Add(logo);
-        header.Controls.Add(brand);
-        header.Controls.Add(gear);
-        header.Resize += (_, _) => gear.Location = new Point(header.Width - gear.Width - Sx(16), Sx(12));
+        _settingsBtn.FlatAppearance.BorderSize = 0;
+        _settingsBtn.FlatAppearance.MouseOverBackColor = Theme.SurfaceMuted;
+        _settingsBtn.FlatAppearance.MouseDownBackColor = Theme.Line;
+        _settingsBtn.Click += (_, _) => SetSettings(!_settingsOpen);
+        new ToolTip().SetToolTip(_settingsBtn, L.T("ui.settings"));
+        header.Controls.Add(logo, 0, 0);
+        header.Controls.Add(brand, 1, 0);
+        header.Controls.Add(_settingsBtn, 2, 0);
 
         _orb = new ConnectOrb { Size = new Size(Sx(168), Sx(168)) };
         _orb.Click += (_, _) => OnOrb();
@@ -217,6 +247,7 @@ internal sealed class MainForm : Form
     {
         _settingsOpen = open;
         _settings.Visible = open;
+        _settingsBtn.BackColor = open ? Theme.SurfaceMuted : Theme.Background;
         int h = open ? Sx(500) + _settings.Height : Sx(500);
         ClientSize = new Size(Sx(392), h);
         LayoutHero();
