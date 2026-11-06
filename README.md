@@ -9,12 +9,12 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 to a Windows tray app, which plays it into a virtual audio cable that Discord, Zoom and games can use as a microphone.
 
 - **Cable only** – the phone shows up as a wired network adapter (RNDIS/NCM); audio never touches Wi-Fi or the internet.
-- **Low latency by design** – 48 kHz mono PCM in 5 ms packets, AAudio low-latency capture, a small jitter buffer
-  and WASAPI output. The pipeline is designed for roughly **30–45 ms end-to-end** (see [Latency](#latency)).
+- **Low latency by design** – 48 kHz mono PCM in 5 ms packets, AAudio low-latency capture, a jitter buffer
+  floored to the real Windows period, and WASAPI output through IAudioClient3. Designed for roughly **30–45 ms end-to-end** (see [Latency](#latency)).
 - **Runs in the background** – Android foreground service with a persistent notification; Windows tray app that
   detects the phone, reconnects automatically and can start with Windows.
 - **Plug & play Windows installer** – firewall rule, phone-adapter priority (so games keep using LAN/Wi-Fi) and a
-  3-step setup guide.
+  one-page connect window.
 - **English and Indonesian** – Android app, Windows app and installer follow the system language; the Windows tray
   has a *Language / Bahasa* override.
 
@@ -57,10 +57,15 @@ Downloads: see [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 
 Landscape: [android-landscape.png](docs/screenshots/android-landscape.png).
 
-**Windows app.** *Design previews*: HTML renders built from the Windows app's colour tokens, font and string
-tables with sample values (headless Chrome). They are not screenshots of the running WinForms app.
+**Windows app.** The connect window below is a render of the 0.5.0 layout (this environment cannot host WinForms)
+using the app's logo, mic icon, Plus Jakarta Sans and colours, with sample values. The older images are design
+previews of the 0.4 setup guide.
 
-| Setup guide, streaming | Setup guide, waiting | Tray menu and tooltip |
+| Connect window |
+|---|
+| ![CordMic connect window](docs/screenshots/windows-main.png) |
+
+| Setup guide, streaming (0.4 preview) | Setup guide, waiting (0.4 preview) | Tray menu and tooltip |
 |---|---|---|
 | ![Windows setup guide, streaming (design preview)](docs/screenshots/windows-wizard-streaming-preview.png) | ![Windows setup guide, waiting (design preview)](docs/screenshots/windows-wizard-waiting-preview.png) | ![Windows tray (design preview)](docs/screenshots/windows-tray-preview.png) |
 
@@ -115,15 +120,18 @@ scheduled task. Settings and logs under `%APPDATA%` / `%LOCALAPPDATA%` are kept.
 | Amber | Needs attention: no virtual mic installed, phone connected but not sending audio, or PC internet is routed through the phone |
 | Red | Error: UDP port 50005 is in use by another app, or the audio device failed to open (retried automatically) |
 
-Hover the icon to see the estimated PC-side delay and where it comes from (network = ½ USB round trip, the
-averaged jitter-buffer wait, and the measured Windows output buffer), plus round-trip time and packet loss over the
-last 10 seconds. The setup guide shows the same breakdown under its numbers. Right-click for the menu:
+Double-click the icon (or use **Open CordMic**) for the window: one round button (disconnected, searching, connected,
+error), a status line with the phone and the live PC-side delay, and a settings panel for the output device, latency
+preset, noise cancellation, mic gain, start-with-Windows and the log. Hover the icon for the same delay split
+(network = ½ USB round trip, the averaged jitter-buffer wait, and the measured Windows output buffer), plus round-trip
+time and packet loss over the last 10 seconds. Right-click for the menu:
 
 - **Output device** – *Automatic* (best virtual cable found) or a specific one (VB-CABLE A–D, VAC, VoiceMeeter).
 - **Output mode** – *Low latency* (default: shared mode, about one Windows audio period queued), *Stable* (keeps
   the whole Windows buffer full, as before 0.4.2; use it if audio crackles on a busy PC) or *Exclusive* (WASAPI
   exclusive mode, lowest delay; CordMic then owns "CABLE Input" and falls back to Low latency if the device refuses).
-- **Jitter buffer** – Low 5 ms / Normal 10 ms (default) / Safe 20 ms (use Safe if audio crackles).
+- **Jitter buffer** – Low 5 ms / Normal 10 ms (default) / Safe 20 ms. The app raises the target when the Windows
+  period cannot sustain it (a 10 ms period floors Low and Normal at 15 ms). Use Safe if audio still crackles.
 - **Mic mode** – explains the capture modes (selected in the phone app).
 - **Setup guide**, **Fix phone network priority** (shown only when internet goes through the phone; asks for UAC),
   **Open log**, **Start with Windows**, **Language / Bahasa** (Automatic, English, Bahasa Indonesia), **Exit**.
@@ -151,7 +159,10 @@ measured on the PC side and shown in the Windows app.
      **Voice recognition** (default, minimal processing, usually the lowest latency),
      **Unprocessed** (raw signal without filters), or
      **Voice communication** (noise suppression and echo cancellation; adds latency, useful without a headset).
-   - **Low-latency engine (AAudio)** – on by default; turn off only if audio cuts out.
+   - **Low-latency engine (AAudio)** – on by default; turn off only if audio cuts out. CordMic tries exclusive
+     low-latency, then shared low-latency, then shared with no performance hint, and sizes the capture buffer to one burst.
+   - **Noise cancellation** – on by default. A small on-phone spectral gate (no extra library). It adds **5.3 ms**.
+   - **Mic gain** – 0 to +24 dB, default **+12 dB**, with automatic gain and a soft limiter. These two stay editable while streaming.
 3. Tap **Start** and grant the Microphone and Notification permissions. A persistent "CordMic" notification
    (with a Stop button) keeps capture running with the screen off or while you use other apps.
    **Details** shows the capture engine, sample rate, buffer sizes and the USB interface.
@@ -214,9 +225,9 @@ Get-NetRoute 0.0.0.0/0                                          # the default ro
 ```
 ┌──────────────── Android phone ───────────────┐   USB cable     ┌──────────────── Windows PC ──────────────────┐
 │ Mic → AAudio (LOW_LATENCY, 48 kHz, mono,     │ (USB tethering, │ CordMic tray app (.NET 8)                    │
-│       16-bit, 5 ms frames = 240 samples)     │  RNDIS/NCM =    │  UDP :50005 → jitter buffer (default 10 ms)  │
-│   → 20-byte header (seq + timestamp)         │  network link)  │  → WASAPI (NAudio)                           │
-│   → UDP to the PC                            │ ──────────────▶ │  → "CABLE Input" (VB-CABLE)                  │
+│       16-bit, 5 ms frames = 240 samples)     │  RNDIS/NCM =    │  UDP :50005 → jitter buffer (period-aware)   │
+│   → noise suppression, gain, limiter         │  network link)  │  → WASAPI (IAudioClient3, own renderer)      │
+│   → 20-byte header (seq + timestamp)         │ ──────────────▶ │  → "CABLE Input" (VB-CABLE)                  │
 │ Foreground service type=microphone           │                 │  Discord/Zoom/games use "CABLE Output"       │
 │ + persistent notification + wake lock        │ ◀── PING/HELLO  │  as their microphone                         │
 └──────────────────────────────────────────────┘                 └──────────────────────────────────────────────┘
@@ -241,16 +252,16 @@ Get-NetRoute 0.0.0.0/0                                          # the default ro
   | 4 | 4 | sequence number (uint32, wraps) |
   | 8 | 8 | timestamp in µs (sender's monotonic clock) |
   | 16 | 2 | PCM frame count |
-  | 18 | 2 | flags: bits 0–3 codec (0 = PCM s16le), bits 4–7 channels − 1, bits 8–11 sample rate (0 = 48 kHz) |
+  | 18 | 2 | flags: bits 0–3 codec (0 = PCM s16le), bits 4–7 channels − 1, bits 8–11 sample rate (0 = 48 kHz). Bits 12–14 (0.5.0, ignored by 0.4.2): noise cancellation, AGC, AAudio |
 
   An AUDIO payload is raw PCM: 240 frames × 2 bytes = 480 bytes per 5 ms (~100 kbit/s).
-- **Jitter buffer.** Reorders packets by sequence number; playback starts once the target is filled (Low 5 /
-  Normal 10 / Safe 20 ms). Missing packets are replaced with silence and late packets are discarded. Every ~0.5 s
-  the buffer checks the smallest amount it held right after a read; if that stays above the target (a burst, or
-  the phone's clock running slightly fast), it plays two consecutive packets as one with a 5 ms crossfade until the
-  excess is gone. A hard limit still drops the oldest packets if the buffer ever exceeds its maximum.
-- **Output.** An event-driven WASAPI render loop on an MMCSS "Pro Audio" thread. In *Low latency* mode it keeps
-  about one Windows device period plus 3 ms queued instead of the whole endpoint buffer.
+- **Jitter buffer.** Reorders packets by sequence number. The preset is Low 5 / Normal 10 / Safe 20 ms, then raised
+  so it is at least one render pull plus one packet. On a 10 ms shared period that floors Low and Normal at 15 ms
+  (3 packets): the callback consumes 10 ms and 5 ms is left, so a late packet does not empty the buffer. Missing
+  packets are replaced with silence. Every ~0.5 s a standing backlog above the target is removed by playing two
+  packets as one with a crossfade. A hard limit still drops the oldest packets on a large burst.
+- **Output.** CordMic's own event-driven WASAPI loop on an MMCSS "Pro Audio" thread (NAudio is not used). *Low latency*
+  opens the stream with IAudioClient3 at the engine's minimum shared period and writes at most one period per callback.
 - **RTT.** The PC sends PINGs from a second UDP socket on a random port with its own thread; the phone answers to
   the sender, so PONGs never wait behind audio packets.
 
@@ -268,7 +279,7 @@ cordmic/
 ├── third_party/fonts/            Plus Jakarta Sans + OFL license
 ├── windows-app/                  Windows app, C# / .NET 8
 │   ├── src/CordMic.Core/         protocol, jitter buffer, UDP receiver, settings, string tables
-│   ├── src/CordMic.App/          WinForms tray app + WASAPI (NAudio) + setup guide
+│   ├── src/CordMic.App/          WinForms tray app + own WASAPI (IAudioClient3) + connect window
 │   ├── src/CordMic.Harness/      console receiver for loopback testing
 │   ├── tests/CordMic.Tests/      xUnit tests (incl. interop with sim_sender.py)
 │   ├── installer/                cordmic.nsi + tools/*.ps1 (firewall, adapter metric)
@@ -288,11 +299,16 @@ VB-CABLE's own buffering and the recording app. Before 0.4.2 the output part was
 NAudio actually kept a larger buffer full, and the buffer part was a single instant reading; numbers from 0.4.1
 and 0.4.2 are therefore not directly comparable.
 
-A user measured 25–45 ms PC-side delay with 0.4.1. 0.4.2 targets the causes found in the code (a backlog that
-could float up to 3× the jitter target, the full WASAPI buffer, and re-underruns after resuming); its effect on
-real hardware has not been measured yet. For the lowest delay: *Jitter buffer → Low*, *Output mode → Low
-latency* (then try *Exclusive*), and set both "CABLE Input" and "CABLE Output" to 48000 Hz in Windows Sound
-settings so Windows does not resample.
+A 0.4.2 log from a real Windows 11 PC (VB-CABLE, 10 ms shared period, phone not on AAudio) showed a clean link
+(loss about 0, jitter under 1 ms, round trip 5–7 ms) and a jitter buffer that still underran about 30 times a
+minute on Normal and about 370 times a minute on Low, with several times as many hard overflows. The render
+callback consumes one 10 ms period. Normal's 10 ms target and Low's 5 ms target leave nothing after that pull,
+so the buffer hits empty, rebuffers, then the hard cap dumps the pile. 0.5.0 asks IAudioClient3 for the shortest
+shared period the device will give and refuses a jitter target below one pull plus one packet. A synthetic
+10 ms-period run of that failure mode dropped underruns from about 570/min to about 2/min. Noise cancellation
+on the phone adds 5.3 ms. For the lowest delay: *Latency → Low*, *Output mode → Low latency* (then try
+*Exclusive*), leave noise cancellation on only if you want it, and set both "CABLE Input" and "CABLE Output"
+to 48000 Hz in Windows Sound settings so Windows does not resample.
 
 To measure it on your own setup: in OBS add two *Audio Input Capture* sources, (a) "CABLE Output" and (b) another
 physical mic (headset/webcam). Record, clap close to **both** mics, open the recording in Audacity and measure the

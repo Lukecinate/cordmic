@@ -58,10 +58,15 @@ Unduhan: lihat [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 
 Lanskap: [android-landscape.png](docs/screenshots/android-landscape.png).
 
-**Aplikasi Windows.** *Pratinjau desain*: render HTML yang dibuat dari token warna, font, dan tabel teks aplikasi
-Windows dengan nilai contoh (Chrome headless). Ini bukan tangkapan layar aplikasi WinForms yang sedang berjalan.
+**Aplikasi Windows.** Jendela sambung di bawah adalah render tata letak 0.5.0 (lingkungan ini tidak bisa menjalankan
+WinForms) memakai logo, ikon mic, Plus Jakarta Sans, dan warna aplikasi, dengan nilai contoh. Gambar lama adalah
+pratinjau desain panduan 0.4.
 
-| Panduan, streaming | Panduan, menunggu | Menu tray dan tooltip |
+| Jendela sambung |
+|---|
+| ![Jendela sambung CordMic](docs/screenshots/windows-main.png) |
+
+| Panduan, streaming (pratinjau 0.4) | Panduan, menunggu (pratinjau 0.4) | Menu tray dan tooltip |
 |---|---|---|
 | ![Panduan Windows, streaming (pratinjau desain)](docs/screenshots/windows-wizard-streaming-id-preview.png) | ![Panduan Windows, menunggu (pratinjau desain)](docs/screenshots/windows-wizard-waiting-preview.png) | ![Tray Windows (pratinjau desain)](docs/screenshots/windows-tray-preview.png) |
 
@@ -116,18 +121,21 @@ firewall, dan scheduled task. Setting dan log di `%APPDATA%` / `%LOCALAPPDATA%` 
 | Amber | Perlu perhatian: mic virtual belum ada, HP terhubung tapi tidak mengirim suara, atau internet PC lewat HP |
 | Merah | Error: port UDP 50005 dipakai aplikasi lain, atau perangkat audio gagal dibuka (dicoba ulang otomatis) |
 
-Arahkan mouse ke ikon untuk melihat perkiraan jeda sisi PC beserta rinciannya (jaringan = ½ RTT USB, rata-rata
-waktu tunggu di jitter buffer, dan buffer output Windows yang terukur), serta RTT dan loss 10 detik terakhir.
-Panduan penyiapan menampilkan rincian yang sama di bawah angkanya. Klik kanan untuk menu:
+Klik dua kali ikon (atau **Buka CordMic**) untuk jendelanya: satu tombol bulat (terputus, mencari, terhubung,
+gagal), satu baris status (nama/IP HP dan jeda langsung), dan panel pengaturan untuk perangkat output, preset
+latensi, peredam bising, gain mic, jalan saat Windows mulai, dan log. Arahkan mouse ke ikon untuk rincian jeda
+yang sama (jaringan = ½ RTT USB, rata-rata waktu tunggu di jitter buffer, dan buffer output Windows yang terukur),
+serta RTT dan loss 10 detik terakhir. Klik kanan untuk menu:
 
 - **Perangkat output** – *Otomatis* (kabel virtual terbaik) atau pilih manual (VB-CABLE A–D, VAC, VoiceMeeter).
 - **Mode output** – *Latensi rendah* (default: mode shared, kira-kira satu periode audio Windows yang diantrekan),
   *Stabil* (buffer Windows selalu penuh seperti sebelum 0.4.2; pakai kalau suara putus-putus saat PC sibuk) atau
   *Eksklusif* (mode eksklusif WASAPI, jeda terendah; CordMic memakai "CABLE Input" sendiri dan kembali ke Latensi
   rendah bila perangkat menolak).
-- **Jitter buffer** – Rendah 5 ms / Normal 10 ms (default) / Aman 20 ms (pakai Aman kalau suara putus-putus).
+- **Jitter buffer** – Rendah 5 ms / Normal 10 ms (default) / Aman 20 ms. Target dinaikkan bila periode Windows
+  tidak sanggup (periode 10 ms membuat Rendah dan Normal menjadi 15 ms). Pakai Aman kalau suara masih putus-putus.
 - **Mode mic** – penjelasan mode capture (dipilih di aplikasi HP).
-- **Panduan penyiapan**, **Perbaiki prioritas jaringan HP** (muncul hanya bila internet lewat HP; minta UAC),
+- **Buka CordMic**, **Perbaiki prioritas jaringan HP** (muncul hanya bila internet lewat HP; minta UAC),
   **Buka log**, **Jalan saat Windows mulai**, **Language / Bahasa** (Otomatis, English, Bahasa Indonesia), **Keluar**.
 
 ### Setting dan log
@@ -153,7 +161,9 @@ PC dan ditampilkan di aplikasi Windows.
      **Pengenalan suara** (default, pemrosesan minimal, biasanya latensi paling rendah),
      **Tanpa pemrosesan** (sinyal mentah tanpa filter), atau
      **Komunikasi suara** (peredam bising dan peredam gema; menambah latensi, cocok tanpa headset).
-   - **Mesin latensi rendah (AAudio)** – aktif secara default; matikan hanya jika suara putus-putus.
+   - **Mesin latensi rendah (AAudio)** – aktif secara default; matikan hanya jika suara putus-putus. CordMic mencoba eksklusif latensi rendah, lalu shared latensi rendah, lalu shared biasa, dan mengatur buffer capture sebesar satu burst.
+   - **Peredam bising** – aktif secara default. Gerbang spektral kecil di HP (tanpa pustaka pihak ketiga). Menambah **5,3 ms**.
+   - **Gain mic** – 0 sampai +24 dB, default **+12 dB**, plus penguat otomatis dan pembatas halus. Keduanya tetap bisa diubah saat streaming.
 3. Ketuk **Mulai**, lalu izinkan Mikrofon dan Notifikasi. Notifikasi "CordMic" (dengan tombol Hentikan) tetap tampil
    dan capture terus berjalan saat layar mati atau saat memakai aplikasi lain. **Detail** menampilkan mesin capture,
    sample rate, ukuran buffer, dan antarmuka USB.
@@ -217,7 +227,7 @@ Get-NetRoute 0.0.0.0/0                                          # route default 
 ┌──────────────── HP Android ──────────────────┐   kabel USB     ┌──────────────── PC Windows ──────────────────┐
 │ Mic → AAudio (LOW_LATENCY, 48 kHz, mono,     │ (USB tethering, │ Aplikasi tray CordMic (.NET 8)               │
 │       16-bit, frame 5 ms = 240 sampel)       │  RNDIS/NCM =    │  UDP :50005 → jitter buffer (default 10 ms)  │
-│   → header 20 byte (seq + timestamp)         │  link jaringan) │  → WASAPI (NAudio)                           │
+│   → peredam bising, gain, pembatas           │  link jaringan) │  → WASAPI (IAudioClient3, renderer sendiri)  │
 │   → UDP ke PC                                │ ──────────────▶ │  → "CABLE Input" (VB-CABLE)                  │
 │ Foreground service type=microphone           │                 │  Discord/Zoom/game memakai "CABLE Output"    │
 │ + notifikasi permanen + wake lock            │ ◀── PING/HELLO  │  sebagai mikrofon                            │
@@ -251,8 +261,8 @@ Get-NetRoute 0.0.0.0/0                                          # route default 
   memeriksa isi terkecil tepat setelah dibaca; bila tetap di atas target (lonjakan paket, atau jam HP sedikit lebih
   cepat), dua paket berurutan diputar sebagai satu dengan crossfade 5 ms sampai kelebihannya habis. Batas keras
   tetap membuang paket terlama bila buffer melebihi maksimum.
-- **Output.** Loop render WASAPI berbasis event di thread MMCSS "Pro Audio". Pada mode *Latensi rendah* yang
-  diantrekan hanya sekitar satu periode perangkat Windows ditambah 3 ms, bukan seluruh buffer endpoint.
+- **Output.** Loop render WASAPI milik CordMic di thread MMCSS "Pro Audio" (NAudio tidak dipakai). Mode *Latensi rendah*
+  membuka stream lewat IAudioClient3 pada periode shared minimum dan menulis paling banyak satu periode per callback.
 - **RTT.** PC mengirim PING dari socket UDP kedua di port acak dengan thread sendiri; HP membalas ke pengirim,
   sehingga PONG tidak pernah mengantre di belakang paket audio.
 
@@ -270,7 +280,7 @@ cordmic/
 ├── third_party/fonts/            Plus Jakarta Sans + lisensi OFL
 ├── windows-app/                  aplikasi Windows, C# / .NET 8
 │   ├── src/CordMic.Core/         protokol, jitter buffer, receiver UDP, setting, tabel teks
-│   ├── src/CordMic.App/          aplikasi tray WinForms + WASAPI (NAudio) + panduan penyiapan
+│   ├── src/CordMic.App/          aplikasi tray WinForms + WASAPI sendiri (IAudioClient3) + jendela sambung
 │   ├── src/CordMic.Harness/      receiver console untuk tes loopback
 │   ├── tests/CordMic.Tests/      test xUnit (termasuk interop dengan sim_sender.py)
 │   ├── installer/                cordmic.nsi + tools/*.ps1 (firewall, metric adapter)

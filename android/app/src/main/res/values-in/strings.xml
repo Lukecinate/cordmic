@@ -53,6 +53,11 @@
     <string name="preset_voice_communication_help">Peredam bising dan peredam gema. Menambah latensi.</string>
     <string name="aaudio_option">Mesin latensi rendah (AAudio)</string>
     <string name="aaudio_help">Memakai jalur audio cepat Android. Matikan hanya jika suara putus-putus.</string>
+    <string name="nc_option">Peredam bising</string>
+    <string name="nc_help">Memotong bising yang menetap. Menambah 5,3 ms.</string>
+    <string name="gain_option">Gain mic</string>
+    <string name="gain_value">+%1$d dB</string>
+    <string name="gain_help">Default lebih keras. Pembatas menjaga puncak agar tidak pecah.</string>
     <string name="err_port">Isi port dari 1 sampai 65535.</string>
     <string name="err_ip">Isi alamat IPv4 seperti 192.168.42.10, atau kosongkan.</string>
     <string name="expand_cd">Tampilkan %1$s</string>

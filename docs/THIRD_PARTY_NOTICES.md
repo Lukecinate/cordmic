@@ -42,9 +42,12 @@ The logo is covered by the project's MIT license.
 
 ## Libraries
 
+WASAPI playback is CordMic's own COM interop (`IAudioClient3`). NAudio was removed in 0.5.0. Noise suppression,
+automatic gain and the soft limiter are original CordMic code in `VoiceChain` (C# reference and Kotlin port). No
+third-party DSP library is bundled.
+
 | Component | Used by | License |
 |---|---|---|
-| [NAudio](https://github.com/naudio/NAudio) 2.2.1 (`NAudio.Core`, `NAudio.Wasapi`) | Windows app (WASAPI output) | MIT |
 | .NET 8 runtime and Windows Forms (self-contained publish) | Windows app | MIT |
 | AndroidX (AppCompat, Core KTX, ConstraintLayout) | Android app | Apache 2.0 |
 | Material Components for Android | Android app | Apache 2.0 |

@@ -2,6 +2,68 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-05
+
+Lower, steadier PC playback, a louder voice with a noise gate, and a one-page desktop window. Wire version stays 1.
+0.4.2 peers still connect: the new flag bits and the 4-byte PING/PONG payload are ignored when they are absent.
+Android `versionCode` is 8.
+
+### Root cause (0.4.2 log)
+
+On the owner's Windows 11 PC the output was *Low latency* shared mode into VB-CABLE: **period 10.0 ms, buffer 30.0 ms**.
+Packets are 5 ms. The Normal jitter target is 10 ms (2 packets) and Low is 5 ms (1 packet). Each WASAPI callback
+consumes about one period. A target that is not larger than that pull leaves the buffer empty, so a fraction of a
+millisecond of arrival skew underruns the callback. Playback then rebuffers, packets pile up, and the hard cap dumps
+them back to the bare target. That is the oscillation in the log: about 30 underruns/min and about 100 overflows/min
+on Normal, and about 370 underruns/min and about 1260 overflows/min after switching to Low. The link itself was clean
+(loss about 0–0.01%, jitter under 1 ms, round trip about 5–7 ms). Perceived PC delay of 20–40 ms is mostly the 10 ms
+period plus a jitter buffer that was averaging about 15 ms because it kept refilling. Levels of −36 to −70 dBFS match
+"the voice is too quiet." One `ping send failed` line was WSAENOBUFS.
+
+### Fixed
+- **Jitter target follows the render period.** The effective target is at least one full pull plus one packet. A 10 ms
+  period floors Low and Normal at 15 ms (3 packets). Safe (20 ms) is already above that floor.
+- **The callback no longer pulls a variable chunk.** Low-latency mode writes at most one period per event and keeps
+  about 2 ms already queued, instead of writing `period + 3 ms − padding` (which grew past the target whenever the
+  thread woke late).
+- **IAudioClient3.** Shared mode asks for the engine's minimum period and falls back to `IAudioClient.Initialize` if
+  the device refuses.
+- **WSAENOBUFS on the ping socket.** The send backs off from 250 ms to 4 s and logs once per episode, then once when
+  it recovers.
+
+### Added
+- **Noise cancellation** (default on), on the phone, before the packet is sent. A 256-point spectral gate. Algorithmic
+  delay is **256 samples = 5.33 ms** at 48 kHz. Gain, AGC and the limiter add no samples. Toggle on the phone and in
+  the PC settings panel; the PC pushes a change on the next ping (change counter 0 does not override the phone).
+- **Mic gain 0 to +24 dB**, default **+12 dB**, plus an AGC that aims at about −14 dBFS using whatever headroom is
+  left under the +24 dB cap, and a soft limiter that stays under about −0.5 dBFS. A −40 dBFS sine measures about
+  −18 dBFS after the default chain (about +22 dB).
+- **Stats line** now appends `period`, `jtarget`, `urate`, `orate`, `nc`, `agc`, `gain`, `phone` and, when the phone
+  sends it, `dev`.
+- **Desktop window.** One page: a round connect button (disconnected / searching / connected / error) with a short
+  colour ease, a status line (phone name or IP, live delay), and a settings panel. The tray icon and menu stay.
+- AAudio tries exclusive low-latency, then shared low-latency, then shared with no performance hint, and sets the
+  capture buffer to one burst. Release builds shrink with R8.
+
+### Changed
+- NAudio is gone. Device enumeration, notifications and render are CordMic's own WASAPI interop. There is no
+  WasapiOut fallback.
+- The jitter hot path keeps packets in a fixed ring. After construction, push and pull do not allocate. A 4,000
+  packet run allocated under 1 KB, against about 2 MB for the old per-packet arrays.
+- Voice chain over 20 s of audio used about 7.4 ms of CPU per 1 s of audio (about 0.7% of one core) in the C# reference.
+- A synthetic 3-minute run of the 10 ms-period failure (late wakes, ±0.4 ms arrival jitter) went from about
+  **568 underruns/min** with the old target and variable pull to about **2.3/min** with the floored target and a
+  fixed one-period pull.
+
+### Catatan rilis (Bahasa Indonesia)
+- **Penyebab log 0.4.2:** periode render 10 ms memakan target jitter 10 ms (Normal) atau 5 ms (Rendah), jadi buffer
+  kosong lalu dibuang keras. Jaringan bersih. Suara −36 sampai −70 dBFS memang pelan. Satu peringatan ping adalah WSAENOBUFS.
+- Target jitter sekarang minimal satu tarikan render ditambah satu paket (periode 10 ms → lantai 15 ms). Callback
+  hanya menulis satu periode. IAudioClient3 meminta periode shared terpendek yang perangkat izinkan.
+- Peredam bising (default nyala) menambah **5,3 ms**. Gain mic default **+12 dB** (0…+24) plus AGC dan pembatas.
+- Jendela PC satu halaman: satu tombol bulat seperti aplikasi VPN, satu baris status, panel pengaturan. Ikon tray tetap.
+- NAudio dihapus. Jalur panas jitter tidak mengalokasi. R8 mengecilkan build rilis Android. Protokol tetap versi 1.
+
 ## [0.4.2] - 2026-11-03
 
 Lower and steadier PC-side delay, and an honest breakdown of it. A user measured 25–45 ms PC-side delay with

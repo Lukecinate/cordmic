@@ -56,10 +56,14 @@ class AAudioCapture(private val rate: Int, private val preset: Int) : CaptureEng
     private var exclusive = true
 
     override fun open(): Boolean {
-        var r = nativeOpen(rate, 1, preset, true)
-        if (r != 0) { exclusive = false; r = nativeOpen(rate, 1, preset, false) }
-        if (r != 0) Log.w(TAG, "AAudio open failed: $r")
-        return r == 0
+        // Exclusive low-latency, then shared low-latency, then shared with no performance hint.
+        val tries = listOf(true to PERF_LOW_LATENCY, false to PERF_LOW_LATENCY, false to PERF_NONE)
+        for ((ex, perf) in tries) {
+            val r = nativeOpen(rate, 1, preset, ex, perf)
+            if (r == 0) { exclusive = ex; return true }
+        }
+        Log.w(TAG, "AAudio open failed")
+        return false
     }
 
     override fun read(dst: ByteArray, off: Int, frames: Int): Int {
@@ -83,10 +87,11 @@ class AAudioCapture(private val rate: Int, private val preset: Int) : CaptureEng
 
     companion object {
         private const val TAG = "CordMic"
+        private const val PERF_NONE = 10 // AAUDIO_PERFORMANCE_MODE_NONE
         private const val PERF_LOW_LATENCY = 12 // AAUDIO_PERFORMANCE_MODE_LOW_LATENCY
         private const val SHARING_EXCLUSIVE = 0 // AAUDIO_SHARING_MODE_EXCLUSIVE
         init { System.loadLibrary("cordmic_native") }
-        @JvmStatic external fun nativeOpen(rate: Int, ch: Int, preset: Int, exclusive: Boolean): Int
+        @JvmStatic external fun nativeOpen(rate: Int, ch: Int, preset: Int, exclusive: Boolean, performanceMode: Int): Int
         @JvmStatic external fun nativeRead(dst: ByteArray, off: Int, frames: Int, timeoutNs: Long): Int
         @JvmStatic external fun nativeInfo(): IntArray
         @JvmStatic external fun nativeClose()

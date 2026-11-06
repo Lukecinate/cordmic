@@ -56,6 +56,11 @@
     <string name="preset_voice_communication_help">Noise suppression and echo cancellation. Adds latency.</string>
     <string name="aaudio_option">Low-latency engine (AAudio)</string>
     <string name="aaudio_help">Uses the fast Android audio path. Turn off only if the audio cuts out.</string>
+    <string name="nc_option">Noise cancellation</string>
+    <string name="nc_help">Cuts steady background noise. Adds 5.3 ms.</string>
+    <string name="gain_option">Mic gain</string>
+    <string name="gain_value">+%1$d dB</string>
+    <string name="gain_help">Louder by default. The limiter keeps peaks from clipping.</string>
     <string name="err_port">Enter a port from 1 to 65535.</string>
     <string name="err_ip">Enter an IPv4 address such as 192.168.42.10, or leave it empty.</string>
     <string name="expand_cd">Show %1$s</string>
