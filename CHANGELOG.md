@@ -2,23 +2,50 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-11-06
+
+The settings control no longer overlaps the header logo, and the 0.5.0 field-log notes
+are written in a neutral maintainer voice. Android `versionCode` is 9. Wire version stays 1;
+0.5.1 works with 0.5.0 and 0.4.x on the other side. The release APK is signed with the same
+key as 0.5.0, so it installs as an update.
+
+### Fixed
+- **Settings overlapped the header logo.** The connect window created the Settings label at
+  the default top-left origin and never laid it out against the logo and title, so the two
+  drew on top of each other. Settings is now a gear button on the right of the header row
+  (Material Icons Round `settings`, with a tooltip and accessible name), in a table layout
+  that stays clear of the logo and title at 100%, 125% and 150% DPI.
+
+### Changed
+- The 0.5.0 changelog and release notes describe the 0.4.2 field logs in a neutral
+  maintainer voice, without referring to a particular machine or quoting a complaint.
+
+### Catatan rilis (Bahasa Indonesia)
+- Tombol Pengaturan di jendela desktop menimpa logo CM. Kini berupa tombol roda gigi di
+  sisi kanan baris judul, sejajar dengan logo dan nama aplikasi, dan tidak bertumpuk pada
+  100%, 125%, dan 150% DPI.
+- Catatan rilis 0.5.0 ditulis ulang dalam gaya maintainer yang netral.
+
 ## [0.5.0] - 2026-11-06
 
 Lower, steadier PC playback, a louder voice with a noise gate, and a one-page desktop window. Wire version stays 1.
 0.4.2 peers still connect: the new flag bits and the 4-byte PING/PONG payload are ignored when they are absent.
 Android `versionCode` is 8.
 
-### Root cause (0.4.2 log)
+### Root cause (0.4.2 field logs)
 
-On the owner's Windows 11 PC the output was *Low latency* shared mode into VB-CABLE: **period 10.0 ms, buffer 30.0 ms**.
-Packets are 5 ms. The Normal jitter target is 10 ms (2 packets) and Low is 5 ms (1 packet). Each WASAPI callback
-consumes about one period. A target that is not larger than that pull leaves the buffer empty, so a fraction of a
-millisecond of arrival skew underruns the callback. Playback then rebuffers, packets pile up, and the hard cap dumps
-them back to the bare target. That is the oscillation in the log: about 30 underruns/min and about 100 overflows/min
-on Normal, and about 370 underruns/min and about 1260 overflows/min after switching to Low. The link itself was clean
-(loss about 0–0.01%, jitter under 1 ms, round trip about 5–7 ms). Perceived PC delay of 20–40 ms is mostly the 10 ms
-period plus a jitter buffer that was averaging about 15 ms because it kept refilling. Levels of −36 to −70 dBFS match
-"the voice is too quiet." One `ping send failed` line was WSAENOBUFS.
+Field logs from 0.4.2 on Windows 11 with VB-CABLE in *Low latency* shared mode showed
+**period 10.0 ms, buffer 30.0 ms**. Packets are 5 ms. The Normal jitter target is 10 ms
+(2 packets) and Low is 5 ms (1 packet). Each WASAPI callback consumes about one period.
+A target that is not larger than that pull leaves the buffer empty, so a fraction of a
+millisecond of arrival skew underruns the callback. Playback then rebuffers, packets pile
+up, and the hard cap dumps them back to the bare target. The same logs show the resulting
+oscillation: about 30 underruns/min and about 100 overflows/min on Normal, and about 370
+underruns/min and about 1260 overflows/min after switching to Low. The link itself was
+clean (loss about 0–0.01%, jitter under 1 ms, round trip about 5–7 ms). Perceived PC delay
+of 20–40 ms is mostly the 10 ms period plus a jitter buffer that was averaging about 15 ms
+because it kept refilling. Capture levels sat between −36 and −70 dBFS, which is quiet for
+a voice stream. One `ping send failed` line was WSAENOBUFS.
 
 ### Fixed
 - **Jitter target follows the render period.** The effective target is at least one full pull plus one packet. A 10 ms
@@ -63,8 +90,10 @@ period plus a jitter buffer that was averaging about 15 ms because it kept refil
   fixed one-period pull.
 
 ### Catatan rilis (Bahasa Indonesia)
-- **Penyebab log 0.4.2:** periode render 10 ms memakan target jitter 10 ms (Normal) atau 5 ms (Rendah), jadi buffer
-  kosong lalu dibuang keras. Jaringan bersih. Suara −36 sampai −70 dBFS memang pelan. Satu peringatan ping adalah WSAENOBUFS.
+- **Penyebab (log lapangan 0.4.2):** pada Windows 11 dengan VB-CABLE dalam mode shared *Latensi rendah*,
+  periode render 10 ms memakan target jitter 10 ms (Normal) atau 5 ms (Rendah), jadi buffer kosong lalu
+  dibuang keras. Tautan bersih (kehilangan sekitar 0–0,01%, jitter di bawah 1 ms, round trip sekitar 5–7 ms).
+  Level tangkapan −36 sampai −70 dBFS, terlalu pelan untuk aliran suara. Satu peringatan ping adalah WSAENOBUFS.
 - Target jitter sekarang minimal satu tarikan render ditambah satu paket (periode 10 ms → lantai 15 ms). Callback
   hanya menulis satu periode. IAudioClient3 meminta periode shared terpendek yang perangkat izinkan.
 - Peredam bising (default nyala) menambah **5,3 ms**. Gain mic default **+12 dB** (0…+24) plus AGC dan pembatas.

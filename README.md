@@ -57,8 +57,9 @@ Downloads: see [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 
 Landscape: [android-landscape.png](docs/screenshots/android-landscape.png).
 
-**Windows app.** The connect window below is a render of the 0.5.0 layout (this environment cannot host WinForms)
-using the app's logo, mic icon, Plus Jakarta Sans and colours, with sample values. The older images are design
+**Windows app.** The connect window below is a layout render of the 0.5.1 header and connect button
+(this environment cannot host WinForms), using the app's logo, icons, Plus Jakarta Sans
+and colours, with sample values. It is not a capture of the running app. The older images are design
 previews of the 0.4 setup guide.
 
 | Connect window |
@@ -342,7 +343,7 @@ Release signing is read from a properties file outside the repository
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (70 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer and catch-up, render-period floor and allocation-free hot path, voice chain, ping backoff, separate ping socket, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables |
+| .NET (73 tests) | `cd windows-app && dotnet test` | protocol golden vectors, jitter buffer and catch-up, render-period floor and allocation-free hot path, voice chain, ping backoff, separate ping socket, adapter/virtual-cable rules, settings and migration, UDP loopback, interop with `sim_sender.py`, localization tables, header layout |
 | Kotlin (22 tests) | `cd android && ./gradlew testDebugUnitTest` | header byte-compatibility with Python, voice-chain delay/gain/limiter, English/Indonesian string parity, level meter and IP helpers, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 ## Python receiver (developer tool)

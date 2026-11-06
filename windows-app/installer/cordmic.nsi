@@ -7,7 +7,7 @@ SetCompressorDictSize 64
 
 !define APPNAME   "CordMic"
 !ifndef VERSION
-  !define VERSION "0.5.0"
+  !define VERSION "0.5.1"
 !endif
 !define PUBLISHER "CordMic contributors"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CordMic"

@@ -58,8 +58,9 @@ Unduhan: lihat [Releases](https://github.com/Lukecinate/cordmic/releases/latest)
 
 Lanskap: [android-landscape.png](docs/screenshots/android-landscape.png).
 
-**Aplikasi Windows.** Jendela sambung di bawah adalah render tata letak 0.5.0 (lingkungan ini tidak bisa menjalankan
-WinForms) memakai logo, ikon mic, Plus Jakarta Sans, dan warna aplikasi, dengan nilai contoh. Gambar lama adalah
+**Aplikasi Windows.** Jendela sambung di bawah adalah render tata letak header dan tombol sambung 0.5.1
+(lingkungan ini tidak bisa menjalankan WinForms), memakai logo, ikon, Plus Jakarta Sans, dan warna aplikasi,
+dengan nilai contoh. Ini bukan tangkapan dari aplikasi yang sedang berjalan. Gambar lama adalah
 pratinjau desain panduan 0.4.
 
 | Jendela sambung |
@@ -300,11 +301,16 @@ Windows, buffer internal VB-CABLE, dan aplikasi perekam. Sebelum 0.4.2 bagian ou
 padahal NAudio sebenarnya menjaga buffer yang lebih besar tetap penuh, dan bagian buffer hanya satu pembacaan
 sesaat; jadi angka 0.4.1 dan 0.4.2 tidak bisa dibandingkan langsung.
 
-Seorang pengguna mengukur jeda sisi PC 25–45 ms dengan 0.4.1. Versi 0.4.2 menyasar penyebab yang ditemukan di kode
-(antrean yang bisa naik sampai 3× target jitter, buffer WASAPI yang selalu penuh, dan underrun berulang setelah
-lanjut); efeknya di perangkat nyata belum diukur. Untuk jeda terendah: *Jitter buffer → Rendah*, *Mode output →
-Latensi rendah* (lalu coba *Eksklusif*), dan atur "CABLE Input" serta "CABLE Output" ke 48000 Hz di pengaturan
-Sound Windows agar tidak terjadi resampling.
+Log lapangan 0.4.2 pada Windows 11 dengan VB-CABLE (mode shared *Latensi rendah*, periode 10 ms, HP belum memakai
+AAudio) menunjukkan tautan yang bersih (kehilangan sekitar 0, jitter di bawah 1 ms, round trip 5–7 ms), tetapi
+jitter buffer tetap underrun sekitar 30 kali per menit pada Normal dan sekitar 370 kali per menit pada Rendah,
+dengan overflow keras beberapa kali lebih banyak. Callback render memakai satu periode 10 ms. Target Normal 10 ms
+dan Rendah 5 ms tidak menyisakan apa pun setelah tarikan itu, jadi buffer kosong, diisi ulang, lalu batas keras
+membuang tumpukan. 0.5.0 meminta periode shared terpendek lewat IAudioClient3 dan menolak target jitter di bawah
+satu tarikan plus satu paket. Simulasi mode kegagalan periode 10 ms menurunkan underrun dari sekitar 570/menit
+menjadi sekitar 2/menit. Peredam bising di HP menambah 5,3 ms. Untuk jeda terendah: *Latensi → Rendah*,
+*Mode output → Latensi rendah* (lalu coba *Eksklusif*), nyalakan peredam bising hanya jika diperlukan, dan atur
+"CABLE Input" serta "CABLE Output" ke 48000 Hz di pengaturan Sound Windows agar tidak terjadi resampling.
 
 Cara mengukur di perangkat Anda: di OBS tambahkan dua *Audio Input Capture*, (a) "CABLE Output" dan (b) mic fisik
 lain (headset/webcam). Rekam, tepuk tangan di dekat **kedua** mic, buka rekaman di Audacity, lalu ukur jarak antar
@@ -337,7 +343,7 @@ release lokal ditandatangani dengan debug key.
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, loopback UDP (bersih dan lossy) |
-| .NET (70 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer dan catch-up, lantai periode render dan jalur panas tanpa alokasi, rantai suara, backoff ping, socket ping terpisah, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks |
+| .NET (73 test) | `cd windows-app && dotnet test` | golden vector protokol, jitter buffer dan catch-up, lantai periode render dan jalur panas tanpa alokasi, rantai suara, backoff ping, socket ping terpisah, aturan adapter/kabel virtual, setting dan migrasi, loopback UDP, interop dengan `sim_sender.py`, tabel teks, tata letak header |
 | Kotlin (22 test) | `cd android && ./gradlew testDebugUnitTest` | kompatibilitas byte header dengan Python, jeda/gain/limiter rantai suara, kesamaan teks Inggris/Indonesia, helper level meter dan IP, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 ## Receiver Python (alat developer)

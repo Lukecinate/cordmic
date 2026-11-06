@@ -3,7 +3,7 @@
 # Needs: .NET 8 SDK (dotnet on PATH), NSIS 3 (makensis), python3 (interop test).
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=0.4.2
+VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' src/CordMic.App/CordMic.App.csproj | head -1)
 dotnet test tests/CordMic.Tests -c Release
 rm -rf publish
 dotnet publish src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained \
