@@ -58,6 +58,13 @@ class MicService : Service() {
             useAAudio = intent?.getBooleanExtra(EXTRA_AAUDIO, true) ?: true,
             noiseCancellation = intent?.getBooleanExtra(EXTRA_NC, true) ?: true,
             gainDb = intent?.getIntExtra(EXTRA_GAIN, VoiceChain.DEFAULT_GAIN_DB) ?: VoiceChain.DEFAULT_GAIN_DB,
+            noiseMode = NoiseMode.from(intent?.getIntExtra(EXTRA_NC_MODE, -1) ?: -1).let {
+                if ((intent?.getIntExtra(EXTRA_NC_MODE, -1) ?: -1) < 0)
+                    if (intent?.getBooleanExtra(EXTRA_NC, true) != false) NoiseMode.LIGHT else NoiseMode.OFF
+                else it
+            },
+            voiceClarity = intent?.getBooleanExtra(EXTRA_CLARITY, true) ?: true,
+            autoVolume = intent?.getBooleanExtra(EXTRA_AGC, true) ?: true,
         )
         streamer = Streamer(applicationContext, cfg).also { current = it; it.start() }
         handler.post(ticker)
@@ -117,6 +124,9 @@ class MicService : Service() {
         const val EXTRA_AAUDIO = "aaudio"
         const val EXTRA_NC = "nc"
         const val EXTRA_GAIN = "gain"
+        const val EXTRA_NC_MODE = "ncMode"
+        const val EXTRA_CLARITY = "clarity"
+        const val EXTRA_AGC = "agc"
         private const val CHANNEL = "cordmic"
         private const val NOTIF_ID = 1
         // Streamer holds only the application context, which cannot leak an Activity.

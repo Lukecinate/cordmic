@@ -42,9 +42,15 @@ public sealed class JitterBuffer
     private long _winMinResidual = long.MaxValue;
     private double _winDepthArea;
     private int _pendingDrop;
-    private int _slip;
-    private int _slipCooldown;
+    private double _ppm;
+    private double _integ;
+    private double _slipAcc;
     private double _avgDepthMs = double.NaN, _minResidualMs = double.NaN;
+    private short[] _lastFrame = Array.Empty<short>();
+    private byte[] _extra = Array.Empty<byte>();
+    private bool _fadeIn;
+    private const int SlipCrossfade = 32;
+    private const double MaxPpm = 150;
 
     public int FramesPerPacket { get; private set; }
     public int Channels { get; }
@@ -56,7 +62,7 @@ public sealed class JitterBuffer
     public int HighWater { get; }
     /// <summary>Packet-drop catch-up. Off in production; kept for tests and emergency use.</summary>
     public bool CatchUp { get; set; }
-    /// <summary>Skip or insert one PCM frame per pull when depth stays outside the hysteresis band.</summary>
+    /// <summary>Apply a slow, crossfaded sample-level correction when mean depth drifts outside a deadband.</summary>
     public bool DriftLock { get; set; }
     /// <summary>WASAPI period used for hysteresis; 0 if unknown.</summary>
     public double RenderPeriodMs { get; set; }
@@ -91,6 +97,8 @@ public sealed class JitterBuffer
         _silence = new byte[bytes];
         _out = new byte[bytes];
         _keep = new byte[bytes];
+        _lastFrame = new short[Channels];
+        _extra = new byte[2 * Channels];
         _count = 0;
     }
 
@@ -148,8 +156,9 @@ public sealed class JitterBuffer
         _buffering = true;
         _keepLen = 0; _keepOff = 0;
         _pendingDrop = 0;
-        _slip = 0;
-        _slipCooldown = 0;
+        _ppm = 0; _integ = 0; _slipAcc = 0;
+        _fadeIn = false;
+        Array.Clear(_lastFrame);
         ResetWindowLocked();
         Stats.Resets++;
     }
@@ -206,6 +215,7 @@ public sealed class JitterBuffer
             ClearSlot(_next!.Value);
             Stats.OverflowDrops++;
             _next = unchecked(_next.Value + 1);
+            _fadeIn = true;
         }
         _pendingDrop = 0;
     }
@@ -236,6 +246,8 @@ public sealed class JitterBuffer
             _pool.AsSpan(off, BytesPerPacket).CopyTo(dst);
             ClearSlot(cur);
             _next = nxt;
+            FadeInPacket(dst);
+            RememberLast(dst);
             Stats.Played++;
             return true;
         }
@@ -243,7 +255,7 @@ public sealed class JitterBuffer
         {
             _next = unchecked(cur + 1);
             Stats.Concealed++;
-            _silence.AsSpan(0, BytesPerPacket).CopyTo(dst);
+            WriteConcealment(dst);
             return true;
         }
         Stats.Underruns++;
@@ -310,35 +322,22 @@ public sealed class JitterBuffer
         if (pos < dst.Length) dst[pos..].Clear();
     }
 
-    /// <summary>Skip or insert one frame without allocating. No-ops if the extra frame is not available.</summary>
+    /// <summary>Skip or insert at most one frame, crossfading so adjacent samples stay continuous.</summary>
     private void ApplySlipLocked(Span<byte> dst)
     {
-        if (!DriftLock || _slip == 0) return;
-        if (_slipCooldown > 0) return;
+        if (!DriftLock || Math.Abs(_slipAcc) < 1) return;
         int fb = 2 * Channels;
-        if (fb <= 0 || dst.Length < fb) return;
-        if (_slip > 0)
+        if (fb <= 0 || dst.Length < fb * 2) return;
+        if (_slipAcc >= 1)
         {
-            if (_keepLen - _keepOff >= fb)
-            {
-                _keepOff += fb;
-                if (_keepOff >= _keepLen) { _keepLen = 0; _keepOff = 0; }
-                Stats.SampleSlips++; _slipCooldown = FramesPerPacket;
-                return;
-            }
-            if (!CopyPacketLocked(_out, 1)) return;
-            int rem = BytesPerPacket - fb;
-            if (rem > 0)
-            {
-                _out.AsSpan(fb, rem).CopyTo(_keep);
-                _keepLen = rem;
-                _keepOff = 0;
-            }
-            else { _keepLen = 0; _keepOff = 0; }
-            Stats.SampleSlips++; _slipCooldown = FramesPerPacket;
+            if (!TryPopFrame()) return;
+            CrossfadeDrop(dst, _extra);
+            _slipAcc -= 1;
+            Stats.SampleSlips++;
             return;
         }
-        // Insert: put the last played frame back at the front of the leftover so it plays again.
+        // Insert: replay the last frame next time (zero-order hold is itself continuous)
+        // and stretch the tail of this buffer so the extra sample is interpolated.
         if (dst.Length < 2 * fb) return;
         int held = _keepLen - _keepOff;
         if (held + fb > _keep.Length) return;
@@ -353,13 +352,153 @@ public sealed class JitterBuffer
         dst.Slice(dst.Length - fb, fb).CopyTo(_keep.AsSpan(0, fb));
         _keepLen += fb;
         _keepOff = 0;
-        Stats.SampleSlips++; _slipCooldown = FramesPerPacket;
+        CrossfadeInsert(dst);
+        _slipAcc += 1;
+        Stats.SampleSlips++;
+    }
+
+    private bool TryPopFrame()
+    {
+        int fb = 2 * Channels;
+        if (_keepLen - _keepOff >= fb)
+        {
+            _keep.AsSpan(_keepOff, fb).CopyTo(_extra);
+            _keepOff += fb;
+            if (_keepOff >= _keepLen) { _keepLen = 0; _keepOff = 0; }
+            return true;
+        }
+        if (!CopyPacketLocked(_out, 1)) return false;
+        _out.AsSpan(0, fb).CopyTo(_extra);
+        int rem = BytesPerPacket - fb;
+        if (rem > 0)
+        {
+            _out.AsSpan(fb, rem).CopyTo(_keep);
+            _keepLen = rem;
+            _keepOff = 0;
+        }
+        else { _keepLen = 0; _keepOff = 0; }
+        return true;
+    }
+
+    private void CrossfadeDrop(Span<byte> dst, ReadOnlySpan<byte> extra)
+    {
+        int fb = 2 * Channels;
+        int n = dst.Length / fb;
+        int xf = Math.Min(SlipCrossfade, n - 1);
+        int start = n - xf;
+        for (int f = 0; f < xf; f++)
+        {
+            double w = (f + 1.0) / (xf + 1.0);
+            for (int c = 0; c < Channels; c++)
+            {
+                int ia = ((start + f) * Channels + c) * 2;
+                int sa = (short)(dst[ia] | (dst[ia + 1] << 8));
+                int sb;
+                if (start + f + 1 < n)
+                {
+                    int ib = ((start + f + 1) * Channels + c) * 2;
+                    sb = (short)(dst[ib] | (dst[ib + 1] << 8));
+                }
+                else
+                    sb = (short)(extra[c * 2] | (extra[c * 2 + 1] << 8));
+                int v = (int)Math.Round(sa * (1 - w) + sb * w);
+                v = Math.Clamp(v, short.MinValue, short.MaxValue);
+                dst[ia] = (byte)v; dst[ia + 1] = (byte)(v >> 8);
+            }
+        }
+    }
+
+    private void CrossfadeInsert(Span<byte> dst)
+    {
+        int fb = 2 * Channels;
+        int n = dst.Length / fb;
+        int xf = Math.Min(SlipCrossfade, n - 1);
+        if (xf < 2) return;
+        int start = n - xf;
+        // Stretch the last xf-1 original samples across xf slots (linear interpolation).
+        Span<short> tmp = stackalloc short[xf * Channels];
+        for (int f = 0; f < xf; f++)
+            for (int c = 0; c < Channels; c++)
+            {
+                int i = ((start + f) * Channels + c) * 2;
+                tmp[f * Channels + c] = (short)(dst[i] | (dst[i + 1] << 8));
+            }
+        for (int f = 0; f < xf; f++)
+        {
+            double pos = f * (xf - 2) / (double)(xf - 1); // 0 .. xf-2
+            int i0 = (int)pos;
+            double frac = pos - i0;
+            int i1 = Math.Min(i0 + 1, xf - 2);
+            for (int c = 0; c < Channels; c++)
+            {
+                double a = tmp[i0 * Channels + c];
+                double b = tmp[i1 * Channels + c];
+                int v = (int)Math.Round(a * (1 - frac) + b * frac);
+                v = Math.Clamp(v, short.MinValue, short.MaxValue);
+                int i = ((start + f) * Channels + c) * 2;
+                dst[i] = (byte)v; dst[i + 1] = (byte)(v >> 8);
+            }
+        }
+    }
+
+    private void RememberLast(ReadOnlySpan<byte> pkt)
+    {
+        if (_lastFrame.Length != Channels) _lastFrame = new short[Channels];
+        int fb = 2 * Channels;
+        if (pkt.Length < fb) return;
+        int baseOff = pkt.Length - fb;
+        for (int c = 0; c < Channels; c++)
+        {
+            int i = baseOff + c * 2;
+            _lastFrame[c] = (short)(pkt[i] | (pkt[i + 1] << 8));
+        }
+    }
+
+    private void FadeInPacket(Span<byte> dst)
+    {
+        if (!_fadeIn) return;
+        _fadeIn = false;
+        int fb = 2 * Channels;
+        int frames = dst.Length / fb;
+        int xf = Math.Min(SlipCrossfade, frames);
+        for (int f = 0; f < xf; f++)
+        {
+            double w = (f + 1.0) / (xf + 1.0);
+            for (int c = 0; c < Channels; c++)
+            {
+                int i = (f * Channels + c) * 2;
+                int s = (short)(dst[i] | (dst[i + 1] << 8));
+                int v = (int)Math.Round(s * w);
+                dst[i] = (byte)v; dst[i + 1] = (byte)(v >> 8);
+            }
+        }
+    }
+
+    private void WriteConcealment(Span<byte> dst)
+    {
+        int fb = 2 * Channels;
+        int frames = dst.Length / fb;
+        double tau = Math.Max(1.0, 0.003 * SampleRate);
+        for (int f = 0; f < frames; f++)
+        {
+            double g = Math.Exp(-f / tau);
+            for (int c = 0; c < Channels; c++)
+            {
+                int v = (int)Math.Round((_lastFrame.Length > c ? _lastFrame[c] : 0) * g);
+                v = Math.Clamp(v, short.MinValue, short.MaxValue);
+                int i = (f * Channels + c) * 2;
+                dst[i] = (byte)v; dst[i + 1] = (byte)(v >> 8);
+            }
+        }
+        Array.Clear(_lastFrame);
+        _fadeIn = true;
     }
 
     private void AccountLocked(long beforeFrames, int pulledFrames)
     {
         if (_next is null || pulledFrames <= 0) return;
-        if (_slipCooldown > 0) _slipCooldown = Math.Max(0, _slipCooldown - pulledFrames);
+        if (DriftLock)
+            _slipAcc = Math.Clamp(_slipAcc + pulledFrames * (_ppm / 1e6), -2, 2);
         long after = QueuedFramesLocked();
         _winFrames += pulledFrames;
         _winDepthArea += (beforeFrames + after) / 2.0 * pulledFrames;
@@ -379,12 +518,19 @@ public sealed class JitterBuffer
         }
         if (DriftLock)
         {
-            if (_minResidualMs > targetMs + bandMs && _avgDepthMs > targetMs + bandMs)
-                _slip = 1;
-            else if (_avgDepthMs < targetMs - bandMs * 0.25 && _minResidualMs > 0)
-                _slip = -1;
-            else if (_avgDepthMs >= targetMs - bandMs * 0.1 && _avgDepthMs <= targetMs + bandMs * 0.5)
-                _slip = 0;
+            double err = _avgDepthMs - targetMs;
+            double dead = Math.Max(3.0, bandMs * 0.75);
+            double dt = _winFrames / (double)SampleRate;
+            if (Math.Abs(err) <= dead)
+            {
+                _integ *= 0.85;
+                _ppm *= 0.80;
+            }
+            else
+            {
+                _integ = Math.Clamp(_integ + err * dt, -80, 80);
+                _ppm = Math.Clamp(8.0 * err + 2.0 * _integ, -MaxPpm, MaxPpm);
+            }
         }
         ResetWindowLocked();
     }
@@ -406,4 +552,7 @@ public sealed class JitterBuffer
     public double MinResidualMs { get { lock (_lock) return _minResidualMs; } }
 
     public int PendingCatchUp { get { lock (_lock) return _pendingDrop; } }
+
+    /// <summary>Current drift-lock correction in parts-per-million (positive = drop samples).</summary>
+    public double DriftPpm { get { lock (_lock) return _ppm; } }
 }

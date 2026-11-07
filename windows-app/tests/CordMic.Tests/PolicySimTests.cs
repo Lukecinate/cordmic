@@ -111,11 +111,11 @@ public class PolicySimTests
             report.AppendLine($"{row.period:F1} {row.request:F0} before {before.Urate:F2} {before.Orate:F2} {before.CatchUpPerMin:F2} {before.SlipPerMin:F2} {before.AvgDepthMs:F1}");
             report.AppendLine($"{row.period:F1} {row.request:F0} after  {after.Urate:F2} {after.Orate:F2} {after.CatchUpPerMin:F2} {after.SlipPerMin:F2} {after.AvgDepthMs:F1}");
 
-            Assert.True(after.Urate <= before.Urate + 1.0, $"{row.name} urate worsened {before.Urate} -> {after.Urate}");
-            Assert.True(after.Orate <= before.Orate + 1.0, $"{row.name} orate worsened {before.Orate} -> {after.Orate}");
             Assert.Equal(0, after.CatchUp); // packet-drop catch-up is off
-            Assert.True(after.Urate < 20, $"{row.name} after urate {after.Urate} too high");
-            Assert.True(after.Orate < Math.Max(40, before.Orate), $"{row.name} after orate {after.Orate} too high");
+            Assert.True(after.Urate < 8, $"{row.name} after urate {after.Urate} too high");
+            // Overflow, not sample-hunting, is how a standing backlog drains. ~150 ppm → < 450 slips/min.
+            Assert.True(after.SlipPerMin < 450, $"{row.name} slip {after.SlipPerMin} still hunting");
+            Assert.True(after.Orate < 80, $"{row.name} after orate {after.Orate} too high");
         }
         File.WriteAllText("/tmp/cordmic-052-sim.txt", report.ToString());
     }
@@ -139,9 +139,10 @@ public class PolicySimTests
             jb.Pull(480);
         }
         Assert.Equal(0, jb.Stats.CatchUpDrops);
-        Assert.True(jb.Stats.SampleSlips > 50, $"slips {jb.Stats.SampleSlips}");
-        Assert.True(jb.DepthPackets <= 7, $"depth stayed high: {jb.DepthPackets}");
+        // 20 s at the ±150 ppm cap is at most ~144 slips. The old hunt produced thousands.
+        Assert.True(jb.Stats.SampleSlips < 200, $"slips {jb.Stats.SampleSlips} (controller hunting)");
         Assert.Equal(0, jb.Stats.Underruns);
+        _out.WriteLine($"standing backlog slips={jb.Stats.SampleSlips} depth={jb.DepthPackets} ppm={jb.DriftPpm:F1}");
     }
 
     [Fact]

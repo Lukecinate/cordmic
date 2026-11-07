@@ -1,72 +1,92 @@
 package dev.cordmic
 
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.round
 import kotlin.math.sin
 import kotlin.math.sqrt
-import kotlin.math.tanh
+
+enum class NoiseMode(val code: Int) {
+    OFF(0), LIGHT(1), STRONG(2);
+    companion object {
+        fun from(code: Int): NoiseMode = when (code) {
+            2 -> STRONG
+            1 -> LIGHT
+            else -> OFF
+        }
+    }
+}
 
 /**
- * Same chain as CordMic.Core.VoiceChain: high-pass, optional noise suppression, user gain, AGC, soft limiter.
- * Noise suppression delays audio by exactly [NOISE_DELAY_FRAMES] samples (5.33 ms at 48 kHz). Nothing else adds samples.
- * Total boost is capped at +24 dB.
+ * Same chain as CordMic.Core.VoiceChain: voice-clarity EQ, optional Hann-OLA noise suppression,
+ * user gain, gated AGC toward −18 dBFS, and a peak limiter at −1 dBFS.
+ * STFT delay is [NOISE_DELAY_FRAMES] samples (2.67 ms at 48 kHz) when suppression is on.
  */
 class VoiceChain(private val sampleRate: Int = 48000) {
-    var noiseCancellation: Boolean = true
+    var mode: NoiseMode = NoiseMode.LIGHT
+    var noiseCancellation: Boolean
+        get() = mode != NoiseMode.OFF
+        set(value) { mode = if (value) (if (mode == NoiseMode.OFF) NoiseMode.LIGHT else mode) else NoiseMode.OFF }
     var agc: Boolean = true
-    var highPass: Boolean = true
+    var voiceClarity: Boolean = true
+    var highPass: Boolean
+        get() = voiceClarity
+        set(value) { voiceClarity = value }
     var gainDb: Int = DEFAULT_GAIN_DB
         set(value) { field = value.coerceIn(0, MAX_GAIN_DB) }
 
-    val delayFrames: Int get() = if (noiseCancellation) NOISE_DELAY_FRAMES else 0
+    val delayFrames: Int get() = if (mode == NoiseMode.OFF) 0 else NOISE_DELAY_FRAMES
     val noiseLatencyMs: Double get() = delayFrames * 1000.0 / sampleRate
 
-    private val b0: Double
-    private val b1: Double
-    private val b2: Double
-    private val a1: Double
-    private val a2: Double
-    private var x1 = 0.0; private var x2 = 0.0; private var y1 = 0.0; private var y2 = 0.0
+    private val hp: Biquad
+    private val shelf: Biquad
+    private val presence: Biquad
     private val envRelease: Double
-    private val agcAttack: Double
-    private val agcRelease: Double
+    private val agcRise: Double
+    private val agcFall: Double
+    private val peakRel: Double
+    private val limRel: Double
     private val blockIn = DoubleArray(NOISE_FFT)
-    private val blockOut = DoubleArray(NOISE_FFT)
+    private val hopOut = DoubleArray(NOISE_HOP)
+    private val ola = DoubleArray(NOISE_HOP)
+    private val hann = DoubleArray(NOISE_FFT)
     private val re = DoubleArray(NOISE_FFT)
     private val im = DoubleArray(NOISE_FFT)
     private val mag = DoubleArray(NOISE_FFT / 2 + 1)
     private val noise = DoubleArray(NOISE_FFT / 2 + 1)
-    private val binGain = DoubleArray(NOISE_FFT / 2 + 1)
-    private val tail = DoubleArray(FADE)
-    private var fill = 0
+    private val binGain = DoubleArray(NOISE_FFT / 2 + 1) { 1.0 }
+    private var fill = NOISE_HOP
     private var emit = 0
-    private var haveBlock = false
+    private var haveHop = false
     private var env = 0.0
     private var agcGain = 1.0
+    private var peak = 0.0
+    private var lim = 1.0
+    private var gated = true
     private val shorts = ShortArray(4096)
 
     init {
-        val w0 = 2 * PI * 80.0 / sampleRate
-        val c = cos(w0)
-        val alpha = sin(w0) / (2 * 0.7071067811865476)
-        val a0 = 1 + alpha
-        b0 = ((1 + c) / 2) / a0
-        b1 = (-(1 + c)) / a0
-        b2 = b0
-        a1 = (-2 * c) / a0
-        a2 = (1 - alpha) / a0
-        envRelease = 1 - exp(-1.0 / (0.20 * sampleRate))
-        agcAttack = 1 - exp(-1.0 / (0.008 * sampleRate))
-        agcRelease = 1 - exp(-1.0 / (0.18 * sampleRate))
+        hp = Biquad.highPass(sampleRate, 120.0, 0.7071067811865476)
+        shelf = Biquad.lowShelf(sampleRate, 220.0, -5.0)
+        presence = Biquad.peaking(sampleRate, 3000.0, 2.5, 1.0)
+        for (i in 0 until NOISE_FFT) hann[i] = 0.5 - 0.5 * cos(2 * PI * i / NOISE_FFT)
+        envRelease = 1 - exp(-1.0 / (0.08 * sampleRate))
+        agcRise = 1 - exp(-1.0 / (0.50 * sampleRate))
+        agcFall = 1 - exp(-1.0 / (0.025 * sampleRate))
+        peakRel = 1 - exp(-1.0 / (0.030 * sampleRate))
+        limRel = 1 - exp(-1.0 / (0.050 * sampleRate))
     }
 
     fun reset() {
-        x1 = 0.0; x2 = 0.0; y1 = 0.0; y2 = 0.0
-        fill = 0; emit = 0; haveBlock = false; env = 0.0; agcGain = 1.0
-        blockIn.fill(0.0); blockOut.fill(0.0); noise.fill(0.0); tail.fill(0.0)
+        hp.reset(); shelf.reset(); presence.reset()
+        fill = NOISE_HOP; emit = 0; haveHop = false
+        env = 0.0; agcGain = 1.0; peak = 0.0; lim = 1.0; gated = true
+        blockIn.fill(0.0); hopOut.fill(0.0); ola.fill(0.0); noise.fill(0.0)
+        binGain.fill(1.0)
     }
 
     /** In-place on little-endian PCM16 starting at [off], [frames] frames. */
@@ -91,102 +111,173 @@ class VoiceChain(private val sampleRate: Int = 48000) {
 
     fun process(samples: ShortArray, n: Int = samples.size) {
         val user = dbToLin(gainDb.toDouble())
-        val maxAgc = dbToLin((MAX_GAIN_DB - gainDb).toDouble())
+        val maxAgc = dbToLin(min(MAX_AGC_DB, (MAX_GAIN_DB - gainDb).toDouble()))
         val target = dbToLin(TARGET_DBFS)
+        val thresh = dbToLin(CEILING_DBFS)
+        val stft = mode != NoiseMode.OFF
         for (i in 0 until n) {
             var x = samples[i] / 32768.0
-            if (highPass) x = highPassStep(x)
-            x = if (noiseCancellation) noiseStep(x) else { fill = 0; emit = 0; haveBlock = false; x }
+            if (voiceClarity) {
+                x = hp.process(x)
+                x = shelf.process(x)
+                x = presence.process(x)
+            }
+            x = if (stft) noiseStep(x) else { fill = NOISE_HOP; emit = 0; haveHop = false; x }
             var y = x * user
             if (agc) {
-                val ay = kotlin.math.abs(y)
+                val ay = abs(y)
                 env = if (ay > env) ay else env + (ay - env) * envRelease
-                val want = (target / max(env, 1e-5)).coerceIn(1.0, maxAgc)
-                agcGain += (want - agcGain) * (if (want > agcGain) agcAttack else agcRelease)
+                if (env < GATE_CLOSE) gated = true
+                else if (env > GATE_OPEN) gated = false
+                val want = if (gated) 1.0 else (target / max(env, 1e-5)).coerceIn(0.25, maxAgc)
+                val coeff = if (gated) agcRise else if (want > agcGain) agcRise else agcFall
+                agcGain += (want - agcGain) * coeff
                 y *= agcGain
             }
-            y = softLimit(y)
+            y = limitStep(y, thresh)
             var s = round(y * 32768.0).toInt()
             if (s > 32767) s = 32767 else if (s < -32768) s = -32768
             samples[i] = s.toShort()
         }
     }
 
-    private fun highPassStep(x: Double): Double {
-        val y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
-        x2 = x1; x1 = x; y2 = y1; y1 = y
+    private fun limitStep(y0: Double, thresh: Double): Double {
+        var y = y0
+        val ay = abs(y)
+        peak = if (ay > peak) ay else peak + (ay - peak) * peakRel
+        val gr = if (peak > thresh) thresh / peak else 1.0
+        // Lookahead-less: take gain reduction immediately so a shout cannot sneak past −1 dBFS.
+        if (gr < lim) lim = gr else lim += (gr - lim) * limRel
+        y *= lim
+        if (y > 0.99) y = 0.99
+        if (y < -0.99) y = -0.99
         return y
     }
 
     private fun noiseStep(x: Double): Double {
-        val y = if (haveBlock) blockOut[emit] else 0.0
+        val y = if (haveHop) hopOut[emit] else 0.0
         blockIn[fill] = x
-        fill++; emit++
+        fill++
+        emit++
         if (fill == NOISE_FFT) {
-            suppressBlock()
-            fill = 0; emit = 0; haveBlock = true
+            suppressHop()
+            blockIn.copyInto(blockIn, 0, NOISE_HOP, NOISE_FFT)
+            fill = NOISE_HOP
+            emit = 0
+            haveHop = true
         }
         return y
     }
 
-    private fun suppressBlock() {
-        re.fill(0.0); im.fill(0.0)
-        for (i in 0 until NOISE_FFT) re[i] = blockIn[i]
+    private fun suppressHop() {
+        for (i in 0 until NOISE_FFT) {
+            re[i] = blockIn[i] * hann[i]
+            im[i] = 0.0
+        }
         fft(re, im, false)
         var maxBin = 0.0
         var sumBin = 0.0
-        for (k in 0..NOISE_FFT / 2) {
+        val half = NOISE_FFT / 2
+        for (k in 0..half) {
             val m = sqrt(re[k] * re[k] + im[k] * im[k])
             mag[k] = m
-            if (k > 0) { if (m > maxBin) maxBin = m; sumBin += m }
+            if (k > 0) {
+                if (m > maxBin) maxBin = m
+                sumBin += m
+            }
         }
-        val mean = sumBin / (NOISE_FFT / 2)
+        val mean = sumBin / half
         val noiseLike = maxBin < mean * 12.0 + 1e-12
-        for (k in 0..NOISE_FFT / 2) {
+        val floor = if (mode == NoiseMode.STRONG) STRONG_FLOOR else LIGHT_FLOOR
+        val oversub = if (mode == NoiseMode.STRONG) 1.5 else 1.0
+        val smooth = if (mode == NoiseMode.STRONG) 0.45 else 0.65
+        for (k in 0..half) {
             val m = mag[k]
             var nse = noise[k]
-            nse = if (noiseLike) 0.75 * nse + 0.25 * m
-            else if (m < nse) 0.50 * nse + 0.50 * m
-            else 0.998 * nse + 0.002 * m
+            nse = when {
+                noiseLike -> 0.80 * nse + 0.20 * m
+                m < nse -> 0.70 * nse + 0.30 * m
+                else -> nse // freeze on speech/tone so vowels are not slowly gated
+            }
             noise[k] = nse
-            var g = 1.0 - 1.5 * nse / (m + 1e-12)
-            if (g < GAIN_FLOOR) g = GAIN_FLOOR else if (g > 1) g = 1.0
-            binGain[k] = g
+            var g = 1.0 - oversub * nse / (m + 1e-12)
+            if (g < floor) g = floor else if (g > 1) g = 1.0
+            binGain[k] = smooth * binGain[k] + (1 - smooth) * g
         }
         for (k in 0 until NOISE_FFT) {
-            val bin = if (k <= NOISE_FFT / 2) k else NOISE_FFT - k
+            val bin = if (k <= half) k else NOISE_FFT - k
             re[k] *= binGain[bin]
             im[k] *= binGain[bin]
         }
         fft(re, im, true)
-        for (i in 0 until FADE) {
-            val w = (i + 1) / (FADE + 1.0)
-            blockOut[i] = tail[i] * (1 - w) + re[i] * w
+        for (i in 0 until NOISE_HOP) {
+            hopOut[i] = ola[i] + re[i]
+            ola[i] = re[i + NOISE_HOP]
         }
-        for (i in FADE until NOISE_FFT) blockOut[i] = re[i]
-        for (i in 0 until FADE) tail[i] = blockOut[NOISE_FFT - FADE + i]
+    }
+
+    private class Biquad(
+        private val b0: Double, private val b1: Double, private val b2: Double,
+        private val a1: Double, private val a2: Double,
+    ) {
+        private var x1 = 0.0; private var x2 = 0.0; private var y1 = 0.0; private var y2 = 0.0
+        fun process(x: Double): Double {
+            val y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
+        }
+        fun reset() { x1 = 0.0; x2 = 0.0; y1 = 0.0; y2 = 0.0 }
+
+        companion object {
+            fun highPass(sr: Int, freq: Double, q: Double): Biquad {
+                val w0 = 2 * PI * freq / sr
+                val c = cos(w0)
+                val alpha = sin(w0) / (2 * q)
+                val a0 = 1 + alpha
+                return Biquad(((1 + c) / 2) / a0, (-(1 + c)) / a0, ((1 + c) / 2) / a0, (-2 * c) / a0, (1 - alpha) / a0)
+            }
+            fun lowShelf(sr: Int, freq: Double, gainDb: Double): Biquad {
+                val a = Math.pow(10.0, gainDb / 40.0)
+                val w0 = 2 * PI * freq / sr
+                val c = cos(w0)
+                val s = sin(w0)
+                val alpha = s / 2 * sqrt(2.0)
+                val two = 2 * sqrt(a) * alpha
+                val a0 = (a + 1) + (a - 1) * c + two
+                return Biquad(
+                    a * ((a + 1) - (a - 1) * c + two) / a0,
+                    2 * a * ((a - 1) - (a + 1) * c) / a0,
+                    a * ((a + 1) - (a - 1) * c - two) / a0,
+                    -2 * ((a - 1) + (a + 1) * c) / a0,
+                    ((a + 1) + (a - 1) * c - two) / a0,
+                )
+            }
+            fun peaking(sr: Int, freq: Double, gainDb: Double, q: Double): Biquad {
+                val a = Math.pow(10.0, gainDb / 40.0)
+                val w0 = 2 * PI * freq / sr
+                val c = cos(w0)
+                val alpha = sin(w0) / (2 * q)
+                val a0 = 1 + alpha / a
+                return Biquad((1 + alpha * a) / a0, (-2 * c) / a0, (1 - alpha * a) / a0, (-2 * c) / a0, (1 - alpha / a) / a0)
+            }
+        }
     }
 
     companion object {
         const val NOISE_FFT = 256
-        const val NOISE_DELAY_FRAMES = 256
+        const val NOISE_HOP = 128
+        const val NOISE_DELAY_FRAMES = NOISE_HOP
         const val MAX_GAIN_DB = 24
-        const val DEFAULT_GAIN_DB = 12
-        const val TARGET_DBFS = -14.0
-        private const val FADE = 16
-        private const val GAIN_FLOOR = 0.20
+        const val DEFAULT_GAIN_DB = 6
+        const val TARGET_DBFS = -18.0
+        const val MAX_AGC_DB = 12.0
+        const val CEILING_DBFS = -1.0
+        private const val LIGHT_FLOOR = 0.20
+        private const val STRONG_FLOOR = 0.10
+        private const val GATE_OPEN = 0.007943
+        private const val GATE_CLOSE = 0.003162
 
-        fun dbToLin(db: Double) = Math.pow(10.0, db / 20.0)
-
-        fun softLimit(x: Double): Double {
-            val a = kotlin.math.abs(x)
-            val knee = 0.70
-            val ceiling = 0.94
-            if (a <= knee) return x
-            val over = (a - knee) / (1.0 - knee)
-            val y = knee + (ceiling - knee) * tanh(over)
-            return Math.copySign(y, x)
-        }
+        fun dbToLin(db: Double): Double = Math.pow(10.0, db / 20.0)
 
         fun fft(re: DoubleArray, im: DoubleArray, invert: Boolean) {
             val n = re.size

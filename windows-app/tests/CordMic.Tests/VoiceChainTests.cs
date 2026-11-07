@@ -46,15 +46,14 @@ public class VoiceChainTests
     public void NoiseSuppressionDelaysByOneBlockAndNothingElseDoes()
     {
         var chain = new VoiceChain(48000) { NoiseCancellation = true, Agc = false, HighPass = false, GainDb = 0 };
-        Assert.Equal(256, chain.DelayFrames);
-        Assert.InRange(chain.NoiseLatencyMs, 5.3, 5.4);
+        Assert.Equal(128, chain.DelayFrames);
+        Assert.InRange(chain.NoiseLatencyMs, 2.6, 2.75);
 
         var input = new short[256 * 3];
-        // Impulse past the 16-sample block fade, so the delayed copy is not attenuated.
         input[40] = 16000;
         chain.Process(input);
-        Assert.Equal(0, Peak(input, 0, 256));
-        Assert.True(Peak(input, 256, 256) > 8000, $"delayed peak {Peak(input, 256, 256)}");
+        Assert.Equal(0, Peak(input, 0, 128));
+        Assert.True(Peak(input, 128, 256) > 8000, $"delayed peak {Peak(input, 128, 256)}");
 
         var plain = new VoiceChain(48000) { NoiseCancellation = false, Agc = false, HighPass = false, GainDb = 0 };
         var tone = Tone(480, 1500, 8000);
@@ -69,16 +68,17 @@ public class VoiceChainTests
     {
         // -40 dBFS sine, the middle of the range in the 0.4.2 log (-36..-70).
         double amp = 32768.0 * Math.Pow(10, -40.0 / 20.0);
-        var input = Tone(48000, 1000, amp); // 1 s
+        var input = Tone(48000 * 3, 1000, amp); // 3 s, so slow AGC can settle
         int inPeak = Peak(input, 0, input.Length);
-        var chain = new VoiceChain(48000); // NC on, AGC on, +12 dB
+        var chain = new VoiceChain(48000); // NC Light, AGC on, +6 dB, target −18
         chain.Process(input);
-        int outPeak = Peak(input, 24000, 12000);
+        int outPeak = Peak(input, 48000 * 2, 24000);
         double inDb = 20 * Math.Log10(inPeak / 32768.0);
         double outDb = 20 * Math.Log10(outPeak / 32768.0);
         _out.WriteLine($"level {inDb:F1} dBFS -> {outDb:F1} dBFS (peak {inPeak} -> {outPeak}), NC latency {chain.NoiseLatencyMs:F2} ms");
-        Assert.True(outDb > inDb + 18, $"only gained {outDb - inDb:F1} dB");
-        Assert.True(outPeak < 32000, "limiter let a sample reach full scale");
+        // −40 + 6 user + up to 12 AGC = −22 if the cap binds; target −18 if AGC can reach it.
+        Assert.InRange(outDb, -26.0, -15.0);
+        Assert.True(outPeak < 30000, "limiter let a sample near full scale");
     }
 
     [Fact]

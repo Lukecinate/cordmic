@@ -2,6 +2,56 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.3] - 2026-11-08
+
+Microphone quality: less static, less mud, and a conservative output level that games and Discord
+can accept without the mic slider near maximum. Android `versionCode` is 11 / `versionName` 0.5.3.
+Wire version stays 1; 0.5.3 works with 0.5.2, 0.5.1, 0.5.0 and 0.4.x on the other side (older phones
+keep the previous on/off noise-cancellation bit and ignore the new options). The release APK is signed
+with the same key as 0.5.2. The Windows installer is not Authenticode-signed.
+
+### Fixed
+- **Drift lock no longer hunts.** The 0.5.2 controller skipped or inserted a raw sample whenever the
+  standing depth sat outside a one-period band, at up to one slip per packet (~100/s on a 2.7 ms
+  period). Field logs showed about 5,000–6,000 slips/min and frequent underruns — periodic clicks
+  that settings could not remove. 0.5.3 uses a slow PI controller with a 3 ms (or 0.75-period)
+  deadband, capped at ±150 ppm, and crossfades each skipped or inserted sample over 32 frames.
+- **Spectral noise suppression no longer uses a rectangular, non-overlapping FFT.** The previous
+  256-point gate (5.33 ms, 16-sample edge fade only) produced musical noise. Light and Strong now
+  use a Hann window, 50 % overlap (hop 128, 2.67 ms), temporally smoothed gains, and a floor of
+  −14 dB (Light) or −20 dB (Strong) instead of muting bins.
+- **AGC no longer boosts silence.** The previous detector never went below unity gain and had no
+  noise gate, so hiss rose by up to +24 dB. Games that use an open-mic threshold then keyed on
+  that hiss. Auto volume now targets −18 dBFS, caps AGC at +12 dB, allows downward gain when the
+  user gain is already hot, and holds unity during silence.
+- **Hot peaks are limited at −1 dBFS without tanh.** The previous cubic-knee + tanh limiter sat at
+  about −0.5 dBFS and added distortion on loud speech.
+- **PLC and overflow splices fade** instead of jumping to digital silence or dumping a packet edge.
+
+### Changed
+- Default mic gain on new installs and after **Reset audio settings** is +6 dB (a saved +12 is left
+  alone until you reset). Speech sits near −18 dBFS; peaks stay at or below −1 dBFS.
+- Voice clarity (default on): 120 Hz high-pass, a gentle low-shelf cut around 220 Hz (−5 dB), and a slight
+  presence lift around 3 kHz.
+- Noise cancellation is Off / Light / Strong (default Light). Light uses Android’s platform
+  `NoiseSuppressor` when the capture session exposes one; otherwise it uses the light STFT.
+  Strong always runs the STFT (and the platform suppressor as well, when available).
+
+### Added
+- Settings: noise cancellation Off / Light / Strong, Voice clarity, Auto volume, and Reset audio
+  settings (Windows and Android).
+- Extended ping flags (bit 5 = extended, bit 2 = voice clarity, bits 3–4 = mode) so a 0.5.2 phone
+  still sees the original NC/AGC bits.
+
+### Notes for Discord, Zoom and games
+CordMic’s output is meant to be used with the other app’s mic volume around 50–60 %, not 95 %.
+In Valorant: Input Device = CABLE Output, Mic Volume about 50–60 %. If you use Automatic open-mic
+instead of Push-to-Talk, raise the sensitivity threshold; a value near 90 will open on remaining
+hiss. Discord Input Volume similarly around 50–60 %.
+
+Offline quality checks (1 kHz tones and jitter-buffer sine playback) are summarized in the GitHub
+release notes.
+
 ## [0.5.2] - 2026-11-07
 
 Shorter, more stable Windows playback on VB-CABLE, and the app applies the

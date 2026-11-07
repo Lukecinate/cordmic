@@ -123,7 +123,13 @@ public sealed class Receiver : IDisposable
     public double EffectiveJitterMs => _jb.Target * FramesPerPacket * 1000.0 / _sampleRate;
 
     /// <summary>Voice-chain settings pushed to a 0.5.0 phone on the next ping. A 0.4.2 phone ignores the payload.</summary>
-    public bool NoiseCancellation { get; set; } = true;
+    public NoiseMode NoiseMode { get; set; } = NoiseMode.Light;
+    public bool NoiseCancellation
+    {
+        get => NoiseMode != NoiseMode.Off;
+        set => NoiseMode = value ? (NoiseMode == NoiseMode.Off ? NoiseMode.Light : NoiseMode) : NoiseMode.Off;
+    }
+    public bool VoiceClarity { get; set; } = true;
     public bool Agc { get; set; } = true;
     public int MicGainDb { get; set; } = VoiceChain.DefaultGainDb;
     public PhoneLink Phone => _phone;
@@ -353,7 +359,7 @@ public sealed class Receiver : IDisposable
             // 0.5.0 sets bits 12–14. All-zero flags are what 0.4.2 sends, so they do not count as a report.
             if ((h.Flags & 0x7000) != 0)
                 _phone = new PhoneLink(true, h.NoiseCancellation, h.Agc, h.AAudio, _phone.Exclusive, _phone.LowLatency,
-                    _phone.Known ? _phone.GainDb : -1, _phone.Name);
+                    _phone.Known ? _phone.GainDb : -1, _phone.Name, _phone.Noise, _phone.NoiseBits);
         }
         _jb.Push(h.Seq, payload);
     }
@@ -394,7 +400,7 @@ public sealed class Receiver : IDisposable
                 long nowTicks = Stopwatch.GetTimestamp();
                 if (nowTicks < _pingMuteUntil) continue;
                 _pingSeq++;
-                LinkControl.WritePing(_pingPkt.AsSpan(Protocol.HeaderSize), NoiseCancellation, Agc, MicGainDb, _ctrlSeq);
+                LinkControl.WritePing(_pingPkt.AsSpan(Protocol.HeaderSize), NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode);
                 Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)
                 {

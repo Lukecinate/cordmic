@@ -58,7 +58,22 @@ internal sealed class AppController : ApplicationContext
     public OutputMode OutputMode => _settings.OutputMode;
     public string? OutputDeviceId => _settings.OutputDeviceId;
     public IReadOnlyList<RenderDevice> Devices => _devices;
-    public bool DisplayedNc => Stats?.Phone.Known == true ? Stats.Phone.NoiseCancellation : _settings.NoiseCancellation;
+    public bool DisplayedNc => DisplayedNoiseMode != NoiseMode.Off;
+    public NoiseMode DisplayedNoiseMode
+    {
+        get
+        {
+            if (Stats?.Phone.Known == true)
+            {
+                var p = Stats.Phone;
+                if (!p.NoiseCancellation) return NoiseMode.Off;
+                return p.NoiseBits == 2 ? NoiseMode.Strong : p.NoiseBits == 1 ? NoiseMode.Light : _settings.NoiseMode;
+            }
+            return _settings.NoiseMode;
+        }
+    }
+    public bool DisplayedVoiceClarity => _settings.VoiceClarity;
+    public bool DisplayedAutoVolume => Stats?.Phone.Known == true ? Stats.Phone.Agc : _settings.AutoVolume;
     public int DisplayedGain => Stats?.Phone is { Known: true, GainDb: >= 0 } p ? p.GainDb : Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb);
     /// <summary>Name of the output the controller would open right now, for the connect window.</summary>
     public string? WantedOutputName => WantedOutput()?.Name;
@@ -123,7 +138,8 @@ internal sealed class AppController : ApplicationContext
         var rx = new Receiver(_settings.Port, "0.0.0.0", Presets.Ms(_settings.Jitter))
         {
             Log = Log, RxThreadInit = Native.BoostAudioThread,
-            NoiseCancellation = _settings.NoiseCancellation, Agc = true,
+            NoiseMode = _settings.NoiseMode, VoiceClarity = _settings.VoiceClarity,
+            Agc = _settings.AutoVolume,
             MicGainDb = Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb),
         };
         try
@@ -597,12 +613,46 @@ internal sealed class AppController : ApplicationContext
         Tick();
     }
 
-    public void SetNoiseCancellation(bool on)
+    public void SetNoiseCancellation(bool on) => SetNoiseMode(on ? NoiseMode.Light : NoiseMode.Off);
+
+    public void SetNoiseMode(NoiseMode mode)
     {
-        _settings.NoiseCancellation = on;
+        _settings.NoiseMode = mode;
+        _settings.NoiseCancellation = mode != NoiseMode.Off;
         Save();
-        if (_rx is { } rx) { rx.NoiseCancellation = on; rx.NotifyLinkControlChanged(); }
-        Log("noise cancellation -> " + (on ? "on" : "off"));
+        if (_rx is { } rx) { rx.NoiseMode = mode; rx.NotifyLinkControlChanged(); }
+        Log("noise cancellation -> " + mode.ToString().ToLowerInvariant());
+    }
+
+    public void SetVoiceClarity(bool on)
+    {
+        _settings.VoiceClarity = on;
+        Save();
+        if (_rx is { } rx) { rx.VoiceClarity = on; rx.NotifyLinkControlChanged(); }
+        Log("voice clarity -> " + (on ? "on" : "off"));
+    }
+
+    public void SetAutoVolume(bool on)
+    {
+        _settings.AutoVolume = on;
+        Save();
+        if (_rx is { } rx) { rx.Agc = on; rx.NotifyLinkControlChanged(); }
+        Log("auto volume -> " + (on ? "on" : "off"));
+    }
+
+    public void ResetAudioSettings()
+    {
+        _settings.ResetAudioDefaults();
+        Save();
+        if (_rx is { } rx)
+        {
+            rx.NoiseMode = _settings.NoiseMode;
+            rx.VoiceClarity = _settings.VoiceClarity;
+            rx.Agc = _settings.AutoVolume;
+            rx.MicGainDb = _settings.MicGainDb;
+            rx.NotifyLinkControlChanged();
+        }
+        Log("audio settings reset to defaults");
     }
 
     public void SetMicGain(int db)
@@ -610,7 +660,12 @@ internal sealed class AppController : ApplicationContext
         db = Math.Clamp(db, 0, VoiceChain.MaxGainDb);
         _settings.MicGainDb = db;
         Save();
-        if (_rx is { } rx) { rx.MicGainDb = db; rx.Agc = true; rx.NotifyLinkControlChanged(); }
+        if (_rx is { } rx)
+        {
+            rx.MicGainDb = db;
+            rx.Agc = _settings.AutoVolume;
+            rx.NotifyLinkControlChanged();
+        }
         Log($"mic gain -> +{db} dB");
     }
 

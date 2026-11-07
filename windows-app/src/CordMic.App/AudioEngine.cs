@@ -272,7 +272,7 @@ internal sealed class LowLatencyRenderer : IDisposable
             int got = _src.Read(_tmp, 0, srcBytes);
             if (got < srcBytes) Array.Clear(_tmp, got, srcBytes - got);
             if (_outFloat)
-                ExpandS16ToF32(_tmp, (int)frames, _src.Channels, _outCh);
+                PcmConvert.ExpandS16ToF32(_tmp, (int)frames, _src.Channels, _outCh);
             Marshal.Copy(_tmp, 0, ptr, outBytes);
         }
         Wasapi.Check(render.ReleaseBuffer(frames, silent ? Wasapi.BufferSilent : 0), "ReleaseBuffer");
@@ -331,28 +331,6 @@ internal sealed class LowLatencyRenderer : IDisposable
         TryRelease(_client);
         _render = null; _client = null;
         try { _evt?.Dispose(); } catch (Exception) { }
-    }
-
-    static void ExpandS16ToF32(byte[] buf, int frames, int srcCh, int dstCh)
-    {
-        // Convert in place from the end so the wider f32 values do not overwrite unread s16 samples.
-        for (int f = frames - 1; f >= 0; f--)
-        {
-            int srcOff = f * srcCh * 2;
-            short left = (short)(buf[srcOff] | (buf[srcOff + 1] << 8));
-            short right = srcCh > 1 ? (short)(buf[srcOff + 2] | (buf[srcOff + 3] << 8)) : left;
-            float fl = left / 32768f, fr = right / 32768f;
-            int dstOff = f * dstCh * 4;
-            WriteF32(buf, dstOff, fl);
-            if (dstCh > 1) WriteF32(buf, dstOff + 4, dstCh == 1 ? fl : fr);
-        }
-    }
-
-    static void WriteF32(byte[] buf, int off, float v)
-    {
-        uint bits = (uint)BitConverter.SingleToInt32Bits(v);
-        buf[off] = (byte)bits; buf[off + 1] = (byte)(bits >> 8);
-        buf[off + 2] = (byte)(bits >> 16); buf[off + 3] = (byte)(bits >> 24);
     }
 
     private static void TryRelease(object? com)

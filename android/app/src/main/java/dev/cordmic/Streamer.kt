@@ -26,6 +26,9 @@ class Streamer(context: Context, private val cfg: Config) {
         val frames: Int = 240,     // 5 ms @ 48 kHz
         val noiseCancellation: Boolean = true,
         val gainDb: Int = VoiceChain.DEFAULT_GAIN_DB,
+        val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF,
+        val voiceClarity: Boolean = true,
+        val autoVolume: Boolean = true,
     )
 
     @Volatile private var running = false
@@ -48,10 +51,16 @@ class Streamer(context: Context, private val cfg: Config) {
     private val peak = AtomicInteger(0)
     private val voice = VoiceChain(cfg.sampleRate)
     /** Live voice-chain controls. The PC can push a new value on PING; the phone UI writes these too. */
-    @Volatile var noiseCancellation: Boolean = cfg.noiseCancellation
+    @Volatile var noiseMode: NoiseMode = cfg.noiseMode
+    var noiseCancellation: Boolean
+        get() = noiseMode != NoiseMode.OFF
+        set(value) { noiseMode = if (value) (if (noiseMode == NoiseMode.OFF) NoiseMode.LIGHT else noiseMode) else NoiseMode.OFF }
+    @Volatile var voiceClarity: Boolean = cfg.voiceClarity
+    @Volatile var agc: Boolean = cfg.autoVolume
     @Volatile var gainDb: Int = cfg.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB)
     @Volatile private var ctrlSeq = -1
-    val noiseLatencyMs: Double get() = if (noiseCancellation) voice.noiseLatencyMs else 0.0
+    private val platformNs = PlatformNs()
+    val noiseLatencyMs: Double get() = voice.noiseLatencyMs
     @Volatile var sent = 0L; private set
     @Volatile var sendErrors = 0L; private set
     private var audioThread: Thread? = null
@@ -153,8 +162,16 @@ class Streamer(context: Context, private val cfg: Config) {
                 Log.w(TAG, "read returned $n, reopening ${engine.name}")
                 engine.close(); engine = null; continue
             }
-            voice.noiseCancellation = noiseCancellation
-            voice.agc = true
+            val wantNs = noiseMode != NoiseMode.OFF
+            platformNs.apply(engine.sessionId(), wantNs)
+            // Light prefers the platform suppressor (no extra delay). Strong always runs the OLA STFT.
+            voice.mode = when {
+                noiseMode == NoiseMode.STRONG -> NoiseMode.STRONG
+                noiseMode == NoiseMode.LIGHT && platformNs.active -> NoiseMode.OFF
+                else -> noiseMode
+            }
+            voice.voiceClarity = voiceClarity
+            voice.agc = agc
             voice.gainDb = gainDb
             voice.process(buf, Protocol.HEADER_SIZE, n)
             // Level meter after gain, so the bar matches what the PC receives.
@@ -172,7 +189,7 @@ class Streamer(context: Context, private val cfg: Config) {
                 if (now - lastDiscover > 500) { lastDiscover = now; sendDiscover(s) }
                 continue
             }
-            flags = Protocol.flags(1, 0, noiseCancellation, agc = true, aaudio = engine.name == "AAudio")
+            flags = Protocol.flags(1, 0, noiseCancellation, agc = agc, aaudio = engine.name == "AAudio")
             Protocol.writeHeader(buf, Protocol.T_AUDIO, seq++, nowUs(), n, flags)
             pkt.setData(buf, 0, Protocol.HEADER_SIZE + n * 2)
             pkt.socketAddress = t
@@ -186,6 +203,7 @@ class Streamer(context: Context, private val cfg: Config) {
                 if (auto) target = null
             }
         }
+        platformNs.release()
         engine?.close()
     }
 
@@ -218,18 +236,22 @@ class Streamer(context: Context, private val cfg: Config) {
                         Protocol.readPingControl(rb, rp.length)?.let { c ->
                             if (c.changeSeq != 0 && c.changeSeq != ctrlSeq) {
                                 ctrlSeq = c.changeSeq
-                                noiseCancellation = c.noiseCancellation
+                                noiseMode = c.noiseMode
+                                if (c.extended) {
+                                    voiceClarity = c.voiceClarity
+                                    agc = c.agc
+                                }
                                 gainDb = c.gainDb
                             }
                         }
                         val st = engineStats
                         val n = Protocol.writePongStatus(
                             tb, Protocol.HEADER_SIZE,
-                            noiseCancellation, agc = true,
+                            noiseCancellation, agc = agc,
                             aaudio = engineName == "AAudio",
                             exclusive = st?.exclusive == true,
                             lowLatency = st?.lowLatency == true,
-                            gainDb, Build.MODEL,
+                            gainDb, Build.MODEL, noiseMode,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

@@ -26,13 +26,13 @@ class VoiceChainTest {
         chain.agc = false
         chain.highPass = false
         chain.gainDb = 0
-        assertEquals(256, chain.delayFrames)
-        assertTrue(chain.noiseLatencyMs in 5.3..5.4)
+        assertEquals(128, chain.delayFrames)
+        assertTrue(chain.noiseLatencyMs in 2.6..2.75)
         val input = ShortArray(256 * 3)
         input[40] = 16000
         chain.process(input, input.size)
-        assertEquals(0, peak(input, 0, 256))
-        assertTrue(peak(input, 256, 256) > 8000)
+        assertEquals(0, peak(input, 0, 128))
+        assertTrue(peak(input, 128, 256) > 8000)
     }
 
     @Test fun defaultIsLouderAndLimited() {
@@ -41,8 +41,8 @@ class VoiceChainTest {
         val inPeak = peak(input, 0, input.size)
         VoiceChain(48000).process(input, input.size)
         val outPeak = peak(input, 12000, 6000)
-        assertTrue("out $outPeak in $inPeak", outPeak > inPeak * 8)
-        assertTrue(outPeak < 32000)
+        assertTrue("out $outPeak in $inPeak", outPeak > inPeak * 5)
+        assertTrue(outPeak < 30000)
     }
 
     @Test fun limiterHoldsAHotSignal() {

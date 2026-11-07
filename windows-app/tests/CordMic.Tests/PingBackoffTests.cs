@@ -60,4 +60,23 @@ public class LinkControlTests
         Assert.True(h.NoiseCancellation && h.Agc && h.AAudio);
         Assert.Equal(0x0210, Protocol.MakeFlags(channels: 2, sampleRate: 16000));
     }
+
+    [Fact]
+    public void ExtendedPingCarriesModeAndStaysBackwardCompatible()
+    {
+        var ping = new byte[4];
+        LinkControl.WritePing(ping, true, true, 6, 4, extended: true, voiceClarity: true, mode: NoiseMode.Strong);
+        Assert.True(LinkControl.TryReadPing(ping, out bool nc, out bool agc, out int gain, out byte seq,
+            out bool ext, out bool clarity, out NoiseMode mode));
+        Assert.Equal((true, true, 6, (byte)4, true, true, NoiseMode.Strong), (nc, agc, gain, seq, ext, clarity, mode));
+        // A 0.5.2 reader still sees bit0 NC and bit1 AGC.
+        Assert.True(LinkControl.TryReadPing(ping, out bool nc2, out bool agc2, out _, out _));
+        Assert.True(nc2 && agc2);
+
+        var legacy = new byte[4];
+        LinkControl.WritePing(legacy, noiseCancellation: true, agc: true, gainDb: 12, changeSeq: 1);
+        Assert.True(LinkControl.TryReadPing(legacy, out _, out _, out _, out _, out bool ext2, out _, out NoiseMode mode2));
+        Assert.False(ext2);
+        Assert.Equal(NoiseMode.Light, mode2);
+    }
 }

@@ -15,8 +15,8 @@ internal sealed class MainForm : Form
     private readonly Label _state, _detail;
     private readonly Panel _settings;
     private readonly Button _settingsBtn;
-    private readonly ComboBox _output, _latency, _outMode;
-    private readonly CheckBox _nc, _startup;
+    private readonly ComboBox _output, _latency, _outMode, _ncMode;
+    private readonly CheckBox _clarity, _autoVol, _startup;
     private readonly TrackBar _gain;
     private readonly Label _gainValue, _noCable;
     private Label _cableHint = null!;
@@ -110,7 +110,7 @@ internal sealed class MainForm : Form
             AutoSize = false, Height = Sx(48), BackColor = Color.Transparent,
         };
 
-        _settings = BuildSettings(out _output, out _latency, out _outMode, out _nc, out _gain, out _gainValue, out _startup, out _noCable);
+        _settings = BuildSettings(out _output, out _latency, out _outMode, out _ncMode, out _clarity, out _autoVol, out _gain, out _gainValue, out _startup, out _noCable);
         _settings.Visible = false;
 
         Controls.Add(header);
@@ -125,8 +125,8 @@ internal sealed class MainForm : Form
         Resize += (_, _) => LayoutHero();
     }
 
-    private Panel BuildSettings(out ComboBox output, out ComboBox latency, out ComboBox outMode, out CheckBox nc, out TrackBar gain,
-        out Label gainValue, out CheckBox startup, out Label noCable)
+    private Panel BuildSettings(out ComboBox output, out ComboBox latency, out ComboBox outMode, out ComboBox ncMode, out CheckBox clarity,
+        out CheckBox autoVol, out TrackBar gain, out Label gainValue, out CheckBox startup, out Label noCable)
     {
         var p = new Panel { BackColor = Theme.Surface, Width = ClientSize.Width };
         p.Paint += (_, e) => { using var pen = new Pen(Theme.Line); e.Graphics.DrawLine(pen, 0, 0, p.Width, 0); };
@@ -154,13 +154,32 @@ internal sealed class MainForm : Form
             outModeBox.Items.Add(new OutModeItem(om, OutputModes.Label(om)));
         outModeBox.SelectedIndexChanged += (_, _) => { if (!_suppress && outModeBox.SelectedItem is OutModeItem it) _app.SetOutputMode(it.Mode); };
 
-        nc = new CheckBox
+        ncMode = Combo(p, x, ref y, w, L.T("ui.nc"));
+        var ncBox = ncMode;
+        ncBox.Items.Add(new NcModeItem(NoiseMode.Off, L.T("ui.nc.off")));
+        ncBox.Items.Add(new NcModeItem(NoiseMode.Light, L.T("ui.nc.light")));
+        ncBox.Items.Add(new NcModeItem(NoiseMode.Strong, L.T("ui.nc.strong")));
+        ncBox.SelectedIndexChanged += (_, _) =>
         {
-            Text = L.T("ui.nc"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
+            if (!_suppress && ncBox.SelectedItem is NcModeItem it) _app.SetNoiseMode(it.Mode);
+        };
+
+        clarity = new CheckBox
+        {
+            Text = L.T("ui.clarity"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
             Location = new Point(x, y), BackColor = Theme.Surface,
         };
-        var ncBox = nc;
-        ncBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetNoiseCancellation(ncBox.Checked); };
+        var clarityBox = clarity;
+        clarityBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetVoiceClarity(clarityBox.Checked); };
+        y += Sx(32);
+
+        autoVol = new CheckBox
+        {
+            Text = L.T("ui.autovol"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
+            Location = new Point(x, y), BackColor = Theme.Surface,
+        };
+        var autoBox = autoVol;
+        autoBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetAutoVolume(autoBox.Checked); };
         y += Sx(34);
 
         var gainLabel = new Label
@@ -195,6 +214,14 @@ internal sealed class MainForm : Form
         var startupBox = startup;
         startupBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetStartup(startupBox.Checked); };
         y += Sx(32);
+
+        var reset = new LinkLabel
+        {
+            Text = L.T("ui.resetAudio"), Font = Theme.Body, LinkColor = Theme.Accent, ActiveLinkColor = Theme.AccentHover,
+            AutoSize = true, Location = new Point(x, y),
+        };
+        reset.LinkClicked += (_, _) => { if (!_suppress) { _app.ResetAudioSettings(); RefreshFromApp(); } };
+        y += Sx(28);
 
         var logs = new LinkLabel
         {
@@ -246,7 +273,10 @@ internal sealed class MainForm : Form
         p.Controls.Add(output);
         p.Controls.Add(latency);
         p.Controls.Add(outMode);
-        p.Controls.Add(nc);
+        p.Controls.Add(ncMode);
+        p.Controls.Add(clarity);
+        p.Controls.Add(autoVol);
+        p.Controls.Add(reset);
         p.Controls.Add(gainLabel);
         p.Controls.Add(gainValue);
         p.Controls.Add(gain);
@@ -351,7 +381,11 @@ internal sealed class MainForm : Form
         _suppress = true;
         try
         {
-            if ((bool)_nc.Checked != _app.DisplayedNc) _nc.Checked = _app.DisplayedNc;
+            for (int i = 0; i < _ncMode.Items.Count; i++)
+                if (_ncMode.Items[i] is NcModeItem it && it.Mode == _app.DisplayedNoiseMode)
+                { if (_ncMode.SelectedIndex != i) _ncMode.SelectedIndex = i; break; }
+            if (_clarity.Checked != _app.DisplayedVoiceClarity) _clarity.Checked = _app.DisplayedVoiceClarity;
+            if (_autoVol.Checked != _app.DisplayedAutoVolume) _autoVol.Checked = _app.DisplayedAutoVolume;
             int g = Math.Clamp(_app.DisplayedGain, 0, VoiceChain.MaxGainDb);
             if (_gain.Value != g) _gain.Value = g;
             _gainValue.Text = L.T("ui.gainValue", _gain.Value);
@@ -406,6 +440,7 @@ internal sealed class MainForm : Form
 
     private sealed record PresetItem(JitterPreset Preset, string Label) { public override string ToString() => Label; }
     private sealed record OutModeItem(OutputMode Mode, string Label) { public override string ToString() => Label; }
+    private sealed record NcModeItem(NoiseMode Mode, string Label) { public override string ToString() => Label; }
     private sealed record DeviceItem(RenderDevice? Device, string Label) { public override string ToString() => Label; }
 }
 

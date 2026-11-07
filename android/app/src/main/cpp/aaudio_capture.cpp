@@ -99,6 +99,13 @@ Java_dev_cordmic_AAudioCapture_nativeInfo(JNIEnv *env, jclass) {
     return a;
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_cordmic_AAudioCapture_nativeSessionId(JNIEnv *, jclass) {
+    if (!gStream) return 0;
+    int32_t id = AAudioStream_getSessionId(gStream);
+    return id > 0 ? id : 0;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_dev_cordmic_AAudioCapture_nativeClose(JNIEnv *, jclass) {
     if (gStream) {

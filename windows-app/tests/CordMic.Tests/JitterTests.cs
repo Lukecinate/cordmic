@@ -27,13 +27,37 @@ public class JitterTests
         Assert.Equal(Pkt(1), jb.Pull(NB)); Assert.Equal(Pkt(2), jb.Pull(NB)); Assert.Equal(Pkt(3), jb.Pull(NB));
     }
 
+    static double Energy(byte[] a)
+    {
+        double e = 0;
+        for (int i = 0; i + 1 < a.Length; i += 2)
+        {
+            int s = (short)(a[i] | (a[i + 1] << 8));
+            e += (double)s * s;
+        }
+        return e;
+    }
+
+    /// <summary>PLC fades the first few milliseconds of the next real packet; the tail must match.</summary>
+    static void AssertTailEquals(byte[] expected, byte[] actual, int skipFrames = 32)
+    {
+        int skip = skipFrames * 2;
+        Assert.Equal(expected.Length, actual.Length);
+        Assert.Equal(expected.AsSpan(skip).ToArray(), actual.AsSpan(skip).ToArray());
+    }
+
     [Fact]
     public void LossConcealedWithSilence()
     {
         var jb = new JitterBuffer(FPP, targetPackets: 2);
         foreach (var s in new uint[] { 1, 3, 4 }) jb.Push(s, Pkt((int)s));
-        Assert.Equal(Pkt(1), jb.Pull(NB)); Assert.Equal(Sil, jb.Pull(NB));
-        Assert.Equal(Pkt(3), jb.Pull(NB)); Assert.Equal(Pkt(4), jb.Pull(NB));
+        Assert.Equal(Pkt(1), jb.Pull(NB));
+        var hidden = jb.Pull(NB);
+        Assert.True(Energy(hidden) < Energy(Pkt(1)) * 0.5, "concealment should decay toward silence");
+        Assert.NotEqual(Pkt(1), hidden);
+        Assert.NotEqual(Pkt(3), hidden);
+        AssertTailEquals(Pkt(3), jb.Pull(NB));
+        Assert.Equal(Pkt(4), jb.Pull(NB));
         Assert.Equal(1, jb.Stats.Concealed);
     }
 
@@ -45,7 +69,7 @@ public class JitterTests
         jb.Pull(NB); jb.Pull(NB);
         jb.Push(2, Pkt(2));
         Assert.Equal(1, jb.Stats.Late);
-        Assert.Equal(Pkt(3), jb.Pull(NB));
+        AssertTailEquals(Pkt(3), jb.Pull(NB));
     }
 
     [Fact]

@@ -100,6 +100,13 @@ Dari [rilis terbaru](https://github.com/Lukecinate/cordmic/releases/latest) undu
    *User Settings → Voice & Video → Input Device*; Zoom: *Settings → Audio → Microphone*. Untuk game tanpa pilihan
    mic, jadikan CABLE Output perangkat rekaman default di pengaturan Sound Windows.
 
+   CordMic sudah menargetkan suara sekitar −18 dBFS, dengan puncak di −1 dBFS atau lebih rendah. Biarkan volume
+   mic di aplikasi lain sekitar **50–60 %**, jangan mendekati maksimum. Di Valorant (dan game serupa) set Input
+   Device ke CABLE Output, Mic Volume sekitar 50–60 %, dan jika memakai Automatic open-mic bukan Push-to-Talk,
+   naikkan ambang sensitivitas agar desis sisa tidak membuka gerbang — nilai yang terlalu sensitif (misalnya 90+)
+   akan menangkap bising. Di Discord: *User Settings → Voice & Video → Input Volume* sekitar 50–60 %; Input
+   Sensitivity bisa tetap otomatis atau memakai ambang sedang.
+
 Yang dilakukan installer:
 - memasang ke `C:\Program Files\CordMic` dengan shortcut di Start menu (opsional: jalan saat Windows mulai,
   shortcut di Desktop);
@@ -124,7 +131,7 @@ firewall, dan scheduled task. Setting dan log di `%APPDATA%` / `%LOCALAPPDATA%` 
 
 Klik dua kali ikon (atau **Buka CordMic**) untuk jendelanya: satu tombol bulat (terputus, mencari, terhubung,
 gagal), satu baris status (nama/IP HP dan jeda langsung), dan panel pengaturan untuk perangkat output, preset
-latensi, peredam bising, gain mic, jalan saat Windows mulai, dan log. Arahkan mouse ke ikon untuk rincian jeda
+latensi, peredam bising (Mati / Ringan / Kuat), kejelasan suara, volume otomatis, gain mic, jalan saat Windows mulai, dan log. Arahkan mouse ke ikon untuk rincian jeda
 yang sama (jaringan = ½ RTT USB, rata-rata waktu tunggu di jitter buffer, dan buffer output Windows yang terukur),
 serta RTT dan loss 10 detik terakhir. Klik kanan untuk menu:
 
@@ -314,9 +321,10 @@ dengan overflow keras beberapa kali lebih banyak. Callback render memakai satu p
 dan Rendah 5 ms tidak menyisakan apa pun setelah tarikan itu, jadi buffer kosong, diisi ulang, lalu batas keras
 membuang tumpukan. 0.5.2 meminta periode shared terpendek lewat IAudioClient3 dengan format mix perangkat
 (tanpa `AUTOCONVERTPCM`), memilih *CABLE Input* stereo daripada *CABLE In 16ch*, dan menolak target jitter di
-bawah dua periode render. Kunci drift bekerja per sampel, bukan membuang paket. Untuk jeda terendah:
-*Latensi → Rendah*, *Mode output → Otomatis* (atau *Eksklusif* jika ingin memaksa), nyalakan peredam bising
-hanya jika diperlukan, dan pakai *Optimalkan VB-CABLE* agar "CABLE Input" serta "CABLE Output" memakai stereo
+bawah dua periode render. Kunci drift (PI lambat, slip di-crossfade, dibatasi ±150 ppm) bekerja per sampel, bukan membuang paket. Untuk jeda terendah:
+*Latensi → Rendah*, *Mode output → Otomatis* (atau *Eksklusif* jika ingin memaksa), biarkan peredam bising di Ringan
+kecuali ruangan sangat berisik, biarkan kejelasan suara dan volume otomatis menyala, set volume mic game/Discord ke
+50–60 %, dan pakai *Optimalkan VB-CABLE* agar "CABLE Input" serta "CABLE Output" memakai stereo
 48 kHz. Lihat [docs/SECURITY.md](docs/SECURITY.md) untuk perubahan itu dan cara mengembalikannya.
 
 Cara mengukur di perangkat Anda: di OBS tambahkan dua *Audio Input Capture*, (a) "CABLE Output" dan (b) mic fisik
@@ -400,7 +408,7 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audionya tidak berubah (header `
 ## Roadmap
 
 1. **Opus** (48 kHz, frame 2,5/5 ms, FEC) sebagai opsi; PCM tetap default.
-2. ~~**Kompensasi clock drift**~~ – skip/insert per sampel sudah ada di 0.5.2.
+2. ~~**Kompensasi clock drift**~~ – skip/insert per sampel sudah ada di 0.5.2; 0.5.3 men-crossfade setiap slip dan membatasi kontroler di ±150 ppm agar tidak berburu.
 3. **Driver audio virtual sendiri** ("CordMic Microphone" tanpa VB-CABLE), berbasis contoh SysVAD Microsoft atau ACX
    di Windows 11. Driver kernel wajib ditandatangani Microsoft (sertifikat EV + attestation signing), karena itu
    menjadi tahap tersendiri. Windows tidak punya API user-mode untuk mikrofon virtual tingkat sistem.

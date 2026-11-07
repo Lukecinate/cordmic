@@ -109,31 +109,58 @@ public static class LinkControl
     public const int Size = 4;
 
     public static void WritePing(Span<byte> dst, bool noiseCancellation, bool agc, int gainDb, byte changeSeq)
+        => WritePing(dst, noiseCancellation, agc, gainDb, changeSeq, extended: false, voiceClarity: false,
+            mode: noiseCancellation ? NoiseMode.Light : NoiseMode.Off);
+
+    /// <summary>
+    /// PING payload. Bit 0 = any NC, bit 1 = AGC (read by 0.5.0–0.5.2).
+    /// When <paramref name="extended"/> is set (bit 5), bit 2 is voice clarity and bits 3–4 are
+    /// <see cref="NoiseMode"/>. Older phones ignore the extra bits.
+    /// </summary>
+    public static void WritePing(Span<byte> dst, bool noiseCancellation, bool agc, int gainDb, byte changeSeq,
+        bool extended, bool voiceClarity, NoiseMode mode)
     {
         if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
+        int f = (noiseCancellation ? 1 : 0) | (agc ? 2 : 0);
+        if (extended)
+            f |= 32 | (voiceClarity ? 4 : 0) | (((int)mode & 3) << 3);
         dst[0] = Magic;
-        dst[1] = (byte)((noiseCancellation ? 1 : 0) | (agc ? 2 : 0));
+        dst[1] = (byte)f;
         dst[2] = (byte)Math.Clamp(gainDb, 0, VoiceChain.MaxGainDb);
         dst[3] = changeSeq;
     }
 
     public static bool TryReadPing(ReadOnlySpan<byte> src, out bool noiseCancellation, out bool agc, out int gainDb, out byte changeSeq)
+        => TryReadPing(src, out noiseCancellation, out agc, out gainDb, out changeSeq, out _, out _, out _);
+
+    public static bool TryReadPing(ReadOnlySpan<byte> src, out bool noiseCancellation, out bool agc, out int gainDb,
+        out byte changeSeq, out bool extended, out bool voiceClarity, out NoiseMode mode)
     {
         noiseCancellation = false; agc = false; gainDb = 0; changeSeq = 0;
+        extended = false; voiceClarity = false; mode = NoiseMode.Off;
         if (src.Length < Size || src[0] != Magic) return false;
-        noiseCancellation = (src[1] & 1) != 0;
-        agc = (src[1] & 2) != 0;
+        int f = src[1];
+        noiseCancellation = (f & 1) != 0;
+        agc = (f & 2) != 0;
         gainDb = Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb);
         changeSeq = src[3];
+        extended = (f & 32) != 0;
+        voiceClarity = (f & 4) != 0;
+        int stored = (f >> 3) & 3;
+        if (extended)
+            mode = stored == 2 ? NoiseMode.Strong : stored == 1 ? NoiseMode.Light : NoiseMode.Off;
+        else
+            mode = noiseCancellation ? NoiseMode.Light : NoiseMode.Off;
         return true;
     }
 
     /// <summary>Writes the status block and returns how many bytes were used (4, plus the device name).</summary>
-    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null)
+    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off)
     {
         if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
         dst[0] = Magic;
-        int f = (noiseCancellation ? 1 : 0) | (agc ? 2 : 0) | (aaudio ? 4 : 0) | (exclusive ? 8 : 0) | (lowLatency ? 16 : 0);
+        int f = (noiseCancellation ? 1 : 0) | (agc ? 2 : 0) | (aaudio ? 4 : 0) | (exclusive ? 8 : 0) | (lowLatency ? 16 : 0)
+            | (((int)mode & 3) << 6);
         dst[1] = (byte)f;
         dst[2] = (byte)Math.Clamp(gainDb, 0, VoiceChain.MaxGainDb);
         dst[3] = (byte)(aaudio ? 1 : 2);
@@ -160,14 +187,16 @@ public static class LinkControl
             name = System.Text.Encoding.UTF8.GetString(src.Slice(Size, n)).Trim();
             if (name.Length > 40) name = name[..40];
         }
+        int stored = (f >> 6) & 3;
+        var ncMode = stored == 2 ? NoiseMode.Strong : stored == 1 ? NoiseMode.Light : ((f & 1) != 0 ? NoiseMode.Light : NoiseMode.Off);
         phone = new PhoneLink(true, (f & 1) != 0, (f & 2) != 0, (f & 4) != 0 || src[3] == 1,
-            (f & 8) != 0, (f & 16) != 0, Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb), name);
+            (f & 8) != 0, (f & 16) != 0, Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb), name, ncMode, stored);
         return true;
     }
 }
 
 /// <summary>What the phone last reported about its capture path and voice chain. <see cref="Known"/> is false for a 0.4.2 peer.</summary>
-public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "")
+public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0)
 {
     public string Mode =>
         !Known ? "?" :
@@ -175,7 +204,11 @@ public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool
         Exclusive ? "AAudio-excl" :
         LowLatency ? "AAudio-ll" : "AAudio";
 
-    public string NoiseText => !Known ? "?" : NoiseCancellation ? "on" : "off";
+    public string NoiseText =>
+        !Known ? "?" :
+        NoiseBits == 2 ? "strong" :
+        NoiseBits == 1 ? "light" :
+        NoiseCancellation ? "on" : "off";
     public string AgcText => !Known ? "?" : Agc ? "on" : "off";
     public string GainText => !Known || GainDb < 0 ? "?" : $"+{GainDb}dB";
 }

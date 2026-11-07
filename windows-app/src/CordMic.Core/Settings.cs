@@ -17,10 +17,17 @@ public sealed class AppSettings
     public int OutputChannels { get; set; } = 2;
     /// <summary>Nominal WASAPI buffer hint in ms. The renderer uses the device period; this remains for older settings files.</summary>
     public int OutputLatencyMs { get; set; } = 10;
-    /// <summary>Phone noise suppression, pushed over the ping payload (0.5.0). Default on.</summary>
+    /// <summary>Phone noise suppression on/off. Kept so older settings files still load. Prefer <see cref="NoiseMode"/>.</summary>
     public bool NoiseCancellation { get; set; } = true;
-    /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +12, with AGC able to use the rest of the +24 cap.</summary>
-    public int MicGainDb { get; set; } = 12;
+    /// <summary>Off / Light / Strong. Missing from older files, so those default to Light when NC is on.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public NoiseMode NoiseMode { get; set; } = NoiseMode.Light;
+    /// <summary>High-pass, low-shelf cut and a slight presence lift. Default on.</summary>
+    public bool VoiceClarity { get; set; } = true;
+    /// <summary>Automatic makeup gain toward −18 dBFS, with a noise gate so silence is not boosted.</summary>
+    public bool AutoVolume { get; set; } = true;
+    /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +6 on new installs; a saved value is left unchanged.</summary>
+    public int MicGainDb { get; set; } = 6;
     /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public OutputMode OutputMode { get; set; } = OutputMode.Auto;
@@ -34,10 +41,31 @@ public sealed class AppSettings
         try
         {
             if (File.Exists(path))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Opts) ?? new AppSettings();
+            {
+                var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Opts) ?? new AppSettings();
+                s.NormalizeAudio();
+                return s;
+            }
         }
         catch (Exception) { /* corrupted file: fall back to defaults */ }
         return new AppSettings();
+    }
+
+    /// <summary>Reconcile the older <see cref="NoiseCancellation"/> bool with <see cref="NoiseMode"/>.</summary>
+    public void NormalizeAudio()
+    {
+        if (!NoiseCancellation) NoiseMode = NoiseMode.Off;
+        else if (NoiseMode == NoiseMode.Off) NoiseMode = NoiseMode.Light;
+        NoiseCancellation = NoiseMode != NoiseMode.Off;
+    }
+
+    public void ResetAudioDefaults()
+    {
+        NoiseCancellation = true;
+        NoiseMode = NoiseMode.Light;
+        VoiceClarity = true;
+        AutoVolume = true;
+        MicGainDb = VoiceChain.DefaultGainDb;
     }
 
     public void Save(string path)

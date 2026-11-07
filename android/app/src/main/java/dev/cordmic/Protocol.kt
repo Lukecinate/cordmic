@@ -34,17 +34,25 @@ object Protocol {
     fun readPingControl(buf: ByteArray, len: Int): PingControl? {
         if (len < HEADER_SIZE + LINK_SIZE || buf[HEADER_SIZE] != LINK_MAGIC) return null
         val f = buf[HEADER_SIZE + 1].toInt() and 0xFF
+        val extended = f and 32 != 0
+        val nc = f and 1 != 0
+        val stored = (f shr 3) and 3
+        val mode = if (extended) NoiseMode.from(stored) else if (nc) NoiseMode.LIGHT else NoiseMode.OFF
         return PingControl(
-            noiseCancellation = f and 1 != 0,
+            noiseCancellation = nc,
             agc = f and 2 != 0,
             gainDb = (buf[HEADER_SIZE + 2].toInt() and 0xFF).coerceIn(0, VoiceChain.MAX_GAIN_DB),
             changeSeq = buf[HEADER_SIZE + 3].toInt() and 0xFF,
+            extended = extended,
+            voiceClarity = f and 4 != 0,
+            noiseMode = mode,
         )
     }
 
     /** Writes the pong status at [off] and returns how many bytes were used. */
     fun writePongStatus(buf: ByteArray, off: Int, noiseCancellation: Boolean, agc: Boolean, aaudio: Boolean,
-                        exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String): Int {
+                        exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String,
+                        noiseMode: NoiseMode = NoiseMode.OFF): Int {
         buf[off] = LINK_MAGIC
         var f = 0
         if (noiseCancellation) f = f or 1
@@ -52,6 +60,7 @@ object Protocol {
         if (aaudio) f = f or 4
         if (exclusive) f = f or 8
         if (lowLatency) f = f or 16
+        f = f or ((noiseMode.code and 3) shl 6)
         buf[off + 1] = f.toByte()
         buf[off + 2] = gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toByte()
         buf[off + 3] = (if (aaudio) 1 else 2).toByte()
@@ -61,7 +70,9 @@ object Protocol {
         return LINK_SIZE + maxOf(0, n)
     }
 
-    data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Int, val changeSeq: Int)
+    data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Int, val changeSeq: Int,
+                            val extended: Boolean = false, val voiceClarity: Boolean = true,
+                            val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF)
 
     fun writeHeader(buf: ByteArray, type: Byte, seq: Int, tsUs: Long, frames: Int, flags: Int) {
         val bb = ByteBuffer.wrap(buf, 0, HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)

@@ -13,6 +13,8 @@ interface CaptureEngine {
     fun info(): String = stats().toString()
     /** Values reported by the audio stack. Fields the engine does not report are null. Call from the capture thread. */
     fun stats(): EngineStats
+    /** Audio-effect session id, or 0 if the engine does not expose one. */
+    fun sessionId(): Int = 0
     fun close()
 }
 
@@ -95,7 +97,10 @@ class AAudioCapture(private val rate: Int, private val preset: Int) : CaptureEng
         @JvmStatic external fun nativeRead(dst: ByteArray, off: Int, frames: Int, timeoutNs: Long): Int
         @JvmStatic external fun nativeInfo(): IntArray
         @JvmStatic external fun nativeClose()
+        @JvmStatic external fun nativeSessionId(): Int
     }
+
+    override fun sessionId(): Int = nativeSessionId()
 }
 
 /** Fallback: Java AudioRecord with a small buffer. Higher latency than AAudio on most devices. */
@@ -121,6 +126,7 @@ class AudioRecordCapture(private val rate: Int, private val source: Int) : Captu
     }
 
     override fun stats() = EngineStats(name, rate, bufferFrames = rec?.bufferSizeInFrames)
+    override fun sessionId(): Int = rec?.audioSessionId ?: 0
 
     override fun close() { rec?.run { stop(); release() }; rec = null }
 }

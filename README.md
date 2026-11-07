@@ -99,6 +99,13 @@ From the [latest release](https://github.com/Lukecinate/cordmic/releases/latest)
    *User Settings → Voice & Video → Input Device*; Zoom: *Settings → Audio → Microphone*. For games without a mic
    selector, make CABLE Output the default recording device in Windows Sound settings.
 
+   CordMic already aims for about −18 dBFS speech, with peaks at or below −1 dBFS. Leave the other app's own mic
+   volume around **50–60 %**, not near maximum. In Valorant (and similar games) set Input Device to CABLE Output,
+   Mic Volume to about 50–60 %, and if you use Automatic open-mic instead of Push-to-Talk, raise the sensitivity
+   threshold so leftover hiss does not open the gate — a hair-trigger value (for example 90+) will pick up
+   remaining noise. In Discord: *User Settings → Voice & Video → Input Volume* around 50–60 %; Input Sensitivity
+   can stay automatic or use a moderate threshold.
+
 What the installer does:
 - installs to `C:\Program Files\CordMic` with a Start menu shortcut (optional: start with Windows, desktop shortcut);
 - adds the inbound firewall rule **CordMic (UDP 50005)**, limited to the local subnet, for all profiles
@@ -312,9 +319,9 @@ minute on Normal and about 370 times a minute on Low, with several times as many
 callback consumes one 10 ms period. Normal's 10 ms target and Low's 5 ms target leave nothing after that pull,
 so the buffer hits empty, rebuffers, then the hard cap dumps the pile. 0.5.2 asks IAudioClient3 for the shortest shared period using the device mix format (without
 `AUTOCONVERTPCM`), prefers stereo *CABLE Input* over *CABLE In 16ch*, and floors the jitter target at two
-render periods. A sample-level drift lock replaces packet-drop catch-up. For the lowest delay: *Latency → Low*,
-*Output mode → Auto* (or *Exclusive* if you want to force it), leave noise cancellation on only if you want it,
-and use *Optimize VB-CABLE* so both "CABLE Input" and "CABLE Output" are 48 kHz stereo. See
+render periods. A sample-level drift lock (slow PI, crossfaded slips, capped at ±150 ppm) replaces packet-drop catch-up. For the lowest delay: *Latency → Low*,
+*Output mode → Auto* (or *Exclusive* if you want to force it), leave noise cancellation on Light unless the room is very noisy,
+keep voice clarity and auto volume on, set game/Discord mic volume to 50–60 %, and use *Optimize VB-CABLE* so both "CABLE Input" and "CABLE Output" are 48 kHz stereo. See
 [docs/SECURITY.md](docs/SECURITY.md) for what that changes and how to undo it.
 
 To measure it on your own setup: in OBS add two *Audio Input Capture* sources, (a) "CABLE Output" and (b) another
@@ -399,7 +406,7 @@ CordMic was previously called **UsbMic**. The audio protocol is unchanged (`UM` 
 ## Roadmap
 
 1. **Opus** (48 kHz, 2.5/5 ms frames, FEC) as an option; PCM stays the default.
-2. ~~**Clock-drift compensation**~~ – sample-level skip/insert shipped in 0.5.2.
+2. ~~**Clock-drift compensation**~~ – sample-level skip/insert shipped in 0.5.2; 0.5.3 crossfades each slip and caps the controller at ±150 ppm so it no longer hunts.
 3. **Native virtual audio driver** ("CordMic Microphone" without VB-CABLE), based on Microsoft's SysVAD samples or
    ACX on Windows 11. Kernel drivers must be signed by Microsoft (EV certificate + attestation signing), which is
    why this is a separate milestone. Windows has no user-mode API for a system-wide virtual microphone.

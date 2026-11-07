@@ -385,8 +385,24 @@
                                     android:minHeight="48dp" />
                             </LinearLayout>
 
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/ncModeLayout"
+                                style="@style/Widget.CordMic.Dropdown"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:hint="@string/nc_option"
+                                app:helperText="@string/nc_help">
+                                <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                                    android:id="@+id/ncMode"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="none"
+                                    android:minHeight="56dp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
                             <LinearLayout
-                                android:id="@+id/ncRow"
+                                android:id="@+id/clarityRow"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
@@ -404,21 +420,58 @@
                                     <TextView
                                         android:layout_width="wrap_content"
                                         android:layout_height="wrap_content"
-                                        android:text="@string/nc_option"
+                                        android:text="@string/clarity_option"
                                         android:textAppearance="@style/TextAppearance.CordMic.RowValue"
                                         android:textSize="15sp" />
                                     <TextView
                                         android:layout_width="wrap_content"
                                         android:layout_height="wrap_content"
                                         android:layout_marginTop="2dp"
-                                        android:text="@string/nc_help"
+                                        android:text="@string/clarity_help"
                                         android:textAppearance="@style/TextAppearance.CordMic.Caption" />
                                 </LinearLayout>
                                 <com.google.android.material.materialswitch.MaterialSwitch
-                                    android:id="@+id/noiseCancel"
+                                    android:id="@+id/voiceClarity"
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:contentDescription="@string/nc_option"
+                                    android:contentDescription="@string/clarity_option"
+                                    android:minHeight="48dp" />
+                            </LinearLayout>
+
+                            <LinearLayout
+                                android:id="@+id/autoVolRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:background="?attr/selectableItemBackground"
+                                android:gravity="center_vertical"
+                                android:minHeight="64dp"
+                                android:orientation="horizontal">
+                                <LinearLayout
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginEnd="12dp"
+                                    android:layout_weight="1"
+                                    android:importantForAccessibility="no"
+                                    android:orientation="vertical">
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/autovol_option"
+                                        android:textAppearance="@style/TextAppearance.CordMic.RowValue"
+                                        android:textSize="15sp" />
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginTop="2dp"
+                                        android:text="@string/autovol_help"
+                                        android:textAppearance="@style/TextAppearance.CordMic.Caption" />
+                                </LinearLayout>
+                                <com.google.android.material.materialswitch.MaterialSwitch
+                                    android:id="@+id/autoVolume"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:contentDescription="@string/autovol_option"
                                     android:minHeight="48dp" />
                             </LinearLayout>
 
@@ -442,9 +495,16 @@
                                 android:layout_height="wrap_content"
                                 android:contentDescription="@string/gain_option"
                                 android:stepSize="1"
-                                android:value="12"
+                                android:value="6"
                                 android:valueFrom="0"
                                 android:valueTo="24" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/resetAudio"
+                                style="@style/Widget.Material3.Button.TextButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="@string/reset_audio" />
                         </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>

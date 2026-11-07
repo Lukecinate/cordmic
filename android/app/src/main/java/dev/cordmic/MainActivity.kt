@@ -47,7 +47,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var preset: MaterialAutoCompleteTextView
     private lateinit var presetLayout: TextInputLayout
     private lateinit var aaudio: MaterialSwitch
-    private lateinit var noiseCancel: MaterialSwitch
+    private lateinit var ncMode: MaterialAutoCompleteTextView
+    private lateinit var ncModeLayout: TextInputLayout
+    private lateinit var voiceClarity: MaterialSwitch
+    private lateinit var autoVolume: MaterialSwitch
     private lateinit var gain: Slider
     private lateinit var gainValue: TextView
     private var applyingRemote = false
@@ -62,6 +65,7 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var presetIndex = 0
+    private var ncModeIndex = 1
     private var permissionDenied = false
     private var settingsOverride: Boolean? = null   // user's explicit expand/collapse, reset when running changes
     private var detailsExpanded = false
@@ -106,7 +110,9 @@ class MainActivity : AppCompatActivity() {
         port = findViewById(R.id.port); portLayout = findViewById(R.id.portLayout)
         preset = findViewById(R.id.preset); presetLayout = findViewById(R.id.presetLayout)
         aaudio = findViewById(R.id.aaudio)
-        noiseCancel = findViewById(R.id.noiseCancel)
+        ncMode = findViewById(R.id.ncMode); ncModeLayout = findViewById(R.id.ncModeLayout)
+        voiceClarity = findViewById(R.id.voiceClarity)
+        autoVolume = findViewById(R.id.autoVolume)
         gain = findViewById(R.id.gain)
         gainValue = findViewById(R.id.gainValue)
         toggle = findViewById(R.id.toggle)
@@ -123,22 +129,57 @@ class MainActivity : AppCompatActivity() {
         port.setText(p.getInt("port", Protocol.DEFAULT_PORT).toString())
         presetIndex = p.getInt("preset", 0).coerceIn(0, presets.lastIndex)
         aaudio.isChecked = p.getBoolean("aaudio", true)
-        noiseCancel.isChecked = p.getBoolean("nc", true)
+        ncModeIndex = when (p.getString("ncMode", null)) {
+            "off" -> 0
+            "strong" -> 2
+            "light" -> 1
+            else -> if (p.getBoolean("nc", true)) 1 else 0
+        }
+        voiceClarity.isChecked = p.getBoolean("clarity", true)
+        autoVolume.isChecked = p.getBoolean("agc", true)
         gain.value = p.getInt("gain", VoiceChain.DEFAULT_GAIN_DB).coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
         showGain()
 
         preset.setAdapter(ArrayAdapter(this, R.layout.item_dropdown, presets.map { getString(it.label) }))
         preset.setOnItemClickListener { _, _, pos, _ -> presetIndex = pos; showPreset() }
         showPreset()
+        val ncLabels = ncModes.map { getString(it.second) }
+        ncMode.setAdapter(ArrayAdapter(this, R.layout.item_dropdown, ncLabels))
+        ncMode.setOnItemClickListener { _, _, pos, _ ->
+            ncModeIndex = pos
+            persistAudio()
+            MicService.current?.noiseMode = ncModes[pos].first
+        }
+        showNcMode()
 
         ip.doOnTextChange { ipLayout.error = null; updateSummary() }
         port.doOnTextChange { portLayout.error = null; updateSummary() }
         findViewById<View>(R.id.aaudioRow).setOnClickListener { if (aaudio.isEnabled) aaudio.toggle() }
-        findViewById<View>(R.id.ncRow).setOnClickListener { noiseCancel.toggle() }
-        noiseCancel.setOnCheckedChangeListener { _, checked ->
+        findViewById<View>(R.id.clarityRow).setOnClickListener { voiceClarity.toggle() }
+        findViewById<View>(R.id.autoVolRow).setOnClickListener { autoVolume.toggle() }
+        voiceClarity.setOnCheckedChangeListener { _, checked ->
             if (applyingRemote) return@setOnCheckedChangeListener
-            getPreferences(MODE_PRIVATE).edit().putBoolean("nc", checked).apply()
-            MicService.current?.noiseCancellation = checked
+            persistAudio()
+            MicService.current?.voiceClarity = checked
+        }
+        autoVolume.setOnCheckedChangeListener { _, checked ->
+            if (applyingRemote) return@setOnCheckedChangeListener
+            persistAudio()
+            MicService.current?.agc = checked
+        }
+        findViewById<View>(R.id.resetAudio).setOnClickListener {
+            ncModeIndex = 1
+            voiceClarity.isChecked = true
+            autoVolume.isChecked = true
+            gain.value = VoiceChain.DEFAULT_GAIN_DB.toFloat()
+            showNcMode()
+            persistAudio()
+            MicService.current?.let {
+                it.noiseMode = NoiseMode.LIGHT
+                it.voiceClarity = true
+                it.agc = true
+                it.gainDb = VoiceChain.DEFAULT_GAIN_DB
+            }
         }
         gain.addOnChangeListener { _, value, fromUser ->
             showGain()
@@ -275,7 +316,10 @@ class MainActivity : AppCompatActivity() {
         val liveStreamer = MicService.current
         if (liveStreamer != null && !gain.isPressed) {
             applyingRemote = true
-            if (noiseCancel.isChecked != liveStreamer.noiseCancellation) noiseCancel.isChecked = liveStreamer.noiseCancellation
+            val wantIdx = ncModes.indexOfFirst { it.first == liveStreamer.noiseMode }.let { if (it < 0) ncModeIndex else it }
+            if (wantIdx != ncModeIndex) { ncModeIndex = wantIdx; showNcMode() }
+            if (voiceClarity.isChecked != liveStreamer.voiceClarity) voiceClarity.isChecked = liveStreamer.voiceClarity
+            if (autoVolume.isChecked != liveStreamer.agc) autoVolume.isChecked = liveStreamer.agc
             val g = liveStreamer.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
             if (gain.value != g) gain.value = g
             applyingRemote = false
@@ -313,6 +357,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun showGain() {
         gainValue.text = getString(R.string.gain_value, gain.value.toInt())
+    }
+
+    private val ncModes = listOf(
+        NoiseMode.OFF to R.string.nc_off,
+        NoiseMode.LIGHT to R.string.nc_light,
+        NoiseMode.STRONG to R.string.nc_strong,
+    )
+
+    private fun persistAudio() {
+        getPreferences(MODE_PRIVATE).edit()
+            .putBoolean("nc", ncModes[ncModeIndex].first != NoiseMode.OFF)
+            .putString("ncMode", listOf("off", "light", "strong")[ncModeIndex])
+            .putBoolean("clarity", voiceClarity.isChecked)
+            .putBoolean("agc", autoVolume.isChecked)
+            .putInt("gain", gain.value.toInt())
+            .apply()
+    }
+
+    private fun showNcMode() {
+        ncMode.setText(getString(ncModes[ncModeIndex].second), false)
     }
 
     private fun showPreset() {
@@ -405,13 +469,20 @@ class MainActivity : AppCompatActivity() {
         val gainDb = gain.value.toInt()
         getPreferences(MODE_PRIVATE).edit().putString("ip", host).putInt("port", portNum)
             .putInt("preset", presetIndex).putBoolean("aaudio", aaudio.isChecked)
-            .putBoolean("nc", noiseCancel.isChecked).putInt("gain", gainDb).apply()
+            .putBoolean("nc", ncModes[ncModeIndex].first != NoiseMode.OFF)
+            .putString("ncMode", listOf("off", "light", "strong")[ncModeIndex])
+            .putBoolean("clarity", voiceClarity.isChecked)
+            .putBoolean("agc", autoVolume.isChecked)
+            .putInt("gain", gainDb).apply()
         val i = Intent(this, MicService::class.java)
             .putExtra(MicService.EXTRA_HOST, host)
             .putExtra(MicService.EXTRA_PORT, portNum)
             .putExtra(MicService.EXTRA_PRESET, presets[presetIndex].source)
             .putExtra(MicService.EXTRA_AAUDIO, aaudio.isChecked)
-            .putExtra(MicService.EXTRA_NC, noiseCancel.isChecked)
+            .putExtra(MicService.EXTRA_NC, ncModes[ncModeIndex].first != NoiseMode.OFF)
+            .putExtra(MicService.EXTRA_NC_MODE, ncModes[ncModeIndex].first.code)
+            .putExtra(MicService.EXTRA_CLARITY, voiceClarity.isChecked)
+            .putExtra(MicService.EXTRA_AGC, autoVolume.isChecked)
             .putExtra(MicService.EXTRA_GAIN, gainDb)
         startForegroundService(i)
     }

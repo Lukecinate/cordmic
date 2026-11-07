@@ -1,54 +1,88 @@
 namespace CordMic.Core;
 
+/// <summary>How strongly the phone should suppress steady noise. Default is <see cref="Light"/>.</summary>
+public enum NoiseMode
+{
+    Off = 0,
+    Light = 1,
+    Strong = 2,
+}
+
 /// <summary>
 /// Voice chain used on the phone (the C# class is the tested reference; the Kotlin port matches it):
-/// high-pass, optional noise suppression, user gain, AGC, soft limiter.
-/// Noise suppression is a 256-point spectral gate. It delays audio by exactly
-/// <see cref="NoiseDelayFrames"/> samples (5.33 ms at 48 kHz) and nothing else in the chain adds samples.
-/// Total boost is capped at +24 dB. The limiter never passes a sample hotter than about -0.5 dBFS.
+/// optional voice-clarity EQ (high-pass, low shelf, presence), optional STFT noise suppression,
+/// user gain, gated AGC, and a peak limiter at −1 dBFS.
+/// Light/Strong suppression is a Hann-windowed 256-point STFT with 50 % overlap (hop 128, 2.67 ms
+/// of added delay at 48 kHz). Gains are smoothed and floored so bins are never fully muted.
 /// </summary>
 public sealed class VoiceChain
 {
     public const int NoiseFft = 256;
-    public const int NoiseDelayFrames = 256;
+    public const int NoiseHop = 128;
+    public const int NoiseDelayFrames = NoiseHop;
     public const int MaxGainDb = 24;
-    public const int DefaultGainDb = 12;
-    /// <summary>AGC envelope target. -14 dBFS sits well above the -36..-70 dBFS peaks in the 0.4.2 log.</summary>
-    public const double TargetDbfs = -14;
-    private const int Fade = 16;
-    private const double GainFloor = 0.20;
+    public const int DefaultGainDb = 6;
+    /// <summary>AGC envelope target. −18 dBFS leaves headroom for Discord/game mic sliders around 50–60 %.</summary>
+    public const double TargetDbfs = -18;
+    public const double MaxAgcDb = 12;
+    public const double CeilingDbfs = -1;
+    private const double LightFloor = 0.20;   // −14 dB
+    private const double StrongFloor = 0.10;  // −20 dB
+    private const double GateOpen = 0.007943;  // −42 dBFS
+    private const double GateClose = 0.003162; // −50 dBFS
 
     private readonly int _sr;
-    private readonly double _b0, _b1, _b2, _a1, _a2;
-    private double _x1, _x2, _y1, _y2;
+    private Biquad _hp, _shelf, _presence;
     private readonly double[] _blockIn = new double[NoiseFft];
-    private readonly double[] _blockOut = new double[NoiseFft];
+    private readonly double[] _hopOut = new double[NoiseHop];
+    private readonly double[] _ola = new double[NoiseHop];
+    private readonly double[] _hann = new double[NoiseFft];
     private readonly double[] _re = new double[NoiseFft];
     private readonly double[] _im = new double[NoiseFft];
     private readonly double[] _mag = new double[NoiseFft / 2 + 1];
     private readonly double[] _noise = new double[NoiseFft / 2 + 1];
     private readonly double[] _binGain = new double[NoiseFft / 2 + 1];
-    private readonly double[] _tail = new double[Fade];
-    private readonly double _envRelease;     // one-pole, ~200 ms, applied when the envelope is falling
-    private readonly double _agcAttack;      // ~8 ms
-    private readonly double _agcRelease;     // ~180 ms
-    private int _fill, _emit;
-    private bool _haveBlock;
-    private double _env, _agc = 1;
+    private readonly double _envRelease, _agcRise, _agcFall, _peakRel, _limRel;
+    private int _fill = NoiseHop;
+    private int _emit;
+    private bool _haveHop;
+    private double _env, _agc = 1, _peak, _lim = 1;
+    private bool _gated = true;
+    private NoiseMode _mode = NoiseMode.Light;
+    private int _gainDb = DefaultGainDb;
 
     public int SampleRate => _sr;
-    public bool NoiseCancellation { get; set; } = true;
+
+    public NoiseMode Mode
+    {
+        get => _mode;
+        set => _mode = value;
+    }
+
+    /// <summary>True when suppression is not <see cref="NoiseMode.Off"/>. Setting false turns it off; setting true selects Light if it was off.</summary>
+    public bool NoiseCancellation
+    {
+        get => _mode != NoiseMode.Off;
+        set => _mode = value ? (_mode == NoiseMode.Off ? NoiseMode.Light : _mode) : NoiseMode.Off;
+    }
+
     public bool Agc { get; set; } = true;
-    public bool HighPass { get; set; } = true;
-    private int _gainDb = DefaultGainDb;
+    public bool VoiceClarity { get; set; } = true;
+    /// <summary>Alias for <see cref="VoiceClarity"/> so existing tests can disable the EQ section.</summary>
+    public bool HighPass
+    {
+        get => VoiceClarity;
+        set => VoiceClarity = value;
+    }
+
     public int GainDb
     {
         get => _gainDb;
         set => _gainDb = Math.Clamp(value, 0, MaxGainDb);
     }
 
-    /// <summary>Samples of delay the chain is inserting right now.</summary>
-    public int DelayFrames => NoiseCancellation ? NoiseDelayFrames : 0;
+    /// <summary>Samples of delay the chain is inserting right now (STFT hop, or 0 when suppression is off).</summary>
+    public int DelayFrames => _mode == NoiseMode.Off ? 0 : NoiseDelayFrames;
 
     /// <summary>Added latency of the noise suppressor. 0 when it is off.</summary>
     public double NoiseLatencyMs => DelayFrames * 1000.0 / _sr;
@@ -57,52 +91,62 @@ public sealed class VoiceChain
     {
         if (sampleRate < 8000) throw new ArgumentOutOfRangeException(nameof(sampleRate));
         _sr = sampleRate;
-        // Butterworth-ish high-pass at 80 Hz (RBJ cookbook).
-        double w0 = 2 * Math.PI * 80.0 / sampleRate;
-        double cos = Math.Cos(w0);
-        double alpha = Math.Sin(w0) / (2 * 0.7071067811865476);
-        double a0 = 1 + alpha;
-        _b0 = ((1 + cos) / 2) / a0;
-        _b1 = (-(1 + cos)) / a0;
-        _b2 = _b0;
-        _a1 = (-2 * cos) / a0;
-        _a2 = (1 - alpha) / a0;
-        _envRelease = 1 - Math.Exp(-1.0 / (0.20 * sampleRate));
-        _agcAttack = 1 - Math.Exp(-1.0 / (0.008 * sampleRate));
-        _agcRelease = 1 - Math.Exp(-1.0 / (0.18 * sampleRate));
+        _hp = Biquad.HighPass(sampleRate, 120, 0.7071067811865476);
+        _shelf = Biquad.LowShelf(sampleRate, 220, -5.0);
+        _presence = Biquad.Peaking(sampleRate, 3000, 2.5, 1.0);
+        for (int i = 0; i < NoiseFft; i++)
+            _hann[i] = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / NoiseFft);
+        for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
+        _envRelease = 1 - Math.Exp(-1.0 / (0.08 * sampleRate));
+        _agcRise = 1 - Math.Exp(-1.0 / (0.50 * sampleRate));  // slow upward (do not pump noise)
+        _agcFall = 1 - Math.Exp(-1.0 / (0.025 * sampleRate)); // faster downward when speech is hot
+        _peakRel = 1 - Math.Exp(-1.0 / (0.030 * sampleRate));
+        _limRel = 1 - Math.Exp(-1.0 / (0.050 * sampleRate));
     }
 
     public void Reset()
     {
-        _x1 = _x2 = _y1 = _y2 = 0;
-        _fill = _emit = 0;
-        _haveBlock = false;
-        _env = 0; _agc = 1;
-        Array.Clear(_blockIn); Array.Clear(_blockOut); Array.Clear(_noise); Array.Clear(_tail);
+        _hp.Reset(); _shelf.Reset(); _presence.Reset();
+        _fill = NoiseHop; _emit = 0; _haveHop = false;
+        _env = 0; _agc = 1; _peak = 0; _lim = 1; _gated = true;
+        Array.Clear(_blockIn); Array.Clear(_hopOut); Array.Clear(_ola); Array.Clear(_noise);
+        for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
     }
 
     public void Process(Span<short> samples)
     {
         double user = DbToLin(_gainDb);
-        double maxAgc = DbToLin(MaxGainDb - _gainDb);
+        double maxAgc = DbToLin(Math.Min(MaxAgcDb, MaxGainDb - _gainDb));
         double target = DbToLin(TargetDbfs);
+        double thresh = DbToLin(CeilingDbfs);
+        bool stft = _mode != NoiseMode.Off;
         for (int i = 0; i < samples.Length; i++)
         {
             double x = samples[i] / 32768.0;
-            if (HighPass) x = HighPassStep(x);
-            if (NoiseCancellation) x = NoiseStep(x);
-            else { _fill = 0; _emit = 0; _haveBlock = false; }
+            if (VoiceClarity)
+            {
+                x = _hp.Process(x);
+                x = _shelf.Process(x);
+                x = _presence.Process(x);
+            }
+            if (stft) x = NoiseStep(x);
+            else { _fill = NoiseHop; _emit = 0; _haveHop = false; }
             double y = x * user;
             if (Agc)
             {
                 double ay = Math.Abs(y);
                 if (ay > _env) _env = ay;
                 else _env += (ay - _env) * _envRelease;
-                double want = Math.Clamp(target / Math.Max(_env, 1e-5), 1.0, maxAgc);
-                _agc += (want - _agc) * (want > _agc ? _agcAttack : _agcRelease);
+                if (_env < GateClose) _gated = true;
+                else if (_env > GateOpen) _gated = false;
+                double want;
+                if (_gated) want = 1.0;
+                else want = Math.Clamp(target / Math.Max(_env, 1e-5), 0.25, maxAgc);
+                double coeff = _gated ? _agcRise : (want > _agc ? _agcRise : _agcFall);
+                _agc += (want - _agc) * coeff;
                 y *= _agc;
             }
-            y = SoftLimit(y);
+            y = LimitStep(y, thresh);
             int s = (int)Math.Round(y * 32768.0);
             if (s > 32767) s = 32767;
             else if (s < -32768) s = -32768;
@@ -110,38 +154,49 @@ public sealed class VoiceChain
         }
     }
 
-    private double HighPassStep(double x)
+    private double LimitStep(double y, double thresh)
     {
-        double y = _b0 * x + _b1 * _x1 + _b2 * _x2 - _a1 * _y1 - _a2 * _y2;
-        _x2 = _x1; _x1 = x; _y2 = _y1; _y1 = y;
+        double ay = Math.Abs(y);
+        if (ay > _peak) _peak = ay;
+        else _peak += (ay - _peak) * _peakRel;
+        double gr = _peak > thresh ? thresh / _peak : 1.0;
+        // Lookahead-less: take gain reduction immediately so a shout cannot sneak past −1 dBFS.
+        if (gr < _lim) _lim = gr;
+        else _lim += (gr - _lim) * _limRel;
+        y *= _lim;
+        if (y > 0.99) y = 0.99;
+        if (y < -0.99) y = -0.99;
         return y;
     }
 
     private double NoiseStep(double x)
     {
-        double y = 0;
-        if (_haveBlock) y = _blockOut[_emit];
+        double y = _haveHop ? _hopOut[_emit] : 0;
         _blockIn[_fill] = x;
         _fill++;
         _emit++;
         if (_fill == NoiseFft)
         {
-            SuppressBlock(_blockIn, _blockOut);
-            _fill = 0;
+            SuppressHop();
+            Array.Copy(_blockIn, NoiseHop, _blockIn, 0, NoiseHop);
+            _fill = NoiseHop;
             _emit = 0;
-            _haveBlock = true;
+            _haveHop = true;
         }
         return y;
     }
 
-    private void SuppressBlock(double[] input, double[] output)
+    private void SuppressHop()
     {
-        Array.Clear(_re);
-        Array.Clear(_im);
-        input.AsSpan(0, NoiseFft).CopyTo(_re);
+        for (int i = 0; i < NoiseFft; i++)
+        {
+            _re[i] = _blockIn[i] * _hann[i];
+            _im[i] = 0;
+        }
         Fft(_re, _im, false);
         double maxBin = 0, sumBin = 0;
-        for (int k = 0; k <= NoiseFft / 2; k++)
+        int half = NoiseFft / 2;
+        for (int k = 0; k <= half; k++)
         {
             double m = Math.Sqrt(_re[k] * _re[k] + _im[k] * _im[k]);
             _mag[k] = m;
@@ -151,48 +206,46 @@ public sealed class VoiceChain
                 sumBin += m;
             }
         }
-        double mean = sumBin / (NoiseFft / 2);
-        // A pure tone piles energy in one bin (ratio ~ 100). White noise stays under ~8.
+        double mean = sumBin / half;
         bool noiseLike = maxBin < mean * 12.0 + 1e-12;
-        for (int k = 0; k <= NoiseFft / 2; k++)
+        double floor = _mode == NoiseMode.Strong ? StrongFloor : LightFloor;
+        double oversub = _mode == NoiseMode.Strong ? 1.5 : 1.0;
+        double smooth = _mode == NoiseMode.Strong ? 0.45 : 0.65;
+        for (int k = 0; k <= half; k++)
         {
             double m = _mag[k];
             double n = _noise[k];
-            if (noiseLike) n = 0.75 * n + 0.25 * m;
-            else if (m < n) n = 0.50 * n + 0.50 * m;
-            else n = 0.998 * n + 0.002 * m;
+            // Only raise the noise estimate on noise-like frames. A slow upward leak on
+            // tonal bins was eating sustained vowels (and the 1 kHz quality probe) over a few seconds.
+            if (noiseLike) n = 0.80 * n + 0.20 * m;
+            else if (m < n) n = 0.70 * n + 0.30 * m;
             _noise[k] = n;
-            double g = 1.0 - 1.5 * n / (m + 1e-12);
-            if (g < GainFloor) g = GainFloor;
+            double g = 1.0 - oversub * n / (m + 1e-12);
+            if (g < floor) g = floor;
             else if (g > 1) g = 1;
-            _binGain[k] = g;
+            _binGain[k] = smooth * _binGain[k] + (1 - smooth) * g;
         }
         for (int k = 0; k < NoiseFft; k++)
         {
-            int bin = k <= NoiseFft / 2 ? k : NoiseFft - k;
+            int bin = k <= half ? k : NoiseFft - k;
             _re[k] *= _binGain[bin];
             _im[k] *= _binGain[bin];
         }
         Fft(_re, _im, true);
-        for (int i = 0; i < Fade; i++)
+        for (int i = 0; i < NoiseHop; i++)
         {
-            double w = (i + 1) / (double)(Fade + 1);
-            output[i] = _tail[i] * (1 - w) + _re[i] * w;
+            _hopOut[i] = _ola[i] + _re[i];
+            _ola[i] = _re[i + NoiseHop];
         }
-        for (int i = Fade; i < NoiseFft; i++) output[i] = _re[i];
-        Array.Copy(output, NoiseFft - Fade, _tail, 0, Fade);
     }
 
-    /// <summary>Cubic-knee soft clip. |x| below 0.70 passes; louder samples approach 0.94 and do not reach full scale.</summary>
+    /// <summary>Legacy name kept for callers. The runtime limiter is <see cref="LimitStep"/>; this maps onto the −1 dBFS ceiling without tanh.</summary>
     public static double SoftLimit(double x)
     {
+        const double ceiling = 0.8912509381337456; // 10^(-1/20)
         double a = Math.Abs(x);
-        const double knee = 0.70;
-        const double ceiling = 0.94;
-        if (a <= knee) return x;
-        double over = (a - knee) / (1.0 - knee);
-        double y = knee + (ceiling - knee) * Math.Tanh(over);
-        return Math.CopySign(y, x);
+        if (a <= ceiling) return x;
+        return Math.CopySign(ceiling, x);
     }
 
     public static double DbToLin(double db) => Math.Pow(10.0, db / 20.0);
@@ -237,5 +290,72 @@ public sealed class VoiceChain
         }
         if (invert)
             for (int i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+    }
+
+    private struct Biquad
+    {
+        private double _b0, _b1, _b2, _a1, _a2;
+        private double _x1, _x2, _y1, _y2;
+
+        public static Biquad HighPass(int sr, double freq, double q)
+        {
+            double w0 = 2 * Math.PI * freq / sr;
+            double cos = Math.Cos(w0);
+            double alpha = Math.Sin(w0) / (2 * q);
+            double a0 = 1 + alpha;
+            return new Biquad
+            {
+                _b0 = ((1 + cos) / 2) / a0,
+                _b1 = (-(1 + cos)) / a0,
+                _b2 = ((1 + cos) / 2) / a0,
+                _a1 = (-2 * cos) / a0,
+                _a2 = (1 - alpha) / a0,
+            };
+        }
+
+        public static Biquad LowShelf(int sr, double freq, double gainDb)
+        {
+            double A = Math.Pow(10, gainDb / 40.0);
+            double w0 = 2 * Math.PI * freq / sr;
+            double cos = Math.Cos(w0);
+            double sin = Math.Sin(w0);
+            double alpha = sin / 2 * Math.Sqrt(2);
+            double twoSqrtAalpha = 2 * Math.Sqrt(A) * alpha;
+            double a0 = (A + 1) + (A - 1) * cos + twoSqrtAalpha;
+            return new Biquad
+            {
+                _b0 = A * ((A + 1) - (A - 1) * cos + twoSqrtAalpha) / a0,
+                _b1 = 2 * A * ((A - 1) - (A + 1) * cos) / a0,
+                _b2 = A * ((A + 1) - (A - 1) * cos - twoSqrtAalpha) / a0,
+                _a1 = -2 * ((A - 1) + (A + 1) * cos) / a0,
+                _a2 = ((A + 1) + (A - 1) * cos - twoSqrtAalpha) / a0,
+            };
+        }
+
+        public static Biquad Peaking(int sr, double freq, double gainDb, double q)
+        {
+            double A = Math.Pow(10, gainDb / 40.0);
+            double w0 = 2 * Math.PI * freq / sr;
+            double cos = Math.Cos(w0);
+            double alpha = Math.Sin(w0) / (2 * q);
+            double a0 = 1 + alpha / A;
+            return new Biquad
+            {
+                _b0 = (1 + alpha * A) / a0,
+                _b1 = (-2 * cos) / a0,
+                _b2 = (1 - alpha * A) / a0,
+                _a1 = (-2 * cos) / a0,
+                _a2 = (1 - alpha / A) / a0,
+            };
+        }
+
+        public double Process(double x)
+        {
+            double y = _b0 * x + _b1 * _x1 + _b2 * _x2 - _a1 * _y1 - _a2 * _y2;
+            _x2 = _x1; _x1 = x; _y2 = _y1; _y1 = y;
+            return y;
+        }
+
+        public void Reset() => _x1 = _x2 = _y1 = _y2 = 0;
     }
 }
