@@ -8,7 +8,7 @@ public sealed record StatsSnapshot(
     string? Peer, long Received, long Expected, long Lost, double LossPct, long Reordered, long Late,
     long Concealed, long Underruns, long OverflowDrops, double DepthMs, double? RttMs, double? RttMinMs,
     double ArrivalJitterMs, double PacketMs, double LevelDbfs, double SecondsSinceAudio,
-    double BufferAvgMs = double.NaN, double BufferMinMs = double.NaN, long CatchUpDrops = 0,
+    double BufferAvgMs = double.NaN, double BufferMinMs = double.NaN, long CatchUpDrops = 0, long SampleSlips = 0,
     double RenderPeriodMs = 0, double JitterTargetMs = 0, int JitterTargetPackets = 0,
     double UnderrunPerMin = double.NaN, double OverflowPerMin = double.NaN,
     PhoneLink Phone = default)
@@ -25,7 +25,7 @@ public sealed record StatsSnapshot(
         $"jitter={ArrivalJitterMs:F2}ms rtt={(RttMs is { } r ? r.ToString("F2") : "-")}ms " +
         $"(min {(RttMinMs is { } m ? m.ToString("F2") : "-")}) pkt={PacketMs:F1}ms level={LevelDbfs:F0}dBFS " +
         $"bufavg={(double.IsNaN(BufferAvgMs) ? "-" : BufferAvgMs.ToString("F1"))}ms " +
-        $"bufmin={(double.IsNaN(BufferMinMs) ? "-" : BufferMinMs.ToString("F1"))}ms catchup={CatchUpDrops} " +
+        $"bufmin={(double.IsNaN(BufferMinMs) ? "-" : BufferMinMs.ToString("F1"))}ms catchup={CatchUpDrops} slip={SampleSlips} " +
         $"period={(RenderPeriodMs > 0 ? RenderPeriodMs.ToString("F1") : "-")}ms " +
         $"jtarget={Ms(JitterTargetMs)}ms/{JitterTargetPackets}pkt " +
         $"urate={Rate(UnderrunPerMin)}/min orate={Rate(OverflowPerMin)}/min " +
@@ -106,7 +106,14 @@ public sealed class Receiver : IDisposable
         FramesPerPacket = fpp;
         double pktMs = fpp * 1000.0 / _sampleRate;
         int target = JitterPolicy.EffectiveTargetPackets(_jitterMs, _renderPeriodMs, pktMs);
-        return new JitterBuffer(fpp, _channels, target, sampleRate: _sampleRate);
+        int max = JitterPolicy.MaxDepthPackets(_jitterMs, _renderPeriodMs, pktMs);
+        int high = JitterPolicy.HighWaterPackets(_jitterMs, _renderPeriodMs, pktMs);
+        return new JitterBuffer(fpp, _channels, target, max, _sampleRate, high)
+        {
+            CatchUp = false,
+            DriftLock = true,
+            RenderPeriodMs = _renderPeriodMs,
+        };
     }
 
     public double JitterMs => _jitterMs;
@@ -155,13 +162,15 @@ public sealed class Receiver : IDisposable
     {
         int target = TargetPackets();
         double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
-        if (!force && _jb.Target == target && _jb.FramesPerPacket == FramesPerPacket)
+        if (!force && _jb.Target == target && _jb.FramesPerPacket == FramesPerPacket
+            && Math.Abs(_jb.RenderPeriodMs - _renderPeriodMs) < 0.05)
         {
             LogTarget(pktMs, target);
             return;
         }
-        if (_jb.Target != target || _jb.FramesPerPacket != FramesPerPacket)
-            _jb = new JitterBuffer(FramesPerPacket, _channels, target, sampleRate: _sampleRate);
+        if (_jb.Target != target || _jb.FramesPerPacket != FramesPerPacket
+            || Math.Abs(_jb.RenderPeriodMs - _renderPeriodMs) >= 0.05 || force)
+            _jb = MakeJb(FramesPerPacket);
         LogTarget(pktMs, target);
     }
 
@@ -446,7 +455,7 @@ public sealed class Receiver : IDisposable
                 _reordered, js.Late, js.Concealed, js.Underruns, js.OverflowDrops, jb.DepthMs(_sampleRate),
                 _rttMs, _rttMin, _jitterUs / 1000.0, pktMs, _levelDb,
                 _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(now - _lastAudioTicks),
-                jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops,
+                jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops, js.SampleSlips,
                 _renderPeriodMs, jb.Target * pktMs, jb.Target, _underrunPerMin, _overflowPerMin, _phone);
         }
     }

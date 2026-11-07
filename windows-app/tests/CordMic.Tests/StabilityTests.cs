@@ -15,12 +15,24 @@ public class StabilityTests
     [InlineData(5, 0, 1)]     // period unknown: preset passes through
     [InlineData(10, 0, 2)]
     [InlineData(20, 0, 4)]
-    [InlineData(5, 10, 3)]    // Low is below a 10 ms period: floor is 2 packets pulled + 1 residual
-    [InlineData(10, 10, 3)]   // Normal (2 packets) is exactly one pull: same floor
-    [InlineData(20, 10, 4)]   // Safe already clears the floor
+    [InlineData(5, 10, 4)]    // Low vs 10 ms period: floor is two pulls (4 packets / 20 ms)
+    [InlineData(10, 10, 4)]   // Normal vs 10 ms period: same two-pull floor
+    [InlineData(20, 10, 4)]   // Safe already equals the floor
     [InlineData(5, 5, 2)]     // a 5 ms period pulls one packet, so the floor is 2
-    public void TargetFloorsAtOnePullPlusAPacket(double requestMs, double periodMs, int packets) =>
+    [InlineData(5, 2.7, 2)]   // a 2.7 ms period still pulls one 5 ms packet → floor 2 (10 ms)
+    [InlineData(10, 2.7, 2)]  // Normal already equals that floor
+    public void TargetFloorsAtTwoPulls(double requestMs, double periodMs, int packets) =>
         Assert.Equal(packets, JitterPolicy.EffectiveTargetPackets(requestMs, periodMs, 5));
+
+    [Theory]
+    [InlineData(5, 10, 6, 10)]
+    [InlineData(5, 2.7, 3, 5)]
+    [InlineData(10, 10, 6, 10)]
+    public void HighWaterAndMaxDepthFollowPeriod(double requestMs, double periodMs, int high, int max)
+    {
+        Assert.Equal(high, JitterPolicy.HighWaterPackets(requestMs, periodMs, 5));
+        Assert.Equal(max, JitterPolicy.MaxDepthPackets(requestMs, periodMs, 5));
+    }
 
     [Fact]
     public void SteadyPullStopsTheOscillation()

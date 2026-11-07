@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using CordMic.Core;
@@ -33,6 +34,8 @@ internal sealed class AppController : ApplicationContext
     private readonly AudioEngine _audio;
     private readonly Dictionary<Health, Icon> _icons = new();
     private readonly Queue<(DateTime t, long exp, long lost)> _lossWin = new();
+    private string? _lastDeviceList;
+    private string? _loggedPeriodHint;
 
     private bool _armed = true;
     private Receiver? _rx;
@@ -146,7 +149,13 @@ internal sealed class AppController : ApplicationContext
         try { _devices = _audio.ListRender(); }
         catch (Exception ex) { Log("enumerate devices failed: " + ex.Message); _devices = new(); }
         CableName = DeviceRules.PickVirtualCable(_devices.Select(d => d.Name));
-        Log("render devices: " + string.Join(" | ", _devices.Select(d => d.Name)));
+        string list = string.Join(" | ", _devices.Select(d => d.Name));
+        if (list != _lastDeviceList)
+        {
+            Log("render devices: " + list);
+            _lastDeviceList = list;
+        }
+        RefreshCableStatus();
         _nextAudioTry = DateTime.MinValue; // re-evaluate right away
     }
 
@@ -173,6 +182,7 @@ internal sealed class AppController : ApplicationContext
             _audio.Start(want.Id, _rx, _settings.OutputChannels, _settings.OutputLatencyMs, _settings.OutputMode, Log);
             _rx.SetRenderPeriodMs(_audio.PeriodMs);
             Log($"output -> {want.Name} ({_audio.Describe})");
+            UpdatePeriodHint();
             if (_settings.OutputMode == OutputMode.Exclusive && _audio.ActiveMode != OutputMode.Exclusive)
                 _tray.ShowBalloonTip(5000, "CordMic", L.T("outmode.fellBack", want.Name), ToolTipIcon.Info);
         }
@@ -422,6 +432,97 @@ internal sealed class AppController : ApplicationContext
         _audio.Stop();
         _nextAudioTry = DateTime.MinValue;
         EnsureOutput();
+        UpdateStatus();
+    }
+
+    public bool CableFound { get; private set; }
+    public bool CableNeedsOptimize { get; private set; }
+    public string? OptimizeHint { get; private set; }
+    public string? PeriodHint { get; private set; }
+
+    public void RefreshCableStatus()
+    {
+        try
+        {
+            var info = CableHelper.Inspect();
+            CableFound = info.Found;
+            CableNeedsOptimize = info.NeedsOptimize;
+            if (!info.Found) return;
+            if (OptimizeHint is null)
+                OptimizeHint = info.NeedsOptimize ? L.T("ui.cable.needed") : L.T("ui.cable.optimized");
+            else if (info.NeedsOptimize && OptimizeHint == L.T("ui.cable.optimized"))
+                OptimizeHint = L.T("ui.cable.needed");
+            else if (!info.NeedsOptimize && OptimizeHint == L.T("ui.cable.needed"))
+                OptimizeHint = L.T("ui.cable.optimized");
+        }
+        catch (Exception ex) { Log("cable inspect: " + ex.Message); }
+    }
+
+    void UpdatePeriodHint()
+    {
+        PeriodHint = null;
+        if (_audio.EngineMinMs > 0 && _audio.PeriodMs > _audio.EngineMinMs * 1.4 + 0.5)
+        {
+            PeriodHint = L.T("ui.cable.periodHint", _audio.PeriodMs.ToString("F1"), _audio.EngineMinMs.ToString("F1"));
+            if (PeriodHint != _loggedPeriodHint)
+            {
+                Log(PeriodHint);
+                _loggedPeriodHint = PeriodHint;
+            }
+        }
+    }
+
+    public void RequestOptimizeCable()
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = Paths.ExePath,
+            Arguments = CableHelperArgs.Configure,
+            UseShellExecute = true,
+            Verb = "runas",
+            ErrorDialog = false,
+        };
+        try
+        {
+            using var p = Process.Start(psi);
+            if (p is null)
+            {
+                OptimizeHint = L.T("ui.cable.launchFailed");
+                Log("VB-CABLE optimize: failed to start helper");
+                return;
+            }
+            p.WaitForExit(120_000);
+            int code = p.HasExited ? p.ExitCode : -1;
+            if (code == CableHelperArgs.ExitOk)
+            {
+                OptimizeHint = L.T("ui.cable.optimized");
+                Log("VB-CABLE optimize: ok");
+                _audio.Stop();
+                _nextAudioTry = DateTime.MinValue;
+                RefreshCableStatus();
+                EnsureOutput();
+            }
+            else if (code == CableHelperArgs.ExitNoCable)
+            {
+                OptimizeHint = L.T("ui.cable.notFound");
+                Log("VB-CABLE optimize: no matching stereo endpoints");
+            }
+            else
+            {
+                OptimizeHint = L.T("ui.cable.failed", code);
+                Log($"VB-CABLE optimize: exit {code}");
+            }
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            OptimizeHint = L.T("ui.cable.uacDeclined");
+            Log("VB-CABLE optimize: UAC declined; continuing without changes");
+        }
+        catch (Exception ex)
+        {
+            OptimizeHint = L.T("ui.cable.launchFailed");
+            Log("VB-CABLE optimize failed to launch: " + ex.Message);
+        }
         UpdateStatus();
     }
 

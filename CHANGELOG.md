@@ -2,6 +2,60 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.2] - 2026-11-07
+
+Shorter, more stable Windows playback on VB-CABLE, and the app applies the
+useful VB-CABLE device format itself instead of asking for a manual Sound
+control-panel change. Android `versionCode` is 10 / `versionName` 0.5.2. Wire
+version stays 1; 0.5.2 works with 0.5.1, 0.5.0 and 0.4.x on the other side.
+The release APK is signed with the same key as 0.5.1. The Windows installer
+is not Authenticode-signed.
+
+### Fixed
+- **Stereo CABLE Input is preferred over "CABLE In 16ch".** Automatic output
+  picking ranked any "VB-Audio Virtual Cable" device equally, so the 16-channel
+  endpoint often won by enumeration order. The engine then had to convert 2
+  channels into 16, which blocked the short shared period.
+- **IAudioClient3 can keep the advertised minimum period.** Shared-mode init
+  first opens the device mix format without `AUTOCONVERTPCM` (that flag is not
+  compatible with `InitializeSharedAudioStream`). HRESULT values are logged
+  when a period request fails, then the app falls back safely to converted
+  PCM and to `IAudioClient`.
+- **Jitter-buffer floor and overflow no longer fight the render callback.**
+  The target is at least two render periods (20 ms at a 10 ms period, 10 ms
+  at a 2.7 ms period). Overflow trims to a high-water mark one period above
+  the target instead of dumping back to the bare target. A sample-level drift
+  lock skips or inserts one frame per pull instead of dropping whole packets.
+
+### Added
+- **Output mode → Auto** (default on new installs) tries the short shared
+  period and uses Exclusive only when that would be shorter. An explicit
+  Low latency, Stable or Exclusive setting is left unchanged.
+- **Optimize VB-CABLE.** The installer runs `CordMic.exe --configure-cable`
+  (already elevated) to set stereo CABLE Input and CABLE Output to 16-bit
+  48 kHz and to disable enhancements. Settings offers the same action via a
+  one-time UAC prompt if the current format differs. `--restore-cable` is
+  used by the uninstaller. Design notes: [docs/SECURITY.md](docs/SECURITY.md).
+- A one-line hint when Windows keeps a long shared period even though the
+  device advertised a shorter one, and when UAC for the helper is declined.
+
+### Changed
+- Render device lists are written to the log only when they change.
+- The Windows jitter buffer no longer uses packet-drop catch-up in production.
+
+### Catatan rilis (Bahasa Indonesia)
+- CABLE Input stereo dipilih daripada "CABLE In 16ch", dan IAudioClient3
+  memakai periode minimum perangkat (tanpa `AUTOCONVERTPCM`) bila berhasil.
+- Target jitter buffer minimal dua periode render; luapan dipotong ke tanda
+  air tinggi, bukan dikosongkan ke target. Koreksi drift memakai satu sampel
+  per callback, bukan membuang paket utuh.
+- Mode output *Otomatis* (default instal baru) memilih periode stabil
+  terpendek. Pilihan eksplisit tidak diganti diam-diam.
+- Instalasi mengatur format VB-CABLE stereo 48 kHz dan mematikan enhancement.
+  Tombol *Optimalkan VB-CABLE* di Pengaturan meminta UAC sekali bila format
+  masih berbeda. `CordMic.exe --restore-cable` mengembalikan nilai semula
+  (juga dijalankan saat uninstall). Lihat [docs/SECURITY.md](docs/SECURITY.md).
+
 ## [0.5.1] - 2026-11-06
 
 The settings control no longer overlaps the header logo, and the 0.5.0 field-log notes

@@ -58,12 +58,15 @@ internal sealed class LowLatencyRenderer : IDisposable
     private Thread? _thread;
     private volatile bool _stop;
     private uint _bufferFrames, _periodFrames, _marginFrames;
-    private int _bytesPerFrame, _rate;
+    private int _bytesPerFrame, _rate, _outCh;
+    private bool _outFloat;
+    private readonly Action<string>? _log;
     private byte[] _tmp = Array.Empty<byte>();
     private double _fillSum, _fillWeight;
     private readonly object _statLock = new();
     public bool UsedAudioClient3 { get; private set; }
     public uint EngineMinPeriodFrames { get; private set; }
+    public double EngineMinMs => _rate == 0 || EngineMinPeriodFrames == 0 ? 0 : EngineMinPeriodFrames * 1000.0 / _rate;
 
     public bool Running => _thread is { IsAlive: true } && !_stop;
     public double PeriodMs => _rate == 0 ? 0 : _periodFrames * 1000.0 / _rate;
@@ -71,10 +74,11 @@ internal sealed class LowLatencyRenderer : IDisposable
     public OutputMode Mode => _mode;
     public event Action<string>? Failed;
 
-    public LowLatencyRenderer(IMMDevice dev, ReceiverWaveProvider src, OutputMode mode)
+    public LowLatencyRenderer(IMMDevice dev, ReceiverWaveProvider src, OutputMode mode, Action<string>? log = null)
     {
-        _dev = dev; _src = src; _mode = mode;
+        _dev = dev; _src = src; _mode = mode; _log = log;
         _rate = src.SampleRate;
+        _outCh = src.Channels;
         _bytesPerFrame = src.Channels * 2;
         var iid = Wasapi.IidAudioClient3;
         Wasapi.Check(dev.Activate(ref iid, Wasapi.ClsCtxAll, IntPtr.Zero, out var obj), "Activate");
@@ -86,13 +90,14 @@ internal sealed class LowLatencyRenderer : IDisposable
         {
             Marshal.StructureToPtr(fmt, pFmt, false);
             if (mode == OutputMode.Exclusive) InitExclusive(pFmt, fmt);
-            else InitShared(pFmt, fmt, mode == OutputMode.LowLatency);
+            else InitShared(pFmt, fmt, mode != OutputMode.Stable, log);
             _evt = new EventWaitHandle(false, EventResetMode.AutoReset);
             Wasapi.Check(_client.SetEventHandle(_evt.SafeWaitHandle.DangerousGetHandle()), "SetEventHandle");
             var renderId = Wasapi.IidAudioRenderClient;
             Wasapi.Check(_client.GetService(ref renderId, out var r), "GetService");
             _render = (IAudioRenderClient)r;
-            _tmp = new byte[_bufferFrames * _bytesPerFrame];
+            int need = (int)_bufferFrames * Math.Max(_bytesPerFrame, src.Channels * 2);
+            _tmp = new byte[need];
         }
         catch
         {
@@ -103,38 +108,107 @@ internal sealed class LowLatencyRenderer : IDisposable
         finally { Marshal.FreeHGlobal(pFmt); }
     }
 
-    private void InitShared(IntPtr pFmt, WaveFormatEx fmt, bool lowLatency)
+    private void InitShared(IntPtr pOur, WaveFormatEx our, bool lowLatency, Action<string>? log)
     {
         var client = _client!;
-        uint flags = Wasapi.StreamEventCallback | Wasapi.StreamAutoConvertPcm | Wasapi.StreamSrcDefaultQuality;
+        uint ev = Wasapi.StreamEventCallback;
+        uint convert = Wasapi.StreamAutoConvertPcm | Wasapi.StreamSrcDefaultQuality;
         uint period = 0;
-        if (lowLatency && client.GetSharedModeEnginePeriod(pFmt, out uint def, out _, out uint min, out _) >= 0 && min > 0)
+        IntPtr pMix = IntPtr.Zero;
+        bool mixUsable = false;
+        int mixCh = 0, mixRate = 0, mixBits = 0;
+        bool mixFloat = false;
+        if (client.GetMixFormat(out pMix) >= 0 && pMix != IntPtr.Zero)
+            mixUsable = TryParseMix(pMix, out mixCh, out mixRate, out mixBits, out mixFloat)
+                        && mixRate == _rate && mixCh is 1 or 2
+                        && ((mixFloat && mixBits == 32) || (!mixFloat && mixBits == 16));
+        try
         {
-            EngineMinPeriodFrames = min;
-            period = min;
-            int hr = client.InitializeSharedAudioStream(flags, period, pFmt, IntPtr.Zero);
-            if (hr < 0 && period != def)
+            if (lowLatency)
             {
-                // A failed Initialize leaves the client unusable. Activate a fresh one for the default period.
-                ReplaceClient();
-                client = _client!;
-                period = def;
-                hr = client.InitializeSharedAudioStream(flags, period, pFmt, IntPtr.Zero);
+                NoteEnginePeriod(client, mixUsable ? pMix : pOur, log, mixUsable ? "mix" : "pcm16");
+                if (mixUsable)
+                    TryClient3(ref client, pMix, ev, log, "mix/no-convert", out period, mixCh, mixFloat);
+                if (!UsedAudioClient3)
+                    TryClient3(ref client, pOur, ev, log, "pcm16/no-convert", out period, our.Channels, false);
+                if (!UsedAudioClient3)
+                    TryClient3(ref client, pOur, ev | convert, log, "pcm16/convert", out period, our.Channels, false);
             }
-            if (hr >= 0) UsedAudioClient3 = true;
-            else { ReplaceClient(); client = _client!; period = 0; }
+            if (!UsedAudioClient3)
+            {
+                uint flags = ev | convert;
+                Wasapi.Check(client.GetDevicePeriod(out long def100ns, out _), "GetDevicePeriod");
+                if (def100ns <= 0) def100ns = 100_000;
+                long dur = lowLatency ? def100ns * 2 : def100ns * 3;
+                int hr = client.Initialize(Wasapi.ShareShared, flags, dur, 0, pOur, IntPtr.Zero);
+                if (hr < 0)
+                {
+                    log?.Invoke($"IAudioClient.Initialize flags=0x{flags:X} hr=0x{(uint)hr:X8}");
+                    Wasapi.Check(hr, "Initialize");
+                }
+                SetOutputLayout(our.Channels, ieeeFloat: false);
+                period = (uint)Math.Max(1, (int)Math.Round(def100ns / 1e7 * our.SamplesPerSec));
+            }
         }
-        if (!UsedAudioClient3)
+        finally
         {
-            Wasapi.Check(client.GetDevicePeriod(out long def100ns, out _), "GetDevicePeriod");
-            if (def100ns <= 0) def100ns = 100_000;
-            long dur = lowLatency ? def100ns * 2 : def100ns * 3;
-            Wasapi.Check(client.Initialize(Wasapi.ShareShared, flags, dur, 0, pFmt, IntPtr.Zero), "Initialize");
-            period = (uint)Math.Max(1, (int)Math.Round(def100ns / 1e7 * fmt.SamplesPerSec));
+            if (pMix != IntPtr.Zero) Wasapi.CoTaskMemFree(pMix);
         }
         Wasapi.Check(client.GetBufferSize(out _bufferFrames), "GetBufferSize");
         _periodFrames = period == 0 ? _bufferFrames : period;
-        _marginFrames = (uint)Math.Max(1, (int)Math.Round(0.002 * fmt.SamplesPerSec));
+        _marginFrames = (uint)Math.Max(1, (int)Math.Round(0.002 * _rate));
+    }
+
+    void NoteEnginePeriod(IAudioClient3 client, IntPtr fmt, Action<string>? log, string tag)
+    {
+        if (client.GetSharedModeEnginePeriod(fmt, out uint def, out _, out uint min, out _) < 0 || min == 0) return;
+        if (EngineMinPeriodFrames == 0 || min < EngineMinPeriodFrames) EngineMinPeriodFrames = min;
+        log?.Invoke($"IAudioClient3 {tag} engine default={def} min={min} ({min * 1000.0 / _rate:F1} ms)");
+    }
+
+    bool TryClient3(ref IAudioClient3 client, IntPtr fmt, uint flags, Action<string>? log, string tag, out uint period, int ch, bool ieeeFloat)
+    {
+        period = 0;
+        if (client.GetSharedModeEnginePeriod(fmt, out uint def, out _, out uint min, out _) < 0 || min == 0)
+            return false;
+        if (EngineMinPeriodFrames == 0 || min < EngineMinPeriodFrames) EngineMinPeriodFrames = min;
+        foreach (var (p, which) in new[] { (min, "min"), (def, "default") })
+        {
+            if (p == 0) continue;
+            if (which == "default" && p == min) continue;
+            int hr = client.InitializeSharedAudioStream(flags, p, fmt, IntPtr.Zero);
+            if (hr >= 0)
+            {
+                UsedAudioClient3 = true;
+                period = p;
+                SetOutputLayout(ch, ieeeFloat);
+                log?.Invoke($"IAudioClient3 {tag}/{which} period={p} ({p * 1000.0 / _rate:F1} ms) ok");
+                return true;
+            }
+            log?.Invoke($"IAudioClient3 {tag}/{which} period={p} ({p * 1000.0 / _rate:F1} ms) flags=0x{flags:X} hr=0x{(uint)hr:X8}");
+            ReplaceClient();
+            client = _client!;
+        }
+        return false;
+    }
+
+    void SetOutputLayout(int ch, bool ieeeFloat)
+    {
+        _outCh = Math.Max(1, ch);
+        _outFloat = ieeeFloat;
+        _bytesPerFrame = _outCh * (ieeeFloat ? 4 : 2);
+    }
+
+    static bool TryParseMix(IntPtr p, out int ch, out int rate, out int bits, out bool ieeeFloat)
+    {
+        ch = rate = bits = 0; ieeeFloat = false;
+        if (p == IntPtr.Zero) return false;
+        var head = new byte[40];
+        Marshal.Copy(p, head, 0, 18);
+        var wf = Marshal.PtrToStructure<WaveFormatEx>(p);
+        int n = Math.Min(40, 18 + wf.Size);
+        if (n > 18) Marshal.Copy(p, head, 0, n);
+        return WaveFormatBlob.TryParse(head.AsSpan(0, Math.Max(16, n)), out ch, out rate, out bits, out ieeeFloat);
     }
 
     private void ReplaceClient()
@@ -191,10 +265,15 @@ internal sealed class LowLatencyRenderer : IDisposable
         Wasapi.Check(render.GetBuffer(frames, out var ptr), "GetBuffer");
         if (!silent)
         {
-            int bytes = (int)frames * _bytesPerFrame;
-            int got = _src.Read(_tmp, 0, bytes);
-            if (got < bytes) Array.Clear(_tmp, got, bytes - got);
-            Marshal.Copy(_tmp, 0, ptr, bytes);
+            int srcBytes = (int)frames * _src.Channels * 2;
+            int outBytes = (int)frames * _bytesPerFrame;
+            if (_tmp.Length < Math.Max(srcBytes, outBytes))
+                _tmp = new byte[Math.Max(srcBytes, outBytes)];
+            int got = _src.Read(_tmp, 0, srcBytes);
+            if (got < srcBytes) Array.Clear(_tmp, got, srcBytes - got);
+            if (_outFloat)
+                ExpandS16ToF32(_tmp, (int)frames, _src.Channels, _outCh);
+            Marshal.Copy(_tmp, 0, ptr, outBytes);
         }
         Wasapi.Check(render.ReleaseBuffer(frames, silent ? Wasapi.BufferSilent : 0), "ReleaseBuffer");
     }
@@ -254,6 +333,28 @@ internal sealed class LowLatencyRenderer : IDisposable
         try { _evt?.Dispose(); } catch (Exception) { }
     }
 
+    static void ExpandS16ToF32(byte[] buf, int frames, int srcCh, int dstCh)
+    {
+        // Convert in place from the end so the wider f32 values do not overwrite unread s16 samples.
+        for (int f = frames - 1; f >= 0; f--)
+        {
+            int srcOff = f * srcCh * 2;
+            short left = (short)(buf[srcOff] | (buf[srcOff + 1] << 8));
+            short right = srcCh > 1 ? (short)(buf[srcOff + 2] | (buf[srcOff + 3] << 8)) : left;
+            float fl = left / 32768f, fr = right / 32768f;
+            int dstOff = f * dstCh * 4;
+            WriteF32(buf, dstOff, fl);
+            if (dstCh > 1) WriteF32(buf, dstOff + 4, dstCh == 1 ? fl : fr);
+        }
+    }
+
+    static void WriteF32(byte[] buf, int off, float v)
+    {
+        uint bits = (uint)BitConverter.SingleToInt32Bits(v);
+        buf[off] = (byte)bits; buf[off + 1] = (byte)(bits >> 8);
+        buf[off + 2] = (byte)(bits >> 16); buf[off + 3] = (byte)(bits >> 24);
+    }
+
     private static void TryRelease(object? com)
     {
         if (com is null) return;
@@ -278,6 +379,8 @@ internal sealed class AudioEngine : IDisposable
     public string Describe { get; private set; } = "";
     public int LatencyMs { get; private set; }
     public double PeriodMs => _ll?.PeriodMs ?? 0;
+    public double EngineMinMs => _ll?.EngineMinMs ?? 0;
+    public bool UsedAudioClient3 => _ll?.UsedAudioClient3 ?? false;
     public bool Playing => _ll?.Running == true;
     public event Action<string>? Failed;
 
@@ -321,6 +424,12 @@ internal sealed class AudioEngine : IDisposable
         string name;
         try { name = WasapiDevices.NameOf(dev); }
         catch (Exception) { name = deviceId; }
+        var chs = channels == 1 ? new[] { 1 } : new[] { channels, 1 };
+        if (mode == OutputMode.Auto)
+        {
+            OpenAuto(dev, deviceId, name, rx, chs, latencyMs, log);
+            return;
+        }
         var tries = mode switch
         {
             OutputMode.Exclusive => new[] { OutputMode.Exclusive, OutputMode.LowLatency },
@@ -329,23 +438,11 @@ internal sealed class AudioEngine : IDisposable
         };
         Exception? last = null;
         foreach (var m in tries)
-            foreach (var ch in channels == 1 ? new[] { 1 } : new[] { channels, 1 })
+            foreach (var ch in chs)
             {
                 try
                 {
-                    var r = new LowLatencyRenderer(dev, new ReceiverWaveProvider(rx, ch), m);
-                    r.Failed += why => { if (ReferenceEquals(r, _ll)) Failed?.Invoke(why); };
-                    r.Start();
-                    _ll = r;
-                    _lastFillMs = double.NaN;
-                    ActiveMode = m;
-                    string api = r.UsedAudioClient3 ? "IAudioClient3" : "IAudioClient";
-                    string min = r.EngineMinPeriodFrames > 0 ? $", engine min {r.EngineMinPeriodFrames * 1000.0 / 48000:F1} ms" : "";
-                    Describe = $"{m} {(m == OutputMode.Exclusive ? "exclusive" : "shared")}, {ch} ch, {api} period {r.PeriodMs:F1} ms, buffer {r.BufferMs:F1} ms{min}";
-                    ActiveId = deviceId;
-                    ActiveName = name;
-                    LatencyMs = latencyMs;
-                    LastError = null;
+                    Adopt(OpenRenderer(dev, rx, ch, m, log), deviceId, name, m, ch, latencyMs);
                     return;
                 }
                 catch (Exception e)
@@ -355,6 +452,89 @@ internal sealed class AudioEngine : IDisposable
                 }
             }
         throw last ?? new InvalidOperationException("no output path opened");
+    }
+
+    void OpenAuto(IMMDevice dev, string deviceId, string name, Receiver rx, int[] chs, int latencyMs, Action<string>? log)
+    {
+        Exception? last = null;
+        LowLatencyRenderer? shared = null;
+        int sharedCh = chs[0];
+        foreach (var ch in chs)
+        {
+            try { shared = OpenRenderer(dev, rx, ch, OutputMode.LowLatency, log); sharedCh = ch; break; }
+            catch (Exception e) { last = e; log?.Invoke($"output Auto/shared/{ch}ch on '{name}' failed: {e.Message}"); }
+        }
+        double sharedPeriod = shared?.PeriodMs ?? double.PositiveInfinity;
+        double exclEst = EstimateExclusiveMs(dev);
+        bool tryExcl = shared is null || sharedPeriod > exclEst + 0.4;
+        if (tryExcl)
+        {
+            shared?.Dispose();
+            shared = null;
+            LowLatencyRenderer? excl = null;
+            int exclCh = chs[0];
+            foreach (var ch in chs)
+            {
+                try { excl = OpenRenderer(dev, rx, ch, OutputMode.Exclusive, log); exclCh = ch; break; }
+                catch (Exception e) { last = e; log?.Invoke($"output Auto/exclusive/{ch}ch on '{name}' failed: {e.Message}"); }
+            }
+            if (excl is not null && excl.PeriodMs + 0.15 < sharedPeriod)
+            {
+                log?.Invoke($"auto chose Exclusive ({excl.PeriodMs:F1} ms) over shared ({(double.IsInfinity(sharedPeriod) ? 0 : sharedPeriod):F1} ms)");
+                Adopt(excl, deviceId, name, OutputMode.Exclusive, exclCh, latencyMs);
+                return;
+            }
+            excl?.Dispose();
+            foreach (var ch in chs)
+            {
+                try { shared = OpenRenderer(dev, rx, ch, OutputMode.LowLatency, log); sharedCh = ch; break; }
+                catch (Exception e) { last = e; log?.Invoke($"output Auto/shared-retry/{ch}ch on '{name}' failed: {e.Message}"); }
+            }
+        }
+        if (shared is not null)
+        {
+            if (tryExcl && !double.IsInfinity(sharedPeriod))
+                log?.Invoke($"auto kept shared ({shared.PeriodMs:F1} ms)");
+            Adopt(shared, deviceId, name, OutputMode.LowLatency, sharedCh, latencyMs);
+            return;
+        }
+        throw last ?? new InvalidOperationException("no output path opened");
+    }
+
+    static LowLatencyRenderer OpenRenderer(IMMDevice dev, Receiver rx, int ch, OutputMode mode, Action<string>? log)
+    {
+        var r = new LowLatencyRenderer(dev, new ReceiverWaveProvider(rx, ch), mode, log);
+        r.Start();
+        return r;
+    }
+
+    static double EstimateExclusiveMs(IMMDevice dev)
+    {
+        var iid = Wasapi.IidAudioClient3;
+        if (dev.Activate(ref iid, Wasapi.ClsCtxAll, IntPtr.Zero, out var obj) < 0) return 3;
+        var client = (IAudioClient3)obj;
+        try
+        {
+            if (client.GetDevicePeriod(out _, out long min100ns) < 0 || min100ns <= 0) return 3;
+            double ms = min100ns / 10_000.0;
+            return ms < 3 ? 3 : ms;
+        }
+        finally { try { Marshal.ReleaseComObject(client); } catch (Exception) { } }
+    }
+
+    void Adopt(LowLatencyRenderer r, string deviceId, string name, OutputMode mode, int ch, int latencyMs)
+    {
+        r.Failed += why => { if (ReferenceEquals(r, _ll)) Failed?.Invoke(why); };
+        _ll = r;
+        _lastFillMs = double.NaN;
+        ActiveMode = mode;
+        string api = r.UsedAudioClient3 ? "IAudioClient3" : "IAudioClient";
+        string min = r.EngineMinMs > 0 ? $", engine min {r.EngineMinMs:F1} ms" : "";
+        Describe = $"{mode} {(mode == OutputMode.Exclusive ? "exclusive" : "shared")}, {ch} ch, {api} period {r.PeriodMs:F1} ms, buffer {r.BufferMs:F1} ms{min}";
+        ActiveId = deviceId;
+        ActiveName = name;
+        LatencyMs = latencyMs;
+        LastError = null;
     }
 
     public void Fail(string why) { LastError = why; Stop(); }

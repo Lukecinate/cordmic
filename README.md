@@ -128,11 +128,15 @@ preset, noise cancellation, mic gain, start-with-Windows and the log. Hover the 
 time and packet loss over the last 10 seconds. Right-click for the menu:
 
 - **Output device** – *Automatic* (best virtual cable found) or a specific one (VB-CABLE A–D, VAC, VoiceMeeter).
-- **Output mode** – *Low latency* (default: shared mode, about one Windows audio period queued), *Stable* (keeps
-  the whole Windows buffer full, as before 0.4.2; use it if audio crackles on a busy PC) or *Exclusive* (WASAPI
-  exclusive mode, lowest delay; CordMic then owns "CABLE Input" and falls back to Low latency if the device refuses).
-- **Jitter buffer** – Low 5 ms / Normal 10 ms (default) / Safe 20 ms. The app raises the target when the Windows
-  period cannot sustain it (a 10 ms period floors Low and Normal at 15 ms). Use Safe if audio still crackles.
+- **Output mode** – *Auto* (default on new installs: shortest stable period; tries Exclusive only when that would
+  be shorter), *Low latency* (shared mode, about one Windows audio period queued), *Stable* (keeps the whole
+  Windows buffer full, as before 0.4.2; use it if audio crackles on a busy PC) or *Exclusive* (WASAPI exclusive
+  mode, lowest delay; CordMic then owns "CABLE Input" and falls back to Low latency if the device refuses).
+  An explicit choice is never overwritten.
+- **Jitter buffer** – Low 5 ms / Normal 10 ms (default) / Safe 20 ms. The app raises the target to at least two
+  render periods (20 ms at a 10 ms period, 10 ms at a 2.7 ms period). Use Safe if audio still crackles.
+- **Optimize VB-CABLE** – in Settings, or automatically during setup. Sets stereo *CABLE Input* and *CABLE Output*
+  to 16-bit 48 kHz and turns off enhancements. Details and how to undo: [docs/SECURITY.md](docs/SECURITY.md).
 - **Mic mode** – explains the capture modes (selected in the phone app).
 - **Setup guide**, **Fix phone network priority** (shown only when internet goes through the phone; asks for UAC),
   **Open log**, **Start with Windows**, **Language / Bahasa** (Automatic, English, Bahasa Indonesia), **Exit**.
@@ -143,6 +147,8 @@ time and packet loss over the last 10 seconds. Right-click for the menu:
 |---|---|
 | Settings | `%APPDATA%\CordMic\settings.json` |
 | App log (stats every 10 s while connected) | `%LOCALAPPDATA%\CordMic\logs\cordmic.log` |
+| VB-CABLE helper log | `%LOCALAPPDATA%\CordMic\logs\cable-helper.log` |
+| VB-CABLE format backup | `%ProgramData%\CordMic\cable-format-backup.json` |
 | Installer / metric task logs | `C:\ProgramData\CordMic\` |
 
 ## Using the Android app
@@ -304,12 +310,12 @@ A 0.4.2 log from a real Windows 11 PC (VB-CABLE, 10 ms shared period, phone not 
 (loss about 0, jitter under 1 ms, round trip 5–7 ms) and a jitter buffer that still underran about 30 times a
 minute on Normal and about 370 times a minute on Low, with several times as many hard overflows. The render
 callback consumes one 10 ms period. Normal's 10 ms target and Low's 5 ms target leave nothing after that pull,
-so the buffer hits empty, rebuffers, then the hard cap dumps the pile. 0.5.0 asks IAudioClient3 for the shortest
-shared period the device will give and refuses a jitter target below one pull plus one packet. A synthetic
-10 ms-period run of that failure mode dropped underruns from about 570/min to about 2/min. Noise cancellation
-on the phone adds 5.3 ms. For the lowest delay: *Latency → Low*, *Output mode → Low latency* (then try
-*Exclusive*), leave noise cancellation on only if you want it, and set both "CABLE Input" and "CABLE Output"
-to 48000 Hz in Windows Sound settings so Windows does not resample.
+so the buffer hits empty, rebuffers, then the hard cap dumps the pile. 0.5.2 asks IAudioClient3 for the shortest shared period using the device mix format (without
+`AUTOCONVERTPCM`), prefers stereo *CABLE Input* over *CABLE In 16ch*, and floors the jitter target at two
+render periods. A sample-level drift lock replaces packet-drop catch-up. For the lowest delay: *Latency → Low*,
+*Output mode → Auto* (or *Exclusive* if you want to force it), leave noise cancellation on only if you want it,
+and use *Optimize VB-CABLE* so both "CABLE Input" and "CABLE Output" are 48 kHz stereo. See
+[docs/SECURITY.md](docs/SECURITY.md) for what that changes and how to undo it.
 
 To measure it on your own setup: in OBS add two *Audio Input Capture* sources, (a) "CABLE Output" and (b) another
 physical mic (headset/webcam). Record, clap close to **both** mics, open the recording in Audacity and measure the
@@ -376,8 +382,9 @@ turn, `underrun` = buffer empty, `ovf` = packets dropped because the buffer was 
 Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 440 Hz test tone
 (`--loss` and `--jitter-ms` simulate a bad link).
 
-For best results set VB-CABLE to 48 kHz: *Control Panel → Sound → Playback → CABLE Input → Properties → Advanced*
-and *Recording → CABLE Output → Advanced*. Do not make CABLE Input your default playback device.
+The installer (and the *Optimize VB-CABLE* button) set stereo CABLE Input and CABLE Output to 16-bit 48 kHz
+and disable enhancements. Do not make CABLE Input your default playback device. To undo the format change, run
+`CordMic.exe --restore-cable` or uninstall; see [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Upgrading from UsbMic
 
@@ -392,7 +399,7 @@ CordMic was previously called **UsbMic**. The audio protocol is unchanged (`UM` 
 ## Roadmap
 
 1. **Opus** (48 kHz, 2.5/5 ms frames, FEC) as an option; PCM stays the default.
-2. **Clock-drift compensation** – insert or drop single samples instead of whole packets.
+2. ~~**Clock-drift compensation**~~ – sample-level skip/insert shipped in 0.5.2.
 3. **Native virtual audio driver** ("CordMic Microphone" without VB-CABLE), based on Microsoft's SysVAD samples or
    ACX on Windows 11. Kernel drivers must be signed by Microsoft (EV certificate + attestation signing), which is
    why this is a separate milestone. Windows has no user-mode API for a system-wide virtual microphone.

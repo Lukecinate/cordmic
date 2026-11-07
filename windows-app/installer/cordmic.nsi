@@ -7,7 +7,7 @@ SetCompressorDictSize 64
 
 !define APPNAME   "CordMic"
 !ifndef VERSION
-  !define VERSION "0.5.1"
+  !define VERSION "0.5.2"
 !endif
 !define PUBLISHER "CordMic contributors"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CordMic"
@@ -195,6 +195,14 @@ Section "$(SecMainName)" SecMain
     nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="CordMic (UDP 50005)" dir=in action=allow protocol=UDP localport=50005 program="$INSTDIR\CordMic.exe" remoteip=localsubnet profile=any'
     Pop $0
   ${EndIf}
+
+  DetailPrint "Optimizing VB-CABLE (48 kHz stereo, enhancements off) if it is installed..."
+  nsExec::ExecToLog '"$INSTDIR\CordMic.exe" --configure-cable'
+  Pop $0
+  ${If} $0 != 0
+  ${AndIf} $0 != 2
+    DetailPrint "VB-CABLE optimize skipped or failed (exit $0). CordMic will still work."
+  ${EndIf}
 SectionEnd
 
 Section "$(SecStartupName)" SecStartup
@@ -210,6 +218,9 @@ Section "Uninstall"
   nsExec::Exec '"$SYSDIR\taskkill.exe" /IM CordMic.exe /F'
   Pop $0
   Sleep 700
+  DetailPrint "Restoring VB-CABLE device format if CordMic changed it..."
+  nsExec::ExecToLog '"$INSTDIR\CordMic.exe" --restore-cable'
+  Pop $0
   nsExec::ExecToLog '"${PS}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\tools\cordmic-setup.ps1" -Action Uninstall'
   Pop $0
   nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="CordMic (UDP 50005)"'

@@ -14,13 +14,18 @@ internal static class Wasapi
     public const uint StreamSrcDefaultQuality = 0x08000000;
     public const uint BufferSilent = 0x2;
     public const int ShareShared = 0, ShareExclusive = 1;
-    public const int Render = 0, AllDevices = 2;
+    public const int Render = 0, Capture = 1, AllDevices = 2;
+    public const int StgmRead = 0, StgmReadWrite = 1;
     public const int DeviceActive = 0x1;
     public const int ClsCtxAll = 23;
 
     public static readonly Guid IidAudioClient3 = new("7ED4EE07-8E67-4CD4-8C1A-2B7A5987AD42");
     public static readonly Guid IidAudioRenderClient = new("F294ACFC-3146-4483-A7BF-ADDCA7C260E2");
     public static readonly PropertyKey FriendlyNameKey = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 14);
+    public static readonly PropertyKey ManufacturerKey = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 13);
+    public static readonly PropertyKey DeviceFormatKey = new(new Guid("f19f064d-082c-4e27-bc73-6882a1bb8e4c"), 0);
+    public static readonly PropertyKey OemFormatKey = new(new Guid("e4870e26-3cc5-4cd2-ba46-ca0a9a70ed04"), 3);
+    public static readonly PropertyKey DisableSysFxKey = new(new Guid("1da5d803-d492-4edd-8c23-e0c0ffee7f0e"), 5);
 
     [DllImport("ole32.dll")]
     public static extern int PropVariantClear(ref PropVariant p);
@@ -50,6 +55,9 @@ internal struct PropVariant
 {
     [FieldOffset(0)] public ushort vt;
     [FieldOffset(8)] public IntPtr ptr;
+    [FieldOffset(8)] public uint ulVal;
+    [FieldOffset(8)] public uint blobSize;
+    [FieldOffset(16)] public IntPtr blobData;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]

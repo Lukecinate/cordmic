@@ -19,6 +19,9 @@ internal sealed class MainForm : Form
     private readonly CheckBox _nc, _startup;
     private readonly TrackBar _gain;
     private readonly Label _gainValue, _noCable;
+    private Label _cableHint = null!;
+    private Label _periodHint = null!;
+    private Button _optimize = null!;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 32 };
     private bool _settingsOpen, _suppress;
     private int _animTicks;
@@ -207,6 +210,35 @@ internal sealed class MainForm : Form
         get.LinkClicked += (_, _) => Open(CableUrl);
         y += Sx(28);
         get.Location = new Point(x + Sx(120), logs.Top);
+        y += Sx(8);
+
+        _optimize = new Button
+        {
+            Text = L.T("ui.cable.optimize"), Font = Theme.Body, FlatStyle = FlatStyle.Flat,
+            Location = new Point(x, y), Width = w, Height = Sx(32),
+            BackColor = Theme.Surface, ForeColor = Theme.Ink, Cursor = Cursors.Hand,
+        };
+        _optimize.FlatAppearance.BorderColor = Theme.Line;
+        _optimize.Click += (_, _) => _app.RequestOptimizeCable();
+        p.Controls.Add(_optimize);
+        y += Sx(38);
+
+        _cableHint = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = false,
+            Location = new Point(x, y), Width = w, Height = Sx(36),
+            BackColor = Theme.Surface,
+        };
+        p.Controls.Add(_cableHint);
+        y += Sx(38);
+
+        _periodHint = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Amber, AutoSize = false,
+            Location = new Point(x, y), Width = w, Height = Sx(36),
+            BackColor = Theme.Surface,
+        };
+        p.Controls.Add(_periodHint);
         y += Sx(20);
 
         noCable.Location = new Point(x, y);
@@ -309,6 +341,12 @@ internal sealed class MainForm : Form
         else _detail.Text = st.Detail;
 
         _noCable.Visible = _app.CableName is null && _app.OutputDeviceId is null;
+        _optimize.Visible = _app.CableFound || _app.CableNeedsOptimize;
+        _optimize.Enabled = true;
+        _cableHint.Text = _app.OptimizeHint ?? "";
+        _cableHint.ForeColor = _app.CableNeedsOptimize ? Theme.Amber : Theme.Muted;
+        _periodHint.Text = _app.PeriodHint ?? "";
+        _periodHint.Visible = !string.IsNullOrEmpty(_app.PeriodHint);
 
         _suppress = true;
         try

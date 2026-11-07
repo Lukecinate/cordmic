@@ -23,7 +23,7 @@ public sealed class AppSettings
     public int MicGainDb { get; set; } = 12;
     /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    public OutputMode OutputMode { get; set; } = OutputMode.LowLatency;
+    public OutputMode OutputMode { get; set; } = OutputMode.Auto;
     /// <summary>UI language: "auto" (follow Windows), "en" or "id".</summary>
     public string Language { get; set; } = L.Auto;
 

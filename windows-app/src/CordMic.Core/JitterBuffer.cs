@@ -5,6 +5,8 @@ public sealed class JitterStats
     public long Pushed, Played, Concealed, Late, Duplicates, OverflowDrops, Underruns, Resets;
     /// <summary>Packets removed by the soft catch-up (drift / backlog control), each spliced with a crossfade.</summary>
     public long CatchUpDrops;
+    /// <summary>Single-sample skip/insert adjustments from the drift lock.</summary>
+    public long SampleSlips;
 }
 
 /// <summary>
@@ -13,10 +15,12 @@ public sealed class JitterStats
 ///
 /// Latency control:
 /// * Playback (re)starts once max(target, packets needed by the current pull) are buffered.
-/// * Every ~0.5 s of playout, if the smallest amount still queued right after a pull stays above the
-///   target, that standing backlog is removed one packet at a time by crossfading two packets into one.
-/// * The hard limit (<see cref="MaxDepth"/>) still drops the oldest packets at once for large bursts.
-/// The target itself must sit one packet above a render pull; see <see cref="JitterPolicy"/>.
+/// * The hard cap (<see cref="MaxDepth"/>) trims down to <see cref="HighWater"/> (target plus one
+///   period), not all the way back to the target, so a burst does not dump the buffer empty.
+/// * A sample-level drift lock (<see cref="DriftLock"/>) skips or inserts at most one frame per
+///   pull when the standing depth stays outside a one-period band around the target. Packet-drop
+///   catch-up (<see cref="CatchUp"/>) remains available but is off in production.
+/// The target itself is at least two render pulls; see <see cref="JitterPolicy"/>.
 /// </summary>
 public sealed class JitterBuffer
 {
@@ -38,6 +42,8 @@ public sealed class JitterBuffer
     private long _winMinResidual = long.MaxValue;
     private double _winDepthArea;
     private int _pendingDrop;
+    private int _slip;
+    private int _slipCooldown;
     private double _avgDepthMs = double.NaN, _minResidualMs = double.NaN;
 
     public int FramesPerPacket { get; private set; }
@@ -46,13 +52,19 @@ public sealed class JitterBuffer
     public int BytesPerPacket { get; private set; }
     public int Target { get; }
     public int MaxDepth { get; }
-    /// <summary>Soft catch-up on/off (on by default).</summary>
-    public bool CatchUp { get; set; } = true;
+    /// <summary>Overflow trim target (usually one period above <see cref="Target"/>).</summary>
+    public int HighWater { get; }
+    /// <summary>Packet-drop catch-up. Off in production; kept for tests and emergency use.</summary>
+    public bool CatchUp { get; set; }
+    /// <summary>Skip or insert one PCM frame per pull when depth stays outside the hysteresis band.</summary>
+    public bool DriftLock { get; set; }
+    /// <summary>WASAPI period used for hysteresis; 0 if unknown.</summary>
+    public double RenderPeriodMs { get; set; }
     /// <summary>Length of one catch-up decision window, in packets of playout.</summary>
     public int WindowPackets { get; set; } = 100;
     public JitterStats Stats { get; } = new();
 
-    public JitterBuffer(int framesPerPacket, int channels = 1, int targetPackets = 2, int? maxPackets = null, int sampleRate = 48000)
+    public JitterBuffer(int framesPerPacket, int channels = 1, int targetPackets = 2, int? maxPackets = null, int sampleRate = 48000, int? highWaterPackets = null)
     {
         if (targetPackets < 1) throw new ArgumentOutOfRangeException(nameof(targetPackets));
         FramesPerPacket = framesPerPacket;
@@ -61,6 +73,8 @@ public sealed class JitterBuffer
         BytesPerPacket = framesPerPacket * channels * 2;
         Target = targetPackets;
         MaxDepth = maxPackets ?? Math.Max(targetPackets * 3, targetPackets + 4);
+        HighWater = highWaterPackets ?? targetPackets;
+        if (HighWater < Target) throw new ArgumentOutOfRangeException(nameof(highWaterPackets));
         Alloc(BytesPerPacket);
     }
 
@@ -134,6 +148,8 @@ public sealed class JitterBuffer
         _buffering = true;
         _keepLen = 0; _keepOff = 0;
         _pendingDrop = 0;
+        _slip = 0;
+        _slipCooldown = 0;
         ResetWindowLocked();
         Stats.Resets++;
     }
@@ -183,7 +199,8 @@ public sealed class JitterBuffer
     {
         int span = SpanLocked();
         if (span <= MaxDepth) return;
-        int drop = span - Target;
+        int cap = Math.Max(Target, HighWater);
+        int drop = span - cap;
         for (int i = 0; i < drop; i++)
         {
             ClearSlot(_next!.Value);
@@ -286,14 +303,63 @@ public sealed class JitterBuffer
                     _keepLen = rem; _keepOff = 0;
                 }
             }
+            if (pos >= dst.Length)
+                ApplySlipLocked(dst);
             AccountLocked(before, dst.Length / (2 * Channels));
         }
         if (pos < dst.Length) dst[pos..].Clear();
     }
 
+    /// <summary>Skip or insert one frame without allocating. No-ops if the extra frame is not available.</summary>
+    private void ApplySlipLocked(Span<byte> dst)
+    {
+        if (!DriftLock || _slip == 0) return;
+        if (_slipCooldown > 0) return;
+        int fb = 2 * Channels;
+        if (fb <= 0 || dst.Length < fb) return;
+        if (_slip > 0)
+        {
+            if (_keepLen - _keepOff >= fb)
+            {
+                _keepOff += fb;
+                if (_keepOff >= _keepLen) { _keepLen = 0; _keepOff = 0; }
+                Stats.SampleSlips++; _slipCooldown = FramesPerPacket;
+                return;
+            }
+            if (!CopyPacketLocked(_out, 1)) return;
+            int rem = BytesPerPacket - fb;
+            if (rem > 0)
+            {
+                _out.AsSpan(fb, rem).CopyTo(_keep);
+                _keepLen = rem;
+                _keepOff = 0;
+            }
+            else { _keepLen = 0; _keepOff = 0; }
+            Stats.SampleSlips++; _slipCooldown = FramesPerPacket;
+            return;
+        }
+        // Insert: put the last played frame back at the front of the leftover so it plays again.
+        if (dst.Length < 2 * fb) return;
+        int held = _keepLen - _keepOff;
+        if (held + fb > _keep.Length) return;
+        if (_keepOff > 0 && held > 0)
+        {
+            Buffer.BlockCopy(_keep, _keepOff, _keep, 0, held);
+            _keepLen = held;
+            _keepOff = 0;
+        }
+        else if (held == 0) { _keepLen = 0; _keepOff = 0; }
+        if (_keepLen > 0) Buffer.BlockCopy(_keep, 0, _keep, fb, _keepLen);
+        dst.Slice(dst.Length - fb, fb).CopyTo(_keep.AsSpan(0, fb));
+        _keepLen += fb;
+        _keepOff = 0;
+        Stats.SampleSlips++; _slipCooldown = FramesPerPacket;
+    }
+
     private void AccountLocked(long beforeFrames, int pulledFrames)
     {
         if (_next is null || pulledFrames <= 0) return;
+        if (_slipCooldown > 0) _slipCooldown = Math.Max(0, _slipCooldown - pulledFrames);
         long after = QueuedFramesLocked();
         _winFrames += pulledFrames;
         _winDepthArea += (beforeFrames + after) / 2.0 * pulledFrames;
@@ -301,10 +367,24 @@ public sealed class JitterBuffer
         if (_winFrames < (long)WindowPackets * FramesPerPacket) return;
         _avgDepthMs = _winDepthArea / _winFrames * 1000.0 / SampleRate;
         _minResidualMs = _winMinResidual * 1000.0 / SampleRate;
+        double pktMs = 1000.0 * FramesPerPacket / SampleRate;
+        double targetMs = Target * pktMs;
+        double bandMs = RenderPeriodMs > 0 ? RenderPeriodMs : pktMs;
         if (CatchUp)
         {
-            long excess = _winMinResidual - (long)Target * FramesPerPacket;
+            // Hysteresis: only drop packets when the leftover stayed a full period above the target.
+            long high = (long)Math.Round((targetMs + bandMs) / 1000.0 * SampleRate);
+            long excess = _winMinResidual - high;
             _pendingDrop = excess >= FramesPerPacket ? (int)(excess / FramesPerPacket) : 0;
+        }
+        if (DriftLock)
+        {
+            if (_minResidualMs > targetMs + bandMs && _avgDepthMs > targetMs + bandMs)
+                _slip = 1;
+            else if (_avgDepthMs < targetMs - bandMs * 0.25 && _minResidualMs > 0)
+                _slip = -1;
+            else if (_avgDepthMs >= targetMs - bandMs * 0.1 && _avgDepthMs <= targetMs + bandMs * 0.5)
+                _slip = 0;
         }
         ResetWindowLocked();
     }

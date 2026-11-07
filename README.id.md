@@ -129,12 +129,16 @@ yang sama (jaringan = ½ RTT USB, rata-rata waktu tunggu di jitter buffer, dan b
 serta RTT dan loss 10 detik terakhir. Klik kanan untuk menu:
 
 - **Perangkat output** – *Otomatis* (kabel virtual terbaik) atau pilih manual (VB-CABLE A–D, VAC, VoiceMeeter).
-- **Mode output** – *Latensi rendah* (default: mode shared, kira-kira satu periode audio Windows yang diantrekan),
-  *Stabil* (buffer Windows selalu penuh seperti sebelum 0.4.2; pakai kalau suara putus-putus saat PC sibuk) atau
-  *Eksklusif* (mode eksklusif WASAPI, jeda terendah; CordMic memakai "CABLE Input" sendiri dan kembali ke Latensi
-  rendah bila perangkat menolak).
-- **Jitter buffer** – Rendah 5 ms / Normal 10 ms (default) / Aman 20 ms. Target dinaikkan bila periode Windows
-  tidak sanggup (periode 10 ms membuat Rendah dan Normal menjadi 15 ms). Pakai Aman kalau suara masih putus-putus.
+- **Mode output** – *Otomatis* (default instal baru: periode stabil terpendek; mencoba Eksklusif hanya jika lebih
+  pendek), *Latensi rendah* (mode shared, kira-kira satu periode audio Windows), *Stabil* (buffer Windows selalu
+  penuh seperti sebelum 0.4.2; pakai kalau suara putus-putus saat PC sibuk) atau *Eksklusif* (mode eksklusif WASAPI,
+  jeda terendah; CordMic memakai "CABLE Input" sendiri dan kembali ke Latensi rendah bila perangkat menolak).
+  Pilihan yang sudah disimpan tidak diganti diam-diam.
+- **Jitter buffer** – Rendah 5 ms / Normal 10 ms (default) / Aman 20 ms. Target dinaikkan menjadi minimal dua
+  periode render (20 ms pada periode 10 ms, 10 ms pada periode 2,7 ms). Pakai Aman kalau suara masih putus-putus.
+- **Optimalkan VB-CABLE** – di Pengaturan, atau otomatis saat instalasi. Mengatur *CABLE Input* dan *CABLE Output*
+  stereo ke 16-bit 48 kHz dan mematikan enhancement. Rincian dan cara mengembalikan:
+  [docs/SECURITY.md](docs/SECURITY.md).
 - **Mode mic** – penjelasan mode capture (dipilih di aplikasi HP).
 - **Buka CordMic**, **Perbaiki prioritas jaringan HP** (muncul hanya bila internet lewat HP; minta UAC),
   **Buka log**, **Jalan saat Windows mulai**, **Language / Bahasa** (Otomatis, English, Bahasa Indonesia), **Keluar**.
@@ -145,6 +149,8 @@ serta RTT dan loss 10 detik terakhir. Klik kanan untuk menu:
 |---|---|
 | Setting | `%APPDATA%\CordMic\settings.json` |
 | Log aplikasi (statistik tiap 10 detik saat terhubung) | `%LOCALAPPDATA%\CordMic\logs\cordmic.log` |
+| Log pembantu VB-CABLE | `%LOCALAPPDATA%\CordMic\logs\cable-helper.log` |
+| Cadangan format VB-CABLE | `%ProgramData%\CordMic\cable-format-backup.json` |
 | Log installer / task metric | `C:\ProgramData\CordMic\` |
 
 ## Aplikasi Android
@@ -306,11 +312,12 @@ AAudio) menunjukkan tautan yang bersih (kehilangan sekitar 0, jitter di bawah 1 
 jitter buffer tetap underrun sekitar 30 kali per menit pada Normal dan sekitar 370 kali per menit pada Rendah,
 dengan overflow keras beberapa kali lebih banyak. Callback render memakai satu periode 10 ms. Target Normal 10 ms
 dan Rendah 5 ms tidak menyisakan apa pun setelah tarikan itu, jadi buffer kosong, diisi ulang, lalu batas keras
-membuang tumpukan. 0.5.0 meminta periode shared terpendek lewat IAudioClient3 dan menolak target jitter di bawah
-satu tarikan plus satu paket. Simulasi mode kegagalan periode 10 ms menurunkan underrun dari sekitar 570/menit
-menjadi sekitar 2/menit. Peredam bising di HP menambah 5,3 ms. Untuk jeda terendah: *Latensi → Rendah*,
-*Mode output → Latensi rendah* (lalu coba *Eksklusif*), nyalakan peredam bising hanya jika diperlukan, dan atur
-"CABLE Input" serta "CABLE Output" ke 48000 Hz di pengaturan Sound Windows agar tidak terjadi resampling.
+membuang tumpukan. 0.5.2 meminta periode shared terpendek lewat IAudioClient3 dengan format mix perangkat
+(tanpa `AUTOCONVERTPCM`), memilih *CABLE Input* stereo daripada *CABLE In 16ch*, dan menolak target jitter di
+bawah dua periode render. Kunci drift bekerja per sampel, bukan membuang paket. Untuk jeda terendah:
+*Latensi → Rendah*, *Mode output → Otomatis* (atau *Eksklusif* jika ingin memaksa), nyalakan peredam bising
+hanya jika diperlukan, dan pakai *Optimalkan VB-CABLE* agar "CABLE Input" serta "CABLE Output" memakai stereo
+48 kHz. Lihat [docs/SECURITY.md](docs/SECURITY.md) untuk perubahan itu dan cara mengembalikannya.
 
 Cara mengukur di perangkat Anda: di OBS tambahkan dua *Audio Input Capture*, (a) "CABLE Output" dan (b) mic fisik
 lain (headset/webcam). Rekam, tepuk tangan di dekat **kedua** mic, buka rekaman di Audacity, lalu ukur jarak antar
@@ -376,8 +383,9 @@ Arti statistik: `lost` = gap nomor urut, `plc` = slot yang diisi hening, `late` 
 Tanpa HP, `python sim_sender.py --host 127.0.0.1 --seconds 10` mengirim nada uji 440 Hz (`--loss` dan `--jitter-ms`
 menyimulasikan link buruk).
 
-Untuk hasil terbaik, set VB-CABLE ke 48 kHz: *Control Panel → Sound → Playback → CABLE Input → Properties →
-Advanced* dan *Recording → CABLE Output → Advanced*. Jangan jadikan CABLE Input perangkat playback default.
+Installer (dan tombol *Optimalkan VB-CABLE*) mengatur CABLE Input dan CABLE Output stereo ke 16-bit 48 kHz
+serta mematikan enhancement. Jangan jadikan CABLE Input perangkat playback default. Untuk mengembalikan format,
+jalankan `CordMic.exe --restore-cable` atau uninstall; lihat [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Upgrade dari UsbMic
 
@@ -392,7 +400,7 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audionya tidak berubah (header `
 ## Roadmap
 
 1. **Opus** (48 kHz, frame 2,5/5 ms, FEC) sebagai opsi; PCM tetap default.
-2. **Kompensasi clock drift** – sisipkan atau buang satu sampel, bukan satu paket.
+2. ~~**Kompensasi clock drift**~~ – skip/insert per sampel sudah ada di 0.5.2.
 3. **Driver audio virtual sendiri** ("CordMic Microphone" tanpa VB-CABLE), berbasis contoh SysVAD Microsoft atau ACX
    di Windows 11. Driver kernel wajib ditandatangani Microsoft (sertifikat EV + attestation signing), karena itu
    menjadi tahap tersendiri. Windows tidak punya API user-mode untuk mikrofon virtual tingkat sistem.

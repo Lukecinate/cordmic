@@ -1,3 +1,4 @@
+using CordMic.Core;
 namespace CordMic.App;
 
 internal static class Program
@@ -8,6 +9,18 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // Helper verbs run before the single-instance mutex so an elevated
+        // --configure-cable launched from a running tray app actually does work.
+        if (CableHelperArgs.MentionsHelperVerb(args))
+        {
+            if (!CableHelperArgs.TryParse(args, out var verb, out var err) || verb == CableHelperArgs.Verb.None)
+            {
+                Console.Error.WriteLine(err ?? "invalid helper arguments");
+                return CableHelperArgs.ExitUsage;
+            }
+            return CableHelper.Run(verb);
+        }
+
         bool tray = args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
         using var mutex = new Mutex(true, MutexName, out bool first);
         if (!first)
