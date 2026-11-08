@@ -43,6 +43,7 @@ internal sealed class AppController : ApplicationContext
     private DateTime _nextRxTry = DateTime.MinValue;
     private DateTime _nextAudioTry = DateTime.MinValue;
     private DateTime _nextStatsLog = DateTime.MinValue;
+    private DateTime _lastLocalSettingsUtc = DateTime.MinValue;
     private DateTime _peerSince = DateTime.MinValue;
     private List<RenderDevice> _devices = new();
     private Health? _shownHealth;
@@ -59,22 +60,10 @@ internal sealed class AppController : ApplicationContext
     public string? OutputDeviceId => _settings.OutputDeviceId;
     public IReadOnlyList<RenderDevice> Devices => _devices;
     public bool DisplayedNc => DisplayedNoiseMode != NoiseMode.Off;
-    public NoiseMode DisplayedNoiseMode
-    {
-        get
-        {
-            if (Stats?.Phone.Known == true)
-            {
-                var p = Stats.Phone;
-                if (!p.NoiseCancellation) return NoiseMode.Off;
-                return p.NoiseBits == 2 ? NoiseMode.Strong : p.NoiseBits == 1 ? NoiseMode.Light : _settings.NoiseMode;
-            }
-            return _settings.NoiseMode;
-        }
-    }
-    public bool DisplayedVoiceClarity => _settings.VoiceClarity;
-    public bool DisplayedAutoVolume => Stats?.Phone.Known == true ? Stats.Phone.Agc : _settings.AutoVolume;
-    public int DisplayedGain => Stats?.Phone is { Known: true, GainDb: >= 0 } p ? p.GainDb : Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb);
+    public NoiseMode DisplayedNoiseMode => SettingsPresentation.VisibleNoiseMode(_settings.NoiseMode);
+    public bool DisplayedVoiceClarity => SettingsPresentation.VisibleVoiceClarity(_settings.VoiceClarity);
+    public bool DisplayedAutoVolume => SettingsPresentation.VisibleAutoVolume(_settings.AutoVolume);
+    public int DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
     /// <summary>Name of the output the controller would open right now, for the connect window.</summary>
     public string? WantedOutputName => WantedOutput()?.Name;
     public TetherAdapter? Adapter => _net.Current;
@@ -244,6 +233,7 @@ internal sealed class AppController : ApplicationContext
         if (_rx is null) { Stats = null; return; }
         var s = _rx.Snapshot();
         Stats = s;
+        AbsorbPhoneEcho(s.Phone);
         var now = DateTime.UtcNow;
         _lossWin.Enqueue((now, s.Expected, s.Lost));
         while (_lossWin.Count > 1 && now - _lossWin.Peek().t > TimeSpan.FromSeconds(10)) _lossWin.Dequeue();
@@ -402,6 +392,7 @@ internal sealed class AppController : ApplicationContext
                 "CordMic", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
             if (ok != DialogResult.Yes) return;
         }
+        if (_settings.OutputDeviceId == d?.Id && _settings.OutputDeviceName == d?.Name) return;
         _settings.OutputDeviceId = d?.Id;
         _settings.OutputDeviceName = d?.Name;
         Save();
@@ -433,6 +424,7 @@ internal sealed class AppController : ApplicationContext
 
     public void SetJitter(JitterPreset p)
     {
+        if (_settings.Jitter == p) return;
         _settings.Jitter = p;
         Save();
         _rx?.SetJitterMs(Presets.Ms(p));
@@ -617,8 +609,11 @@ internal sealed class AppController : ApplicationContext
 
     public void SetNoiseMode(NoiseMode mode)
     {
+        if (_settings.NoiseMode == mode && _settings.NoiseCancellation == (mode != NoiseMode.Off))
+            return;
         _settings.NoiseMode = mode;
         _settings.NoiseCancellation = mode != NoiseMode.Off;
+        NoteLocalSettingsChanged();
         Save();
         if (_rx is { } rx) { rx.NoiseMode = mode; rx.NotifyLinkControlChanged(); }
         Log("noise cancellation -> " + mode.ToString().ToLowerInvariant());
@@ -626,7 +621,9 @@ internal sealed class AppController : ApplicationContext
 
     public void SetVoiceClarity(bool on)
     {
+        if (_settings.VoiceClarity == on) return;
         _settings.VoiceClarity = on;
+        NoteLocalSettingsChanged();
         Save();
         if (_rx is { } rx) { rx.VoiceClarity = on; rx.NotifyLinkControlChanged(); }
         Log("voice clarity -> " + (on ? "on" : "off"));
@@ -634,7 +631,9 @@ internal sealed class AppController : ApplicationContext
 
     public void SetAutoVolume(bool on)
     {
+        if (_settings.AutoVolume == on) return;
         _settings.AutoVolume = on;
+        NoteLocalSettingsChanged();
         Save();
         if (_rx is { } rx) { rx.Agc = on; rx.NotifyLinkControlChanged(); }
         Log("auto volume -> " + (on ? "on" : "off"));
@@ -643,6 +642,7 @@ internal sealed class AppController : ApplicationContext
     public void ResetAudioSettings()
     {
         _settings.ResetAudioDefaults();
+        NoteLocalSettingsChanged();
         Save();
         if (_rx is { } rx)
         {
@@ -658,7 +658,9 @@ internal sealed class AppController : ApplicationContext
     public void SetMicGain(int db)
     {
         db = Math.Clamp(db, 0, VoiceChain.MaxGainDb);
+        if (!SettingsPresentation.GainChanged(_settings.MicGainDb, db)) return;
         _settings.MicGainDb = db;
+        NoteLocalSettingsChanged();
         Save();
         if (_rx is { } rx)
         {
@@ -700,6 +702,38 @@ internal sealed class AppController : ApplicationContext
     {
         if (_icons.TryGetValue(h, out var i)) return i;
         return _icons[h] = Theme.TrayIcon(h);
+    }
+
+    private void NoteLocalSettingsChanged() => _lastLocalSettingsUtc = DateTime.UtcNow;
+
+    /// <summary>
+    /// Copy a phone-side change into local settings, but ignore PONGs that still
+    /// reflect the value from before the user's last edit.
+    /// </summary>
+    private void AbsorbPhoneEcho(PhoneLink phone)
+    {
+        if (!phone.Known) return;
+        if (!SettingsPresentation.ShouldAcceptPhoneEcho(_lastLocalSettingsUtc, DateTime.UtcNow)) return;
+
+        bool changed = false;
+        var nc = SettingsPresentation.NoiseModeFromPhone(phone.NoiseCancellation, phone.NoiseBits, _settings.NoiseMode);
+        if (nc != _settings.NoiseMode)
+        {
+            _settings.NoiseMode = nc;
+            _settings.NoiseCancellation = nc != NoiseMode.Off;
+            changed = true;
+        }
+        if (phone.Agc != _settings.AutoVolume)
+        {
+            _settings.AutoVolume = phone.Agc;
+            changed = true;
+        }
+        if (phone.GainDb >= 0 && SettingsPresentation.GainChanged(_settings.MicGainDb, phone.GainDb))
+        {
+            _settings.MicGainDb = phone.GainDb;
+            changed = true;
+        }
+        if (changed) Save();
     }
 
     private void Save()

@@ -23,6 +23,7 @@ internal sealed class MainForm : Form
     private Label _periodHint = null!;
     private Button _optimize = null!;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 32 };
+    private readonly System.Windows.Forms.Timer _gainDebounce = new() { Interval = 180 };
     private bool _settingsOpen, _suppress;
     private int _animTicks;
 
@@ -120,8 +121,9 @@ internal sealed class MainForm : Form
         Controls.Add(_settings);
 
         _anim.Tick += (_, _) => { _orb.Advance(); if (++_animTicks % 8 == 0) RefreshFromApp(); };
+        _gainDebounce.Tick += (_, _) => { _gainDebounce.Stop(); ApplyGain(); };
         Load += (_, _) => { LayoutHero(); FillDevices(); RefreshFromApp(); _anim.Start(); };
-        FormClosed += (_, _) => _anim.Dispose();
+        FormClosed += (_, _) => { _gainDebounce.Dispose(); _anim.Dispose(); };
         Resize += (_, _) => LayoutHero();
     }
 
@@ -202,8 +204,12 @@ internal sealed class MainForm : Form
         gainBar.ValueChanged += (_, _) =>
         {
             gainText.Text = L.T("ui.gainValue", gainBar.Value);
-            if (!_suppress) _app.SetMicGain(gainBar.Value);
+            if (_suppress) return;
+            _gainDebounce.Stop();
+            _gainDebounce.Start();
         };
+        gainBar.MouseUp += (_, _) => { _gainDebounce.Stop(); ApplyGain(); };
+        gainBar.KeyUp += (_, _) => { _gainDebounce.Stop(); ApplyGain(); };
         y += Sx(42);
 
         startup = new CheckBox
@@ -381,40 +387,75 @@ internal sealed class MainForm : Form
         _suppress = true;
         try
         {
-            for (int i = 0; i < _ncMode.Items.Count; i++)
-                if (_ncMode.Items[i] is NcModeItem it && it.Mode == _app.DisplayedNoiseMode)
-                { if (_ncMode.SelectedIndex != i) _ncMode.SelectedIndex = i; break; }
-            if (_clarity.Checked != _app.DisplayedVoiceClarity) _clarity.Checked = _app.DisplayedVoiceClarity;
-            if (_autoVol.Checked != _app.DisplayedAutoVolume) _autoVol.Checked = _app.DisplayedAutoVolume;
+            SelectCombo(_ncMode, i => _ncMode.Items[i] is NcModeItem it && it.Mode == _app.DisplayedNoiseMode);
+            if (CanWrite(_clarity) && _clarity.Checked != _app.DisplayedVoiceClarity) _clarity.Checked = _app.DisplayedVoiceClarity;
+            if (CanWrite(_autoVol) && _autoVol.Checked != _app.DisplayedAutoVolume) _autoVol.Checked = _app.DisplayedAutoVolume;
             int g = Math.Clamp(_app.DisplayedGain, 0, VoiceChain.MaxGainDb);
-            if (_gain.Value != g) _gain.Value = g;
+            if (CanWrite(_gain) && _gain.Value != g) _gain.Value = g;
             _gainValue.Text = L.T("ui.gainValue", _gain.Value);
             _gainValue.Location = new Point(_settings.Width - _gainValue.Width - Sx(24), _gain.Top - Sx(20));
-            try { if (_startup.Checked != Startup.IsEnabled()) _startup.Checked = Startup.IsEnabled(); }
+            try { if (CanWrite(_startup) && _startup.Checked != Startup.IsEnabled()) _startup.Checked = Startup.IsEnabled(); }
             catch (Exception) { }
-            for (int i = 0; i < _latency.Items.Count; i++)
-                if (_latency.Items[i] is PresetItem it && it.Preset == _app.Jitter) { if (_latency.SelectedIndex != i) _latency.SelectedIndex = i; break; }
-            for (int i = 0; i < _outMode.Items.Count; i++)
-                if (_outMode.Items[i] is OutModeItem it && it.Mode == _app.OutputMode) { if (_outMode.SelectedIndex != i) _outMode.SelectedIndex = i; break; }
+            SelectCombo(_latency, i => _latency.Items[i] is PresetItem it && it.Preset == _app.Jitter);
+            SelectCombo(_outMode, i => _outMode.Items[i] is OutModeItem it && it.Mode == _app.OutputMode);
         }
         finally { _suppress = false; }
+    }
+
+    private static bool CanWrite(Control c) =>
+        SettingsPresentation.ShouldApplyToControl(c.Focused, c.Capture, c is ComboBox box && box.DroppedDown);
+
+    private void SelectCombo(ComboBox box, Func<int, bool> match)
+    {
+        if (!CanWrite(box)) return;
+        for (int i = 0; i < box.Items.Count; i++)
+            if (match(i)) { if (box.SelectedIndex != i) box.SelectedIndex = i; break; }
+    }
+
+    private void ApplyGain()
+    {
+        if (_suppress) return;
+        _app.SetMicGain(_gain.Value);
     }
 
     private void FillDevices()
     {
         _app.RecheckDevices();
+        var auto = _app.CableName is null ? L.T("menu.output.autoNone") : L.T("menu.output.auto", _app.CableName);
+        var items = new List<DeviceItem> { new(null, auto) };
+        foreach (var d in _app.Devices.OrderBy(d => DeviceRules.VirtualCableRank(d.Name) is var r && r >= 0 ? r : 99).ThenBy(d => d.Name))
+            items.Add(new DeviceItem(d, d.Name));
+
+        bool same = _output.Items.Count == items.Count;
+        if (same)
+        {
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (_output.Items[i] is not DeviceItem cur || cur.Device?.Id != items[i].Device?.Id || cur.Label != items[i].Label)
+                { same = false; break; }
+            }
+        }
+
+        if (!CanWrite(_output) && same) return;
+
         _suppress = true;
         try
         {
-            _output.Items.Clear();
-            var auto = _app.CableName is null ? L.T("menu.output.autoNone") : L.T("menu.output.auto", _app.CableName);
-            _output.Items.Add(new DeviceItem(null, auto));
-            foreach (var d in _app.Devices.OrderBy(d => DeviceRules.VirtualCableRank(d.Name) is var r && r >= 0 ? r : 99).ThenBy(d => d.Name))
-                _output.Items.Add(new DeviceItem(d, d.Name));
+            if (!same && CanWrite(_output))
+            {
+                _output.BeginUpdate();
+                try
+                {
+                    _output.Items.Clear();
+                    foreach (var it in items) _output.Items.Add(it);
+                }
+                finally { _output.EndUpdate(); }
+            }
             int sel = 0;
             for (int i = 0; i < _output.Items.Count; i++)
                 if (_output.Items[i] is DeviceItem it && it.Device?.Id == _app.OutputDeviceId) { sel = i; break; }
-            if (_output.Items.Count > 0) _output.SelectedIndex = sel;
+            if (CanWrite(_output) && _output.Items.Count > 0 && _output.SelectedIndex != sel)
+                _output.SelectedIndex = sel;
         }
         finally { _suppress = false; }
     }
