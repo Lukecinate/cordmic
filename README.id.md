@@ -408,7 +408,7 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audionya tidak berubah (header `
 ## Roadmap
 
 1. **Opus** (48 kHz, frame 2,5/5 ms, FEC) sebagai opsi; PCM tetap default.
-2. ~~**Kompensasi clock drift**~~ – skip/insert per sampel sudah ada di 0.5.2; 0.5.3 men-crossfade setiap slip dan membatasi kontroler di ±150 ppm agar tidak berburu.
+2. ~~**Kompensasi clock drift**~~ – skip/insert per sampel sudah ada di 0.5.2; 0.5.3 men-crossfade setiap slip; 0.5.4 menaikkan batas menuju ±800 ppm jika selisih clock bertahan.
 3. **Driver audio virtual sendiri** ("CordMic Microphone" tanpa VB-CABLE), berbasis contoh SysVAD Microsoft atau ACX
    di Windows 11. Driver kernel wajib ditandatangani Microsoft (sertifikat EV + attestation signing), karena itu
    menjadi tahap tersendiri. Windows tidak punya API user-mode untuk mikrofon virtual tingkat sistem.

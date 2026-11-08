@@ -46,13 +46,15 @@ object Protocol {
             extended = extended,
             voiceClarity = f and 4 != 0,
             noiseMode = mode,
+            frontFocus = extended && f and 64 != 0,
         )
     }
 
     /** Writes the pong status at [off] and returns how many bytes were used. */
     fun writePongStatus(buf: ByteArray, off: Int, noiseCancellation: Boolean, agc: Boolean, aaudio: Boolean,
                         exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String,
-                        noiseMode: NoiseMode = NoiseMode.OFF): Int {
+                        noiseMode: NoiseMode = NoiseMode.OFF, frontFocus: Boolean = false,
+                        dirCode: Int = 0, micCount: Int = 0): Int {
         buf[off] = LINK_MAGIC
         var f = 0
         if (noiseCancellation) f = f or 1
@@ -60,10 +62,12 @@ object Protocol {
         if (aaudio) f = f or 4
         if (exclusive) f = f or 8
         if (lowLatency) f = f or 16
+        if (frontFocus) f = f or 32
         f = f or ((noiseMode.code and 3) shl 6)
         buf[off + 1] = f.toByte()
         buf[off + 2] = gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toByte()
-        buf[off + 3] = (if (aaudio) 1 else 2).toByte()
+        val engine = if (aaudio) 1 else 2
+        buf[off + 3] = (engine or ((dirCode and 3) shl 2) or ((micCount.coerceIn(0, 15) and 15) shl 4)).toByte()
         val name = deviceName.encodeToByteArray()
         val n = minOf(name.size, buf.size - off - LINK_SIZE)
         if (n > 0) name.copyInto(buf, off + LINK_SIZE, 0, n)
@@ -72,7 +76,8 @@ object Protocol {
 
     data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Int, val changeSeq: Int,
                             val extended: Boolean = false, val voiceClarity: Boolean = true,
-                            val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF)
+                            val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF,
+                            val frontFocus: Boolean = true)
 
     fun writeHeader(buf: ByteArray, type: Byte, seq: Int, tsUs: Long, frames: Int, flags: Int) {
         val bb = ByteBuffer.wrap(buf, 0, HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)

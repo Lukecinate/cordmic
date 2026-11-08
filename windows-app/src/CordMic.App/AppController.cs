@@ -63,7 +63,9 @@ internal sealed class AppController : ApplicationContext
     public NoiseMode DisplayedNoiseMode => SettingsPresentation.VisibleNoiseMode(_settings.NoiseMode);
     public bool DisplayedVoiceClarity => SettingsPresentation.VisibleVoiceClarity(_settings.VoiceClarity);
     public bool DisplayedAutoVolume => SettingsPresentation.VisibleAutoVolume(_settings.AutoVolume);
+    public bool DisplayedFrontFocus => SettingsPresentation.VisibleFrontFocus(_settings.FrontFocus);
     public int DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
+    public string DetectedSummary => _rx?.Phone.Known == true ? _rx.Phone.DetectedSummary : "";
     /// <summary>Name of the output the controller would open right now, for the connect window.</summary>
     public string? WantedOutputName => WantedOutput()?.Name;
     public TetherAdapter? Adapter => _net.Current;
@@ -128,6 +130,7 @@ internal sealed class AppController : ApplicationContext
         {
             Log = Log, RxThreadInit = Native.BoostAudioThread,
             NoiseMode = _settings.NoiseMode, VoiceClarity = _settings.VoiceClarity,
+            FrontFocus = _settings.FrontFocus,
             Agc = _settings.AutoVolume,
             MicGainDb = Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb),
         };
@@ -639,6 +642,16 @@ internal sealed class AppController : ApplicationContext
         Log("auto volume -> " + (on ? "on" : "off"));
     }
 
+    public void SetFrontFocus(bool on)
+    {
+        if (_settings.FrontFocus == on) return;
+        _settings.FrontFocus = on;
+        NoteLocalSettingsChanged();
+        Save();
+        if (_rx is { } rx) { rx.FrontFocus = on; rx.NotifyLinkControlChanged(); }
+        Log("front focus -> " + (on ? "on" : "off"));
+    }
+
     public void ResetAudioSettings()
     {
         _settings.ResetAudioDefaults();
@@ -648,6 +661,7 @@ internal sealed class AppController : ApplicationContext
         {
             rx.NoiseMode = _settings.NoiseMode;
             rx.VoiceClarity = _settings.VoiceClarity;
+            rx.FrontFocus = _settings.FrontFocus;
             rx.Agc = _settings.AutoVolume;
             rx.MicGainDb = _settings.MicGainDb;
             rx.NotifyLinkControlChanged();
@@ -726,6 +740,12 @@ internal sealed class AppController : ApplicationContext
         if (phone.Agc != _settings.AutoVolume)
         {
             _settings.AutoVolume = phone.Agc;
+            changed = true;
+        }
+        // Older phones leave PONG bit 5 clear and pack no mic/dir nibble — do not treat that as Off.
+        if ((phone.MicCount > 0 || phone.DirCode != 0) && phone.FrontFocus != _settings.FrontFocus)
+        {
+            _settings.FrontFocus = phone.FrontFocus;
             changed = true;
         }
         if (phone.GainDb >= 0 && SettingsPresentation.GainChanged(_settings.MicGainDb, phone.GainDb))

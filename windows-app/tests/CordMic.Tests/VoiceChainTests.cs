@@ -127,4 +127,31 @@ public class VoiceChainTests
         _out.WriteLine($"20 s of voice chain: {sw.Elapsed.TotalMilliseconds:F1} ms CPU, allocated {bytes} B ({sw.Elapsed.TotalMilliseconds / 20.0:F3} ms CPU per 1 s audio)");
         Assert.True(bytes < 1024, $"allocated {bytes}");
     }
+
+    [Fact]
+    public void AgcBringsSpeechRmsNearTargetAndLeavesHissAlone()
+    {
+        // Peak −24 dBFS sine → RMS ≈ −27 dBFS. AGC should lift that near −18 without using the peak.
+        double amp = 32768.0 * Math.Pow(10, -24.0 / 20.0);
+        var speech = Tone(48000 * 2, 1000, amp);
+        var chain = new VoiceChain(48000) { NoiseCancellation = false, VoiceClarity = false, HighPass = false, Agc = true, GainDb = 0 };
+        chain.Process(speech);
+        double outRms = Rms(speech, 48000 + 24000, 24000);
+        double outDb = 20 * Math.Log10(Math.Max(outRms, 1) / 32768.0);
+        _out.WriteLine($"speech RMS after AGC {outDb:F1} dBFS");
+        Assert.InRange(outDb, -21.0, -15.0);
+
+        var rng = new Random(2);
+        double hissAmp = 32768.0 * Math.Pow(10, -55.0 / 20.0);
+        var hiss = new short[48000];
+        for (int i = 0; i < hiss.Length; i++)
+            hiss[i] = (short)Math.Clamp(rng.NextDouble() * 2 * hissAmp - hissAmp, -32767, 32767);
+        chain.Reset();
+        chain.Process(hiss);
+        double hissOut = Rms(hiss, 24000, 24000);
+        double hissDb = 20 * Math.Log10(Math.Max(hissOut, 1) / 32768.0);
+        _out.WriteLine($"hiss RMS after AGC {hissDb:F1} dBFS");
+        Assert.True(hissDb < -48, $"hiss was boosted to {hissDb:F1} dBFS");
+    }
+
 }

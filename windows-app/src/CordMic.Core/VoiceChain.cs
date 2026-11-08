@@ -42,11 +42,11 @@ public sealed class VoiceChain
     private readonly double[] _mag = new double[NoiseFft / 2 + 1];
     private readonly double[] _noise = new double[NoiseFft / 2 + 1];
     private readonly double[] _binGain = new double[NoiseFft / 2 + 1];
-    private readonly double _envRelease, _agcRise, _agcFall, _peakRel, _limRel;
+    private readonly double _rmsCoeff, _agcRise, _agcFall, _peakRel, _limRel;
     private int _fill = NoiseHop;
     private int _emit;
     private bool _haveHop;
-    private double _env, _agc = 1, _peak, _lim = 1;
+    private double _rms, _agc = 1, _peak, _lim = 1;
     private bool _gated = true;
     private NoiseMode _mode = NoiseMode.Light;
     private int _gainDb = DefaultGainDb;
@@ -97,8 +97,8 @@ public sealed class VoiceChain
         for (int i = 0; i < NoiseFft; i++)
             _hann[i] = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / NoiseFft);
         for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
-        _envRelease = 1 - Math.Exp(-1.0 / (0.08 * sampleRate));
-        _agcRise = 1 - Math.Exp(-1.0 / (0.50 * sampleRate));  // slow upward (do not pump noise)
+        _rmsCoeff = 1 - Math.Exp(-1.0 / (0.040 * sampleRate)); // ~40 ms mean-square window
+        _agcRise = 1 - Math.Exp(-1.0 / (0.22 * sampleRate));  // reach target within about a second of speech
         _agcFall = 1 - Math.Exp(-1.0 / (0.025 * sampleRate)); // faster downward when speech is hot
         _peakRel = 1 - Math.Exp(-1.0 / (0.030 * sampleRate));
         _limRel = 1 - Math.Exp(-1.0 / (0.050 * sampleRate));
@@ -108,7 +108,7 @@ public sealed class VoiceChain
     {
         _hp.Reset(); _shelf.Reset(); _presence.Reset();
         _fill = NoiseHop; _emit = 0; _haveHop = false;
-        _env = 0; _agc = 1; _peak = 0; _lim = 1; _gated = true;
+        _rms = 0; _agc = 1; _peak = 0; _lim = 1; _gated = true;
         Array.Clear(_blockIn); Array.Clear(_hopOut); Array.Clear(_ola); Array.Clear(_noise);
         for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
     }
@@ -134,14 +134,12 @@ public sealed class VoiceChain
             double y = x * user;
             if (Agc)
             {
-                double ay = Math.Abs(y);
-                if (ay > _env) _env = ay;
-                else _env += (ay - _env) * _envRelease;
-                if (_env < GateClose) _gated = true;
-                else if (_env > GateOpen) _gated = false;
-                double want;
-                if (_gated) want = 1.0;
-                else want = Math.Clamp(target / Math.Max(_env, 1e-5), 0.25, maxAgc);
+                // RMS envelope so typical speech (not just a plosive peak) sits near −18 dBFS.
+                _rms += (y * y - _rms) * _rmsCoeff;
+                double level = Math.Sqrt(Math.Max(_rms, 0));
+                if (level < GateClose) _gated = true;
+                else if (level > GateOpen) _gated = false;
+                double want = _gated ? 1.0 : Math.Clamp(target / Math.Max(level, 1e-5), 0.25, maxAgc);
                 double coeff = _gated ? _agcRise : (want > _agc ? _agcRise : _agcFall);
                 _agc += (want - _agc) * coeff;
                 y *= _agc;

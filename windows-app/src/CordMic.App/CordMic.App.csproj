@@ -11,7 +11,7 @@
     <ApplicationIcon>Assets\cordmic.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.5.3</Version>
+    <Version>0.5.4</Version>
     <Product>CordMic</Product>
     <Company>CordMic contributors</Company>
     <Description>CordMic - use an Android phone as a low-latency PC microphone over USB</Description>

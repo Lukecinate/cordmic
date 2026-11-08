@@ -3,6 +3,8 @@ package dev.cordmic
 import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MicrophoneDirection
+import android.os.Build
 import android.util.Log
 
 /** Mono 16-bit microphone source. read() blocks until `frames` frames are written at dst[off]. */
@@ -27,6 +29,8 @@ data class EngineStats(
     val exclusive: Boolean? = null,
     val bufferFrames: Int? = null,
     val xruns: Int? = null,
+    val dirCode: Int? = null,
+    val micCount: Int? = null,
 ) {
     override fun toString() = buildString {
         append("$engine ${sampleRate}Hz")
@@ -35,6 +39,8 @@ data class EngineStats(
         exclusive?.let { append(if (it) " EXCLUSIVE" else " SHARED") }
         bufferFrames?.let { append(" buf=$it") }
         xruns?.let { append(" xrun=$it") }
+        dirCode?.let { append(when (it) { 1 -> " dir=front"; 2 -> " dir=unsupported"; else -> " dir=off" }) }
+        micCount?.let { if (it > 0) append(" mics=$it") }
     }
 }
 
@@ -104,9 +110,10 @@ class AAudioCapture(private val rate: Int, private val preset: Int) : CaptureEng
 }
 
 /** Fallback: Java AudioRecord with a small buffer. Higher latency than AAudio on most devices. */
-class AudioRecordCapture(private val rate: Int, private val source: Int) : CaptureEngine {
+class AudioRecordCapture(private val rate: Int, private val source: Int, private val frontFocus: Boolean = true) : CaptureEngine {
     override val name = "AudioRecord"
     private var rec: AudioRecord? = null
+    var dirCode: Int = 0; private set
 
     @SuppressLint("MissingPermission") // checked by the Activity before the service starts
     override fun open(): Boolean {
@@ -115,6 +122,7 @@ class AudioRecordCapture(private val rate: Int, private val source: Int) : Captu
         val r = AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min * 2)
         if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
         r.startRecording()
+        dirCode = applyFrontFocus(r, frontFocus)
         rec = r
         return true
     }
@@ -125,8 +133,34 @@ class AudioRecordCapture(private val rate: Int, private val source: Int) : Captu
         return if (n < 0) n else n / 2
     }
 
-    override fun stats() = EngineStats(name, rate, bufferFrames = rec?.bufferSizeInFrames)
+    override fun stats() = EngineStats(name, rate, bufferFrames = rec?.bufferSizeInFrames, dirCode = dirCode,
+        micCount = DeviceProbe.profile.micCount.takeIf { it > 0 })
     override fun sessionId(): Int = rec?.audioSessionId ?: 0
 
     override fun close() { rec?.run { stop(); release() }; rec = null }
+}
+
+
+/** Apply the Android 10+ front-facing mic preference. Never throws; returns the dir code (0 off, 1 front, 2 unsupported). */
+internal fun applyFrontFocus(rec: AudioRecord, want: Boolean): Int {
+    if (!want) return 0
+    if (Build.VERSION.SDK_INT < 29) return 2
+    return try {
+        val ok = rec.setPreferredMicrophoneDirection(MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
+        try { rec.setPreferredMicrophoneFieldDimension(1.0f) } catch (t: Throwable) {
+            Log.w("CordMic", "mic field: $t")
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 28) {
+                val active = rec.activeMicrophones
+                Log.i("CordMic", "activeMicrophones=${active.size}")
+            }
+        } catch (t: Throwable) {
+            Log.w("CordMic", "activeMicrophones: $t")
+        }
+        if (ok) 1 else 2
+    } catch (t: Throwable) {
+        Log.w("CordMic", "front focus: $t")
+        2
+    }
 }

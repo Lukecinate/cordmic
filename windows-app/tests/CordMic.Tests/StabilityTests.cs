@@ -26,7 +26,7 @@ public class StabilityTests
 
     [Theory]
     [InlineData(5, 10, 6, 10)]
-    [InlineData(5, 2.7, 3, 5)]
+    [InlineData(5, 2.7, 3, 7)]
     [InlineData(10, 10, 6, 10)]
     public void HighWaterAndMaxDepthFollowPeriod(double requestMs, double periodMs, int high, int max)
     {

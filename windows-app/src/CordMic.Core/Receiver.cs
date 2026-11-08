@@ -29,7 +29,8 @@ public sealed record StatsSnapshot(
         $"period={(RenderPeriodMs > 0 ? RenderPeriodMs.ToString("F1") : "-")}ms " +
         $"jtarget={Ms(JitterTargetMs)}ms/{JitterTargetPackets}pkt " +
         $"urate={Rate(UnderrunPerMin)}/min orate={Rate(OverflowPerMin)}/min " +
-        $"nc={Phone.NoiseText} agc={Phone.AgcText} gain={Phone.GainText} phone={Phone.Mode}" +
+        $"nc={Phone.NoiseText} agc={Phone.AgcText} gain={Phone.GainText} phone={Phone.Mode} " +
+        $"dir={Phone.DirText} mics={Phone.MicText}" +
         (string.IsNullOrEmpty(Phone.Name) ? "" : $" dev={Phone.Name.Replace(' ', '_')}");
 }
 
@@ -130,6 +131,7 @@ public sealed class Receiver : IDisposable
         set => NoiseMode = value ? (NoiseMode == NoiseMode.Off ? NoiseMode.Light : NoiseMode) : NoiseMode.Off;
     }
     public bool VoiceClarity { get; set; } = true;
+    public bool FrontFocus { get; set; } = true;
     public bool Agc { get; set; } = true;
     public int MicGainDb { get; set; } = VoiceChain.DefaultGainDb;
     public PhoneLink Phone => _phone;
@@ -400,7 +402,7 @@ public sealed class Receiver : IDisposable
                 long nowTicks = Stopwatch.GetTimestamp();
                 if (nowTicks < _pingMuteUntil) continue;
                 _pingSeq++;
-                LinkControl.WritePing(_pingPkt.AsSpan(Protocol.HeaderSize), NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode);
+                LinkControl.WritePing(_pingPkt.AsSpan(Protocol.HeaderSize), NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode, FrontFocus);
                 Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)
                 {

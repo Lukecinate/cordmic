@@ -20,6 +20,8 @@ public static class SettingsPresentation
 
     public static bool VisibleVoiceClarity(bool local) => local;
 
+    public static bool VisibleFrontFocus(bool local) => local;
+
     /// <summary>
     /// Accept a phone-reported value into local settings only when the user is
     /// not editing and we did not recently push a change of our own.

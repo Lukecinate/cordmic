@@ -16,11 +16,12 @@ internal sealed class MainForm : Form
     private readonly Panel _settings;
     private readonly Button _settingsBtn;
     private readonly ComboBox _output, _latency, _outMode, _ncMode;
-    private readonly CheckBox _clarity, _autoVol, _startup;
+    private readonly CheckBox _clarity, _autoVol, _frontFocus, _startup;
     private readonly TrackBar _gain;
     private readonly Label _gainValue, _noCable;
     private Label _cableHint = null!;
     private Label _periodHint = null!;
+    private Label _detected = null!;
     private Button _optimize = null!;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 32 };
     private readonly System.Windows.Forms.Timer _gainDebounce = new() { Interval = 180 };
@@ -111,7 +112,7 @@ internal sealed class MainForm : Form
             AutoSize = false, Height = Sx(48), BackColor = Color.Transparent,
         };
 
-        _settings = BuildSettings(out _output, out _latency, out _outMode, out _ncMode, out _clarity, out _autoVol, out _gain, out _gainValue, out _startup, out _noCable);
+        _settings = BuildSettings(out _output, out _latency, out _outMode, out _ncMode, out _clarity, out _autoVol, out _frontFocus, out _gain, out _gainValue, out _startup, out _noCable);
         _settings.Visible = false;
 
         Controls.Add(header);
@@ -128,7 +129,7 @@ internal sealed class MainForm : Form
     }
 
     private Panel BuildSettings(out ComboBox output, out ComboBox latency, out ComboBox outMode, out ComboBox ncMode, out CheckBox clarity,
-        out CheckBox autoVol, out TrackBar gain, out Label gainValue, out CheckBox startup, out Label noCable)
+        out CheckBox autoVol, out CheckBox frontFocus, out TrackBar gain, out Label gainValue, out CheckBox startup, out Label noCable)
     {
         var p = new Panel { BackColor = Theme.Surface, Width = ClientSize.Width };
         p.Paint += (_, e) => { using var pen = new Pen(Theme.Line); e.Graphics.DrawLine(pen, 0, 0, p.Width, 0); };
@@ -182,6 +183,24 @@ internal sealed class MainForm : Form
         };
         var autoBox = autoVol;
         autoBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetAutoVolume(autoBox.Checked); };
+        y += Sx(32);
+
+        frontFocus = new CheckBox
+        {
+            Text = L.T("ui.frontFocus"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
+            Location = new Point(x, y), BackColor = Theme.Surface,
+        };
+        var frontBox = frontFocus;
+        frontBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetFrontFocus(frontBox.Checked); };
+        y += Sx(34);
+
+        _detected = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = false,
+            Location = new Point(x, y), Width = w, Height = Sx(32),
+            BackColor = Theme.Surface,
+        };
+        p.Controls.Add(_detected);
         y += Sx(34);
 
         var gainLabel = new Label
@@ -282,6 +301,7 @@ internal sealed class MainForm : Form
         p.Controls.Add(ncMode);
         p.Controls.Add(clarity);
         p.Controls.Add(autoVol);
+        p.Controls.Add(frontFocus);
         p.Controls.Add(reset);
         p.Controls.Add(gainLabel);
         p.Controls.Add(gainValue);
@@ -390,6 +410,8 @@ internal sealed class MainForm : Form
             SelectCombo(_ncMode, i => _ncMode.Items[i] is NcModeItem it && it.Mode == _app.DisplayedNoiseMode);
             if (CanWrite(_clarity) && _clarity.Checked != _app.DisplayedVoiceClarity) _clarity.Checked = _app.DisplayedVoiceClarity;
             if (CanWrite(_autoVol) && _autoVol.Checked != _app.DisplayedAutoVolume) _autoVol.Checked = _app.DisplayedAutoVolume;
+            if (CanWrite(_frontFocus) && _frontFocus.Checked != _app.DisplayedFrontFocus) _frontFocus.Checked = _app.DisplayedFrontFocus;
+            _detected.Text = string.IsNullOrEmpty(_app.DetectedSummary) ? "" : _app.DetectedSummary;
             int g = Math.Clamp(_app.DisplayedGain, 0, VoiceChain.MaxGainDb);
             if (CanWrite(_gain) && _gain.Value != g) _gain.Value = g;
             _gainValue.Text = L.T("ui.gainValue", _gain.Value);

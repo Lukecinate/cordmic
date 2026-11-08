@@ -62,6 +62,12 @@
     <string name="clarity_help">Memotong dengung rendah dan sedikit menaikkan presensi agar suara tidak terlalu bass.</string>
     <string name="autovol_option">Volume otomatis</string>
     <string name="autovol_help">Menuju sekitar −18 dBFS. Keheningan tidak dikuatkan, jadi voice-activation game tidak terbuka oleh desis.</string>
+    <string name="front_focus_option">Fokus depan</string>
+    <string name="front_focus_help">Memilih mic yang menghadap Anda. Jika HP tidak mendukung, CordMic tetap memakai jalur latensi rendah dan menampilkannya sebagai tidak didukung.</string>
+    <string name="auto_optimize_option">Optimalkan otomatis</string>
+    <string name="auto_optimize_help">Memilih jalur rekaman dan pengaturan awal untuk HP ini. Nilai yang Anda atur sendiri tidak diganti.</string>
+    <string name="redetect">Deteksi ulang</string>
+    <string name="detected_placeholder">Terdeteksi: —</string>
     <string name="reset_audio">Reset pengaturan audio</string>
     <string name="gain_option">Gain mic</string>
     <string name="gain_value">+%1$d dB</string>

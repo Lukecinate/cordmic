@@ -45,12 +45,15 @@ public sealed class JitterBuffer
     private double _ppm;
     private double _integ;
     private double _slipAcc;
+    private double _offTargetSec;
+    private double _depthAtPeg = double.NaN;
     private double _avgDepthMs = double.NaN, _minResidualMs = double.NaN;
     private short[] _lastFrame = Array.Empty<short>();
     private byte[] _extra = Array.Empty<byte>();
     private bool _fadeIn;
     private const int SlipCrossfade = 32;
-    private const double MaxPpm = 150;
+    private const double BasePpm = 150;
+    private const double MaxPpm = 800;
 
     public int FramesPerPacket { get; private set; }
     public int Channels { get; }
@@ -156,7 +159,7 @@ public sealed class JitterBuffer
         _buffering = true;
         _keepLen = 0; _keepOff = 0;
         _pendingDrop = 0;
-        _ppm = 0; _integ = 0; _slipAcc = 0;
+        _ppm = 0; _integ = 0; _slipAcc = 0; _offTargetSec = 0; _depthAtPeg = double.NaN;
         _fadeIn = false;
         Array.Clear(_lastFrame);
         ResetWindowLocked();
@@ -523,13 +526,34 @@ public sealed class JitterBuffer
             double dt = _winFrames / (double)SampleRate;
             if (Math.Abs(err) <= dead)
             {
+                _offTargetSec = Math.Max(0, _offTargetSec - dt);
+                _depthAtPeg = double.NaN;
                 _integ *= 0.85;
                 _ppm *= 0.80;
             }
             else
             {
+                // Stay at ±150 ppm for a static backlog (overflow drains that).
+                // Raise toward ±800 ppm only when the cap is pegged and depth is
+                // still sliding away — the signature of a clock faster than 150 ppm.
+                double cap = BasePpm + (MaxPpm - BasePpm) * Math.Clamp((_offTargetSec - 0.4) / 1.6, 0, 1);
                 _integ = Math.Clamp(_integ + err * dt, -80, 80);
-                _ppm = Math.Clamp(8.0 * err + 2.0 * _integ, -MaxPpm, MaxPpm);
+                double raw = 8.0 * err + 2.0 * _integ;
+                _ppm = Math.Clamp(raw, -cap, cap);
+                bool pegged = Math.Abs(raw) >= cap - 0.5;
+                // A large standing pile is overflow's job. Raise the cap only when
+                // we are pegged on a modest, still-growing error (clock-like).
+                if (pegged && Math.Abs(err) < 12.0)
+                {
+                    if (double.IsNaN(_depthAtPeg)) _depthAtPeg = _avgDepthMs;
+                    if (Math.Abs(_avgDepthMs - targetMs) >= Math.Abs(_depthAtPeg - targetMs) + 1.0)
+                        _offTargetSec += dt;
+                }
+                else
+                {
+                    _depthAtPeg = double.NaN;
+                    if (!pegged) _offTargetSec = Math.Max(0, _offTargetSec - dt);
+                }
             }
         }
         ResetWindowLocked();

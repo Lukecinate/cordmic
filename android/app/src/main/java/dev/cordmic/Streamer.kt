@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Captures 5 ms frames and sends them over UDP to the PC on the USB-tethering link. */
 class Streamer(context: Context, private val cfg: Config) {
     // Only the application context is kept.
-    @Suppress("unused") private val ctx: Context = context.applicationContext
+    private val ctx: Context = context.applicationContext
 
     data class Config(
         val manualHost: String?,   // null/blank = auto discovery on the tethering subnet
@@ -29,6 +29,9 @@ class Streamer(context: Context, private val cfg: Config) {
         val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF,
         val voiceClarity: Boolean = true,
         val autoVolume: Boolean = true,
+        val frontFocus: Boolean = true,
+        val autoOptimize: Boolean = true,
+        val userSetGain: Boolean = false,
     )
 
     @Volatile private var running = false
@@ -58,7 +61,12 @@ class Streamer(context: Context, private val cfg: Config) {
     @Volatile var voiceClarity: Boolean = cfg.voiceClarity
     @Volatile var agc: Boolean = cfg.autoVolume
     @Volatile var gainDb: Int = cfg.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB)
+    @Volatile var frontFocus: Boolean = cfg.frontFocus
+    @Volatile var dirCode: Int = if (cfg.frontFocus) 2 else 0
+        private set
     @Volatile private var ctrlSeq = -1
+    @Volatile private var reopenEngine = false
+    val detectedSummary: String get() = DeviceProbe.summary
     private val platformNs = PlatformNs()
     val noiseLatencyMs: Double get() = voice.noiseLatencyMs
     @Volatile var sent = 0L; private set
@@ -69,6 +77,9 @@ class Streamer(context: Context, private val cfg: Config) {
     fun start() {
         if (running) return
         running = true
+        DeviceProbe.ensureStarted(ctx)
+        DeviceProbe.refresh(ctx, tryOpen = false, reason = "session")
+        DeviceProbe.markCaptureActive(true)
         cfg.manualHost?.takeIf { it.isNotBlank() }?.let {
             target = InetSocketAddress(InetAddress.getByName(it.trim()), cfg.port) // numeric IP: no DNS
         }
@@ -88,18 +99,30 @@ class Streamer(context: Context, private val cfg: Config) {
         sock?.close(); sock = null
         ctlThread?.join(1000)
         state = State.STOPPED; targetAddress = null
+        DeviceProbe.markCaptureActive(false)
     }
 
     /** Highest absolute PCM16 sample (0..32768) captured since the previous call. */
     fun takePeak(): Int = peak.getAndSet(0)
 
+    fun applyFrontFocus(on: Boolean) {
+        if (frontFocus == on) return
+        frontFocus = on
+        reopenEngine = true
+    }
+
     private fun openEngine(): CaptureEngine? {
         if (cfg.useAAudio) {
             val e = AAudioCapture(cfg.sampleRate, cfg.preset)
-            if (e.open()) return e
+            if (e.open()) {
+                dirCode = if (frontFocus) 2 else 0
+                return e
+            }
         }
-        val e = AudioRecordCapture(cfg.sampleRate, cfg.preset)
-        return if (e.open()) e else null
+        val e = AudioRecordCapture(cfg.sampleRate, cfg.preset, frontFocus)
+        if (!e.open()) return null
+        dirCode = e.dirCode
+        return e
     }
 
     private fun ensureSocket(): DatagramSocket? {
@@ -149,18 +172,47 @@ class Streamer(context: Context, private val cfg: Config) {
         var lastDiscover = 0L
         var lastSockTry = 0L
         var lastStats = 0L
+        var measureFrames = 0
+        var measureSumSq = 0.0
+        var speechFrames = 0
+        var speechSumSq = 0.0
+        var measured = false
+        val measureNeed = cfg.sampleRate * 2
         while (running) {
+            if (reopenEngine && engine != null) {
+                Log.i(TAG, "reopening capture for updated mic direction")
+                engine.close(); engine = null; reopenEngine = false
+            }
             if (engine == null) {
                 engine = openEngine()
                 if (engine == null) { state = State.MIC_FAILED; SystemClock.sleep(1000); continue }
                 engineName = engine.name
-                engineStats = engine.stats()
-                Log.i(TAG, engineInfo)
+                engineStats = engine.stats().copy(dirCode = dirCode, micCount = DeviceProbe.profile.micCount)
+                DeviceProbe.noteEngine(engineStats!!, directionWorks = dirCode == 1)
+                Log.i(TAG, engineInfo + " " + DeviceProbe.capabilityLog())
             }
             val n = engine.read(buf, Protocol.HEADER_SIZE, cfg.frames)
             if (n <= 0) { // error / disconnected (e.g. route change): reopen
                 Log.w(TAG, "read returned $n, reopening ${engine.name}")
                 engine.close(); engine = null; continue
+            }
+            if (!measured) {
+                val (sumSq, peak) = DeviceProbe.measureBlock(buf, Protocol.HEADER_SIZE, n)
+                measureSumSq += sumSq
+                measureFrames += n
+                if (peak > 1000) { speechSumSq += sumSq; speechFrames += n }
+                if (measureFrames >= measureNeed) {
+                    measured = true
+                    val floor = DeviceProbe.rmsDbfs(measureSumSq, measureFrames)
+                    val speech = if (speechFrames > cfg.sampleRate / 5)
+                        DeviceProbe.rmsDbfs(speechSumSq, speechFrames) else null
+                    DeviceProbe.noteLevels(floor, speech)
+                    if (cfg.autoOptimize && !cfg.userSetGain && ctrlSeq < 0) {
+                        val g = DeviceTune.suggestedGain(speech, floor)
+                        gainDb = g
+                        Log.i(TAG, "auto gain -> +${g}dB from floor=${"%.1f".format(floor)} speech=${speech?.let { "%.1f".format(it) } ?: "-"}")
+                    }
+                }
             }
             val wantNs = noiseMode != NoiseMode.OFF
             platformNs.apply(engine.sessionId(), wantNs)
@@ -240,6 +292,7 @@ class Streamer(context: Context, private val cfg: Config) {
                                 if (c.extended) {
                                     voiceClarity = c.voiceClarity
                                     agc = c.agc
+                                    applyFrontFocus(c.frontFocus)
                                 }
                                 gainDb = c.gainDb
                             }
@@ -252,6 +305,9 @@ class Streamer(context: Context, private val cfg: Config) {
                             exclusive = st?.exclusive == true,
                             lowLatency = st?.lowLatency == true,
                             gainDb, Build.MODEL, noiseMode,
+                            frontFocus = frontFocus,
+                            dirCode = dirCode,
+                            micCount = DeviceProbe.profile.micCount,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

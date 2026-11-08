@@ -130,7 +130,7 @@ scheduled task. Settings and logs under `%APPDATA%` / `%LOCALAPPDATA%` are kept.
 
 Double-click the icon (or use **Open CordMic**) for the window: one round button (disconnected, searching, connected,
 error), a status line with the phone and the live PC-side delay, and a settings panel for the output device, latency
-preset, noise cancellation, mic gain, start-with-Windows and the log. Hover the icon for the same delay split
+preset, noise cancellation, front focus, mic gain, start-with-Windows and the log. Hover the icon for the same delay split
 (network = ½ USB round trip, the averaged jitter-buffer wait, and the measured Windows output buffer), plus round-trip
 time and packet loss over the last 10 seconds. Right-click for the menu:
 
@@ -269,6 +269,11 @@ Get-NetRoute 0.0.0.0/0                                          # the default ro
   | 18 | 2 | flags: bits 0–3 codec (0 = PCM s16le), bits 4–7 channels − 1, bits 8–11 sample rate (0 = 48 kHz). Bits 12–14 (0.5.0, ignored by 0.4.2): noise cancellation, AGC, AAudio |
 
   An AUDIO payload is raw PCM: 240 frames × 2 bytes = 480 bytes per 5 ms (~100 kbit/s).
+  PING/PONG carry a 4-byte control payload (magic `0xC5`). From 0.5.3 an extended PING (bit 5) adds
+  voice clarity (bit 2) and noise mode (bits 3–4). 0.5.4 adds front focus (PING bit 6). PONG flags
+  report NC, AGC, AAudio, exclusive, low-latency and (from 0.5.4) front focus (bit 5); byte 3 packs
+  the engine (low 2 bits), a direction code and the mic count. The device name that follows is still
+  UTF-8. Older apps ignore the extra bits.
 - **Jitter buffer.** Reorders packets by sequence number. The preset is Low 5 / Normal 10 / Safe 20 ms, then raised
   so it is at least one render pull plus one packet. On a 10 ms shared period that floors Low and Normal at 15 ms
   (3 packets): the callback consumes 10 ms and 5 ms is left, so a late packet does not empty the buffer. Missing
@@ -319,7 +324,7 @@ minute on Normal and about 370 times a minute on Low, with several times as many
 callback consumes one 10 ms period. Normal's 10 ms target and Low's 5 ms target leave nothing after that pull,
 so the buffer hits empty, rebuffers, then the hard cap dumps the pile. 0.5.2 asks IAudioClient3 for the shortest shared period using the device mix format (without
 `AUTOCONVERTPCM`), prefers stereo *CABLE Input* over *CABLE In 16ch*, and floors the jitter target at two
-render periods. A sample-level drift lock (slow PI, crossfaded slips, capped at ±150 ppm) replaces packet-drop catch-up. For the lowest delay: *Latency → Low*,
+render periods. A sample-level drift lock (slow PI, crossfaded slips, starting at ±150 ppm and rising toward ±800 ppm if a standing clock error lasts) replaces packet-drop catch-up. For the lowest delay: *Latency → Low*,
 *Output mode → Auto* (or *Exclusive* if you want to force it), leave noise cancellation on Light unless the room is very noisy,
 keep voice clarity and auto volume on, set game/Discord mic volume to 50–60 %, and use *Optimize VB-CABLE* so both "CABLE Input" and "CABLE Output" are 48 kHz stereo. See
 [docs/SECURITY.md](docs/SECURITY.md) for what that changes and how to undo it.
@@ -406,7 +411,7 @@ CordMic was previously called **UsbMic**. The audio protocol is unchanged (`UM` 
 ## Roadmap
 
 1. **Opus** (48 kHz, 2.5/5 ms frames, FEC) as an option; PCM stays the default.
-2. ~~**Clock-drift compensation**~~ – sample-level skip/insert shipped in 0.5.2; 0.5.3 crossfades each slip and caps the controller at ±150 ppm so it no longer hunts.
+2. ~~**Clock-drift compensation**~~ – sample-level skip/insert shipped in 0.5.2; 0.5.3 crossfades each slip; 0.5.4 lets the cap rise toward ±800 ppm when a standing clock error lasts.
 3. **Native virtual audio driver** ("CordMic Microphone" without VB-CABLE), based on Microsoft's SysVAD samples or
    ACX on Windows 11. Kernel drivers must be signed by Microsoft (EV certificate + attestation signing), which is
    why this is a separate milestone. Windows has no user-mode API for a system-wide virtual microphone.

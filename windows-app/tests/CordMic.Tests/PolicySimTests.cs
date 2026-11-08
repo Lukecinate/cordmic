@@ -139,10 +139,25 @@ public class PolicySimTests
             jb.Pull(480);
         }
         Assert.Equal(0, jb.Stats.CatchUpDrops);
-        // 20 s at the ±150 ppm cap is at most ~144 slips. The old hunt produced thousands.
-        Assert.True(jb.Stats.SampleSlips < 200, $"slips {jb.Stats.SampleSlips} (controller hunting)");
+        // A standing offset may rise toward ±800 ppm (about 768 slips in 20 s). The old hunt produced thousands.
+        Assert.True(jb.Stats.SampleSlips < 1000, $"slips {jb.Stats.SampleSlips} (controller hunting)");
         Assert.Equal(0, jb.Stats.Underruns);
         _out.WriteLine($"standing backlog slips={jb.Stats.SampleSlips} depth={jb.DepthPackets} ppm={jb.DriftPpm:F1}");
+    }
+
+    [Fact]
+    public void AdaptiveLockTracksTwoHundredFiftyPpmAtShortPeriod()
+    {
+        var fast = Run(2.7, 5, v052: true, seconds: 30, ppm: 250);
+        var slow = Run(2.7, 5, v052: true, seconds: 30, ppm: -250);
+        _out.WriteLine($"250 ppm  urate={fast.Urate:F2}/min orate={fast.Orate:F2}/min slip={fast.SlipPerMin:F1}/min buf={fast.AvgDepthMs:F1} ms");
+        _out.WriteLine($"-250 ppm urate={slow.Urate:F2}/min orate={slow.Orate:F2}/min slip={slow.SlipPerMin:F1}/min buf={slow.AvgDepthMs:F1} ms");
+        Assert.Equal(0, fast.CatchUp);
+        Assert.Equal(0, slow.CatchUp);
+        Assert.True(fast.Urate < 8, $"fast urate {fast.Urate}");
+        Assert.True(slow.Urate < 8, $"slow urate {slow.Urate}");
+        Assert.True(fast.Orate < 30, $"fast orate {fast.Orate}");
+        Assert.True(slow.Orate < 30, $"slow orate {slow.Orate}");
     }
 
     [Fact]

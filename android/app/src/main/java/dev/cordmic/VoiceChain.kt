@@ -45,7 +45,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     private val hp: Biquad
     private val shelf: Biquad
     private val presence: Biquad
-    private val envRelease: Double
+    private val rmsCoeff: Double
     private val agcRise: Double
     private val agcFall: Double
     private val peakRel: Double
@@ -62,7 +62,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     private var fill = NOISE_HOP
     private var emit = 0
     private var haveHop = false
-    private var env = 0.0
+    private var rms = 0.0
     private var agcGain = 1.0
     private var peak = 0.0
     private var lim = 1.0
@@ -74,8 +74,8 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         shelf = Biquad.lowShelf(sampleRate, 220.0, -5.0)
         presence = Biquad.peaking(sampleRate, 3000.0, 2.5, 1.0)
         for (i in 0 until NOISE_FFT) hann[i] = 0.5 - 0.5 * cos(2 * PI * i / NOISE_FFT)
-        envRelease = 1 - exp(-1.0 / (0.08 * sampleRate))
-        agcRise = 1 - exp(-1.0 / (0.50 * sampleRate))
+        rmsCoeff = 1 - exp(-1.0 / (0.040 * sampleRate))
+        agcRise = 1 - exp(-1.0 / (0.22 * sampleRate))
         agcFall = 1 - exp(-1.0 / (0.025 * sampleRate))
         peakRel = 1 - exp(-1.0 / (0.030 * sampleRate))
         limRel = 1 - exp(-1.0 / (0.050 * sampleRate))
@@ -84,7 +84,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     fun reset() {
         hp.reset(); shelf.reset(); presence.reset()
         fill = NOISE_HOP; emit = 0; haveHop = false
-        env = 0.0; agcGain = 1.0; peak = 0.0; lim = 1.0; gated = true
+        rms = 0.0; agcGain = 1.0; peak = 0.0; lim = 1.0; gated = true
         blockIn.fill(0.0); hopOut.fill(0.0); ola.fill(0.0); noise.fill(0.0)
         binGain.fill(1.0)
     }
@@ -125,11 +125,11 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             x = if (stft) noiseStep(x) else { fill = NOISE_HOP; emit = 0; haveHop = false; x }
             var y = x * user
             if (agc) {
-                val ay = abs(y)
-                env = if (ay > env) ay else env + (ay - env) * envRelease
-                if (env < GATE_CLOSE) gated = true
-                else if (env > GATE_OPEN) gated = false
-                val want = if (gated) 1.0 else (target / max(env, 1e-5)).coerceIn(0.25, maxAgc)
+                rms += (y * y - rms) * rmsCoeff
+                val level = sqrt(max(rms, 0.0))
+                if (level < GATE_CLOSE) gated = true
+                else if (level > GATE_OPEN) gated = false
+                val want = if (gated) 1.0 else (target / max(level, 1e-5)).coerceIn(0.25, maxAgc)
                 val coeff = if (gated) agcRise else if (want > agcGain) agcRise else agcFall
                 agcGain += (want - agcGain) * coeff
                 y *= agcGain

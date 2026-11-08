@@ -65,6 +65,12 @@
     <string name="clarity_help">Cuts rumble and lifts presence so speech is less muddy.</string>
     <string name="autovol_option">Auto volume</string>
     <string name="autovol_help">Aims for about −18 dBFS. Silence is not boosted, so game voice-activation stays quiet.</string>
+    <string name="front_focus_option">Front focus</string>
+    <string name="front_focus_help">Prefers the mic that faces you. On phones that cannot set this, CordMic keeps the low-latency path and reports it as unsupported.</string>
+    <string name="auto_optimize_option">Optimize automatically</string>
+    <string name="auto_optimize_help">Chooses a capture path and starting settings for this phone. A value you set yourself is left unchanged.</string>
+    <string name="redetect">Re-detect</string>
+    <string name="detected_placeholder">Detected: —</string>
     <string name="reset_audio">Reset audio settings</string>
     <string name="gain_option">Mic gain</string>
     <string name="gain_value">+%1$d dB</string>

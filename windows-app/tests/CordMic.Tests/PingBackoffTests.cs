@@ -79,4 +79,22 @@ public class LinkControlTests
         Assert.False(ext2);
         Assert.Equal(NoiseMode.Light, mode2);
     }
+
+    [Fact]
+    public void ExtendedPingCarriesFrontFocusAndStaysBackwardCompatible()
+    {
+        var ping = new byte[4];
+        LinkControl.WritePing(ping, true, true, 6, 5, extended: true, voiceClarity: true,
+            mode: NoiseMode.Light, frontFocus: true);
+        Assert.True(LinkControl.TryReadPing(ping, out _, out _, out _, out _, out bool ext, out _, out _, out bool front));
+        Assert.True(ext && front);
+        Assert.True((ping[1] & 64) != 0);
+        Assert.True((ping[1] & 32) != 0);
+
+        var off = new byte[4];
+        LinkControl.WritePing(off, true, true, 6, 5, extended: true, voiceClarity: true,
+            mode: NoiseMode.Light, frontFocus: false);
+        Assert.True(LinkControl.TryReadPing(off, out _, out _, out _, out _, out _, out _, out _, out bool frontOff));
+        Assert.False(frontOff);
+    }
 }

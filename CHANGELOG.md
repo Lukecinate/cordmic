@@ -2,6 +2,51 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.4] - 2026-11-08
+
+Front-facing capture by default, per-phone auto-tuning, a quieter AGC that actually reaches its target,
+and a drift lock that can follow a larger clock offset without overflowing a short WASAPI period.
+Android `versionCode` is 12 / `versionName` 0.5.4. Wire version stays 1; 0.5.4 works with 0.5.3–0.4.x
+on the other side (older phones ignore the new front-focus bit). The release APK is signed with the
+same key as 0.5.3. The Windows installer is not Authenticode-signed.
+
+### Added
+- **Front focus** (default on). On the AudioRecord path (Android 10+) CordMic calls
+  `setPreferredMicrophoneDirection(TOWARDS_USER)` after the recorder starts. AAudio has no direction
+  API, so flagship phones keep the exclusive low-latency path and report the setting as unsupported
+  rather than falling back to a slower engine. The preference is a no-op on devices that cannot apply it.
+- **Background device detection.** At start-up, when a headset/USB/Bluetooth mic is plugged in or
+  removed (`AudioDeviceCallback`), and again when a session starts, the phone probes API level, model,
+  built-in mics, AAudio low-latency/exclusive, platform NS/AGC/AEC, the direction API, input presets,
+  native rate and burst, stereo capture, and the first seconds of input level. There is no polling loop.
+  The probe stays on the device (no network or telemetry). Only a short capability summary plus the
+  model name is sent to the PC over the existing link.
+- **Optimize automatically** (default on) and a **Re-detect** action on the phone. Auto mode picks
+  AAudio exclusive when it is granted, otherwise shared AAudio, otherwise AudioRecord; uses the Voice
+  recognition preset (not Voice communication, which would stack a second NS/AEC/AGC); turns Front
+  focus on; uses Light noise cancellation (the platform suppressor when it is available, otherwise
+  CordMic’s own Light STFT); and sets a starting gain from the measured level. A value the user has
+  already chosen is never overwritten (the same rule as the PC output mode). Existing 0.5.3 settings
+  are treated as user-chosen after upgrade.
+- A read-only **Detected:** line on the phone and in Windows Settings (from the PONG summary), for
+  example `Detected: SM-S721B · AAudio exclusive, 3 mics, front focus`.
+
+### Changed
+- Auto volume now follows an RMS envelope (~40 ms) instead of the instantaneous peak, with a slightly
+  faster rise, so typical speech settles near −18 dBFS. The silence gate (~−50 dBFS) and −1 dBFS
+  limiter are unchanged.
+- The drift-lock cap starts at ±150 ppm and can rise toward ±800 ppm when a standing clock error
+  lasts more than about half a second. The jitter buffer’s hard cap is the target plus five render
+  periods (35 ms at a 2.7 ms callback) so a short exclusive period has burst room.
+- Extended PING bit 6 is front focus. PONG flag bit 5 reports the requested setting; byte 3 still
+  encodes the engine in the low two bits and now also carries a direction code and the mic count.
+  Older readers continue to see AAudio from flags bit 2.
+
+### Fixed
+- Windows Settings controls no longer snap back to a stale phone echo while you are moving them
+  (sliders apply on release with a short debounce; dropdowns are not rebuilt when the device list
+  is unchanged).
+
 ## [0.5.3] - 2026-11-08
 
 Microphone quality: less static, less mud, and a conservative output level that games and Discord

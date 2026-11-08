@@ -26,6 +26,8 @@ public sealed class AppSettings
     public bool VoiceClarity { get; set; } = true;
     /// <summary>Automatic makeup gain toward −18 dBFS, with a noise gate so silence is not boosted.</summary>
     public bool AutoVolume { get; set; } = true;
+    /// <summary>Ask the phone to prefer the user-facing microphone. Default on; unsupported phones no-op.</summary>
+    public bool FrontFocus { get; set; } = true;
     /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +6 on new installs; a saved value is left unchanged.</summary>
     public int MicGainDb { get; set; } = 6;
     /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
@@ -65,6 +67,7 @@ public sealed class AppSettings
         NoiseMode = NoiseMode.Light;
         VoiceClarity = true;
         AutoVolume = true;
+        FrontFocus = true;
         MicGainDb = VoiceChain.DefaultGainDb;
     }
 
