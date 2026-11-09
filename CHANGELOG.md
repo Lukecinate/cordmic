@@ -2,6 +2,58 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.5] - 2026-11-09
+
+Front focus that can actually take effect, an AGC gate that follows the measured noise floor,
+quieter overflow at a 2.7 ms render period, in-app updates, live two-way settings, and an
+optional official VB-CABLE download. Android `versionCode` is 13 / `versionName` 0.5.5.
+Wire version stays 1; 0.5.5 works with 0.5.4 peers (extra sync bytes are ignored by older
+phones and are only appended to PONG after a 0.5.5 PC advertises them). The release APK is
+signed with the same key as 0.5.4. The Windows installer is not Authenticode-signed.
+
+### Added
+- **Front focus (higher latency).** AAudio has no microphone-direction API, so an explicit
+  option switches capture to AudioRecord and applies `setPreferredMicrophoneDirection`. The
+  first PING now carries a non-zero control sequence so desktop defaults are applied on
+  connect. The Detected line reports the phone’s real direction (front / unsupported / off).
+  Samsung phones that returned zero mics from `getMicrophones` also count built-in input
+  devices and `AudioRecord.getActiveMicrophones` after capture starts.
+- **In-app updates** on the phone and the desktop: Check for updates, plus an optional Auto
+  update toggle (off by default). CordMic reads the latest GitHub Release for
+  `Lukecinate/cordmic` over HTTPS (unauthenticated, at most at launch and about every six
+  hours, no telemetry), verifies the asset against a `SHA256SUMS` file, and never downgrades.
+  Android also requires the APK signing certificate to match the installed app before a
+  `PackageInstaller` session (you still tap Install once; “install unknown apps” may be
+  requested). Windows downloads the setup executable, verifies its hash, and runs it with
+  `/S`; UAC or SmartScreen may still appear.
+- **Install VB-CABLE** without visiting the website. The Windows installer has an optional
+  task (checked by default when no CABLE device is found) and Settings has a matching button
+  when no cable is detected. Both download
+  `https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip` over HTTPS, verify
+  the pinned SHA-256, check the Authenticode signer when possible, and launch VB-Audio’s own
+  `VBCABLE_Setup_x64.exe`. The official package documents no silent switch, so that setup UI
+  is shown. On failure the official page is opened. VB-CABLE binaries are never redistributed.
+  A reboot may be required afterward.
+- A speech-level warning when talk stays below about −40 dBFS after gain.
+
+### Changed
+- Auto volume’s gate follows the measured pause floor (about +10 dB to open) instead of a
+  fixed −42 dBFS. Makeup gain can reach +24 dB when speech is far below −18 dBFS; pauses
+  still release toward unity so hiss is not held up. After an upgrade from 0.5.3/0.5.4, a
+  one-shot gain nudge is allowed when speech remains that quiet.
+- Light and Strong noise cancellation are distinct at normal speech level: Light still prefers
+  the platform suppressor (or a milder STFT); Strong uses only the deeper STFT.
+- At a single-packet WASAPI period (about 2.7 ms) the jitter target is three packets (15 ms)
+  and the drift-lock cap still starts at ±150 ppm, rising toward ±800 ppm when a standing,
+  still-growing error of up to about 25 ms is pegged.
+- Settings that both sides can change are applied live, with a per-setting sequence and origin
+  so the latest edit wins and echoes are ignored. A focused, dragged, or open control is not
+  overwritten. Capture-path changes reopen the engine with a short gap.
+
+### Fixed
+- Desktop Front focus could stay checked while the phone reported the direction as unsupported,
+  because the first PING used control sequence 0 (ignored by the phone).
+
 ## [0.5.4] - 2026-11-08
 
 Front-facing capture by default, per-phone auto-tuning, a quieter AGC that actually reaches its target,

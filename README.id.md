@@ -81,7 +81,7 @@ Lainnya: [langkah mic virtual](docs/screenshots/windows-wizard-cable-preview.png
 | PC | Windows 10 atau 11, 64-bit (x64) |
 | HP | Android 10 atau lebih baru (minSdk 29), mendukung USB tethering |
 | Kabel | Kabel USB **data** (kabel khusus charge tidak bisa) |
-| Mic virtual | [VB-CABLE](https://vb-audio.com/Cable/) (gratis, dipasang terpisah) |
+| Mic virtual | [VB-CABLE](https://vb-audio.com/Cable/) (donationware VB-Audio; unduhan resmi opsional dari installer atau Pengaturan, tidak dibundle) |
 
 ## Pasang & mulai cepat
 
@@ -90,8 +90,9 @@ Dari [rilis terbaru](https://github.com/Lukecinate/cordmic/releases/latest) undu
 
 1. **Pasang di PC.** Jalankan `CordMic-Setup-<versi>.exe` dan setujui UAC. Installer belum ditandatangani
    (code signing), jadi SmartScreen bisa menampilkan "Windows protected your PC": klik **More info → Run anyway**.
-   Saat CordMic berjalan, panduan penyiapan membantu memasang **VB-CABLE** (membuka halaman unduhan resmi dan
-   mendeteksi driver secara otomatis).
+   Installer bisa mengunduh **VB-CABLE** dari situs resmi VB-Audio, memverifikasi paketnya, lalu menjalankan
+   setup mereka (komputer mungkin perlu di-restart). Hal yang sama bisa dilakukan nanti lewat Pengaturan → Pasang VB-CABLE.
+   VB-CABLE adalah donationware dari [VB-Audio](https://vb-audio.com/Cable/); dukungan untuk VB-Audio sangat diterima.
 2. **Pasang di HP lalu sambungkan.** Salin APK ke HP dan buka (izinkan "Install unknown apps" untuk aplikasi
    pengelola file; di Samsung, matikan sementara Auto Blocker jika aktif). Colok kabel USB, nyalakan
    **Pengaturan → Koneksi → Hotspot Seluler dan Tethering → Tethering USB**, buka CordMic, lalu ketuk **Mulai**.
@@ -417,7 +418,7 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audionya tidak berubah (header `
 
 ## Lisensi
 
-[MIT](LICENSE) © CordMic contributors. VB-CABLE adalah produk terpisah dari VB-Audio dan tidak disertakan.
+[MIT](LICENSE) © CordMic contributors. VB-CABLE adalah produk donationware terpisah dari [VB-Audio](https://vb-audio.com/Cable/) dan tidak disertakan atau diubah.
 
 Aset desain: logo CordMic adalah aset asli proyek ini (dibuat oleh `tools/brand/make_logo.py`); ikon di dalam
 aplikasi memakai [Material Icons](https://fonts.google.com/icons) (gaya Round, Apache 2.0) dari Google; font UI adalah [Plus Jakarta Sans](https://github.com/tokotype/PlusJakartaSans)

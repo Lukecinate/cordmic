@@ -48,6 +48,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     private val rmsCoeff: Double
     private val agcRise: Double
     private val agcFall: Double
+    private val agcGateRel: Double
     private val peakRel: Double
     private val limRel: Double
     private val blockIn = DoubleArray(NOISE_FFT)
@@ -67,6 +68,8 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     private var peak = 0.0
     private var lim = 1.0
     private var gated = true
+    private var gateOpen = dbToLin(DEFAULT_GATE_OPEN_DBFS)
+    private var gateClose = dbToLin(DEFAULT_GATE_CLOSE_DBFS)
     private val shorts = ShortArray(4096)
 
     init {
@@ -77,6 +80,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         rmsCoeff = 1 - exp(-1.0 / (0.040 * sampleRate))
         agcRise = 1 - exp(-1.0 / (0.22 * sampleRate))
         agcFall = 1 - exp(-1.0 / (0.025 * sampleRate))
+        agcGateRel = 1 - exp(-1.0 / (0.080 * sampleRate))
         peakRel = 1 - exp(-1.0 / (0.030 * sampleRate))
         limRel = 1 - exp(-1.0 / (0.050 * sampleRate))
     }
@@ -87,6 +91,12 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         rms = 0.0; agcGain = 1.0; peak = 0.0; lim = 1.0; gated = true
         blockIn.fill(0.0); hopOut.fill(0.0); ola.fill(0.0); noise.fill(0.0)
         binGain.fill(1.0)
+    }
+
+    fun setNoiseFloorDbfs(floorDbfs: Double?) {
+        val (o, c) = gatesFromFloor(floorDbfs)
+        gateOpen = o
+        gateClose = c
     }
 
     /** In-place on little-endian PCM16 starting at [off], [frames] frames. */
@@ -127,10 +137,10 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             if (agc) {
                 rms += (y * y - rms) * rmsCoeff
                 val level = sqrt(max(rms, 0.0))
-                if (level < GATE_CLOSE) gated = true
-                else if (level > GATE_OPEN) gated = false
+                if (level < gateClose) gated = true
+                else if (level > gateOpen) gated = false
                 val want = if (gated) 1.0 else (target / max(level, 1e-5)).coerceIn(0.25, maxAgc)
-                val coeff = if (gated) agcRise else if (want > agcGain) agcRise else agcFall
+                val coeff = if (gated) agcGateRel else if (want > agcGain) agcRise else agcFall
                 agcGain += (want - agcGain) * coeff
                 y *= agcGain
             }
@@ -189,8 +199,8 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         val mean = sumBin / half
         val noiseLike = maxBin < mean * 12.0 + 1e-12
         val floor = if (mode == NoiseMode.STRONG) STRONG_FLOOR else LIGHT_FLOOR
-        val oversub = if (mode == NoiseMode.STRONG) 1.5 else 1.0
-        val smooth = if (mode == NoiseMode.STRONG) 0.45 else 0.65
+        val oversub = if (mode == NoiseMode.STRONG) 1.85 else 1.0
+        val smooth = if (mode == NoiseMode.STRONG) 0.38 else 0.70
         for (k in 0..half) {
             val m = mag[k]
             var nse = noise[k]
@@ -270,12 +280,22 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         const val MAX_GAIN_DB = 24
         const val DEFAULT_GAIN_DB = 6
         const val TARGET_DBFS = -18.0
-        const val MAX_AGC_DB = 12.0
+        const val MAX_AGC_DB = 24.0
         const val CEILING_DBFS = -1.0
-        private const val LIGHT_FLOOR = 0.20
-        private const val STRONG_FLOOR = 0.10
-        private const val GATE_OPEN = 0.007943
-        private const val GATE_CLOSE = 0.003162
+        private const val LIGHT_FLOOR = 0.32
+        private const val STRONG_FLOOR = 0.05
+        const val DEFAULT_GATE_OPEN_DBFS = -42.0
+        const val DEFAULT_GATE_CLOSE_DBFS = -50.0
+        const val SPEECH_LOW_DBFS = -40.0
+
+        fun gatesFromFloor(floorDbfs: Double?): Pair<Double, Double> {
+            if (floorDbfs == null || floorDbfs.isNaN() || floorDbfs < -85 || floorDbfs > -15)
+                return dbToLin(DEFAULT_GATE_OPEN_DBFS) to dbToLin(DEFAULT_GATE_CLOSE_DBFS)
+            var openDb = (floorDbfs + 10.0).coerceIn(-55.0, -28.0)
+            var closeDb = (floorDbfs + 4.0).coerceIn(-65.0, -38.0)
+            if (closeDb > openDb - 4) closeDb = openDb - 6
+            return dbToLin(openDb) to dbToLin(closeDb)
+        }
 
         fun dbToLin(db: Double): Double = Math.pow(10.0, db / 20.0)
 

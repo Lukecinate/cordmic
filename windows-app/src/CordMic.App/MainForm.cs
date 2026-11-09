@@ -17,12 +17,17 @@ internal sealed class MainForm : Form
     private readonly Button _settingsBtn;
     private readonly ComboBox _output, _latency, _outMode, _ncMode;
     private readonly CheckBox _clarity, _autoVol, _frontFocus, _startup;
+    private CheckBox _frontFocusAr = null!, _autoUpdate = null!;
     private readonly TrackBar _gain;
     private readonly Label _gainValue, _noCable;
     private Label _cableHint = null!;
     private Label _periodHint = null!;
     private Label _detected = null!;
+    private Label _speechLow = null!;
+    private Label _updateStatus = null!;
     private Button _optimize = null!;
+    private Button _installCable = null!;
+    private Button _checkUpdate = null!;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 32 };
     private readonly System.Windows.Forms.Timer _gainDebounce = new() { Interval = 180 };
     private bool _settingsOpen, _suppress;
@@ -192,7 +197,23 @@ internal sealed class MainForm : Form
         };
         var frontBox = frontFocus;
         frontBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetFrontFocus(frontBox.Checked); };
-        y += Sx(34);
+        y += Sx(32);
+
+        _frontFocusAr = new CheckBox
+        {
+            Text = L.T("ui.frontFocusAr"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
+            Location = new Point(x, y), BackColor = Theme.Surface,
+        };
+        _frontFocusAr.CheckedChanged += (_, _) => { if (!_suppress) _app.SetFrontFocusAudioRecord(_frontFocusAr.Checked); };
+        y += Sx(28);
+
+        _speechLow = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Amber, AutoSize = false,
+            Location = new Point(x, y), Width = w, Height = Sx(36),
+            BackColor = Theme.Surface, Text = L.T("ui.speechLow"), Visible = false,
+        };
+        y += Sx(8);
 
         _detected = new Label
         {
@@ -264,6 +285,42 @@ internal sealed class MainForm : Form
         get.Location = new Point(x + Sx(120), logs.Top);
         y += Sx(8);
 
+        _installCable = new Button
+        {
+            Text = L.T("ui.installCable"), Font = Theme.Body, FlatStyle = FlatStyle.Flat,
+            Location = new Point(x, y), Width = w, Height = Sx(32),
+            BackColor = Theme.Surface, ForeColor = Theme.Ink, Cursor = Cursors.Hand,
+        };
+        _installCable.FlatAppearance.BorderColor = Theme.Line;
+        _installCable.Click += async (_, _) => { if (!_suppress) await _app.InstallVbCableAsync(); };
+        y += Sx(38);
+
+        _autoUpdate = new CheckBox
+        {
+            Text = L.T("ui.autoUpdate"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
+            Location = new Point(x, y), BackColor = Theme.Surface,
+        };
+        _autoUpdate.CheckedChanged += (_, _) => { if (!_suppress) _app.SetAutoUpdate(_autoUpdate.Checked); };
+        y += Sx(32);
+
+        _checkUpdate = new Button
+        {
+            Text = L.T("ui.checkUpdate"), Font = Theme.Body, FlatStyle = FlatStyle.Flat,
+            Location = new Point(x, y), Width = w, Height = Sx(32),
+            BackColor = Theme.Surface, ForeColor = Theme.Ink, Cursor = Cursors.Hand,
+        };
+        _checkUpdate.FlatAppearance.BorderColor = Theme.Line;
+        _checkUpdate.Click += async (_, _) => { if (!_suppress) await _app.CheckForUpdatesAsync(interactive: true); };
+        y += Sx(38);
+
+        _updateStatus = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = false,
+            Location = new Point(x, y), Width = w, Height = Sx(36),
+            BackColor = Theme.Surface,
+        };
+        y += Sx(38);
+
         _optimize = new Button
         {
             Text = L.T("ui.cable.optimize"), Font = Theme.Body, FlatStyle = FlatStyle.Flat,
@@ -302,6 +359,12 @@ internal sealed class MainForm : Form
         p.Controls.Add(clarity);
         p.Controls.Add(autoVol);
         p.Controls.Add(frontFocus);
+        p.Controls.Add(_frontFocusAr);
+        p.Controls.Add(_speechLow);
+        p.Controls.Add(_installCable);
+        p.Controls.Add(_autoUpdate);
+        p.Controls.Add(_checkUpdate);
+        p.Controls.Add(_updateStatus);
         p.Controls.Add(reset);
         p.Controls.Add(gainLabel);
         p.Controls.Add(gainValue);
@@ -411,7 +474,14 @@ internal sealed class MainForm : Form
             if (CanWrite(_clarity) && _clarity.Checked != _app.DisplayedVoiceClarity) _clarity.Checked = _app.DisplayedVoiceClarity;
             if (CanWrite(_autoVol) && _autoVol.Checked != _app.DisplayedAutoVolume) _autoVol.Checked = _app.DisplayedAutoVolume;
             if (CanWrite(_frontFocus) && _frontFocus.Checked != _app.DisplayedFrontFocus) _frontFocus.Checked = _app.DisplayedFrontFocus;
+            if (CanWrite(_frontFocusAr) && _frontFocusAr.Checked != _app.DisplayedFrontFocusAr) _frontFocusAr.Checked = _app.DisplayedFrontFocusAr;
+            _speechLow.Visible = _app.SpeechLow;
+            _speechLow.Text = L.T("ui.speechLow");
+            if (_speechLow.Visible) _speechLow.Height = Sx(36);
             _detected.Text = string.IsNullOrEmpty(_app.DetectedSummary) ? "" : _app.DetectedSummary;
+            if (CanWrite(_autoUpdate) && _autoUpdate.Checked != _app.DisplayedAutoUpdate) _autoUpdate.Checked = _app.DisplayedAutoUpdate;
+            _updateStatus.Text = _app.UpdateCheckStatus ?? "";
+            _installCable.Visible = _app.CableName is null && _app.OutputDeviceId is null;
             int g = Math.Clamp(_app.DisplayedGain, 0, VoiceChain.MaxGainDb);
             if (CanWrite(_gain) && _gain.Value != g) _gain.Value = g;
             _gainValue.Text = L.T("ui.gainValue", _gain.Value);

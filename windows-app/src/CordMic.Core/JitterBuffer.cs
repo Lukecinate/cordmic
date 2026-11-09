@@ -543,7 +543,7 @@ public sealed class JitterBuffer
                 bool pegged = Math.Abs(raw) >= cap - 0.5;
                 // A large standing pile is overflow's job. Raise the cap only when
                 // we are pegged on a modest, still-growing error (clock-like).
-                if (pegged && Math.Abs(err) < 12.0)
+                if (pegged && Math.Abs(err) < 25.0)
                 {
                     if (double.IsNaN(_depthAtPeg)) _depthAtPeg = _avgDepthMs;
                     if (Math.Abs(_avgDepthMs - targetMs) >= Math.Abs(_depthAtPeg - targetMs) + 1.0)

@@ -28,6 +28,12 @@ public sealed class AppSettings
     public bool AutoVolume { get; set; } = true;
     /// <summary>Ask the phone to prefer the user-facing microphone. Default on; unsupported phones no-op.</summary>
     public bool FrontFocus { get; set; } = true;
+    /// <summary>Use the AudioRecord path so front focus can actually be applied (AAudio has no direction API).</summary>
+    public bool FrontFocusAudioRecord { get; set; }
+    /// <summary>Check GitHub Releases on launch and about every six hours. Off by default; the user still confirms install.</summary>
+    public bool AutoUpdate { get; set; }
+    /// <summary>UTC ticks of the last completed update check (0 = never). Used to honour the six-hour spacing.</summary>
+    public long LastUpdateCheckUtcTicks { get; set; }
     /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +6 on new installs; a saved value is left unchanged.</summary>
     public int MicGainDb { get; set; } = 6;
     /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
@@ -68,6 +74,7 @@ public sealed class AppSettings
         VoiceClarity = true;
         AutoVolume = true;
         FrontFocus = true;
+        FrontFocusAudioRecord = false;
         MicGainDb = VoiceChain.DefaultGainDb;
     }
 

@@ -18,15 +18,15 @@ public class StabilityTests
     [InlineData(5, 10, 4)]    // Low vs 10 ms period: floor is two pulls (4 packets / 20 ms)
     [InlineData(10, 10, 4)]   // Normal vs 10 ms period: same two-pull floor
     [InlineData(20, 10, 4)]   // Safe already equals the floor
-    [InlineData(5, 5, 2)]     // a 5 ms period pulls one packet, so the floor is 2
-    [InlineData(5, 2.7, 2)]   // a 2.7 ms period still pulls one 5 ms packet → floor 2 (10 ms)
-    [InlineData(10, 2.7, 2)]  // Normal already equals that floor
+    [InlineData(5, 5, 3)]     // a 5 ms period pulls one packet → three-packet floor (15 ms)
+    [InlineData(5, 2.7, 3)]   // a 2.7 ms period still pulls one 5 ms packet → floor 3 (15 ms)
+    [InlineData(10, 2.7, 3)]  // Normal 10 ms is raised to the same 15 ms floor
     public void TargetFloorsAtTwoPulls(double requestMs, double periodMs, int packets) =>
         Assert.Equal(packets, JitterPolicy.EffectiveTargetPackets(requestMs, periodMs, 5));
 
     [Theory]
     [InlineData(5, 10, 6, 10)]
-    [InlineData(5, 2.7, 3, 7)]
+    [InlineData(5, 2.7, 4, 8)]
     [InlineData(10, 10, 6, 10)]
     public void HighWaterAndMaxDepthFollowPeriod(double requestMs, double periodMs, int high, int max)
     {

@@ -70,11 +70,11 @@ public sealed class Receiver : IDisposable
     private readonly PingBackoff _pingBackoff = new();
     private long _pingMuteUntil;
     private bool _pingDropLogged;
-    private byte _ctrlSeq;
+    private byte _ctrlSeq = 1;
     private PhoneLink _phone;
     private long _rateTicks, _rateUnderruns, _rateOverflows;
     private double _underrunPerMin = double.NaN, _overflowPerMin = double.NaN;
-    private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size];
+    private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size + SettingsSync.Size];
 
     public int Port { get; private set; }
     public int FramesPerPacket { get; private set; }
@@ -97,6 +97,7 @@ public sealed class Receiver : IDisposable
         _peerTimeout = peerTimeout;
         _jitterMs = jitterMs;
         _jb = MakeJb(framesPerPacket);
+        Sync.SeedPcDefaults();
     }
 
     public static ulong NowUs() => (ulong)(Stopwatch.GetTimestamp() * 1_000_000.0 / Stopwatch.Frequency);
@@ -132,6 +133,8 @@ public sealed class Receiver : IDisposable
     }
     public bool VoiceClarity { get; set; } = true;
     public bool FrontFocus { get; set; } = true;
+    public bool FrontFocusAudioRecord { get; set; }
+    public SyncClock Sync { get; } = new();
     public bool Agc { get; set; } = true;
     public int MicGainDb { get; set; } = VoiceChain.DefaultGainDb;
     public PhoneLink Phone => _phone;
@@ -139,6 +142,18 @@ public sealed class Receiver : IDisposable
     /// <summary>Bumps the control counter so the phone applies <see cref="NoiseCancellation"/> and <see cref="MicGainDb"/>.</summary>
     public byte ControlSeq => _ctrlSeq;
     public void NotifyLinkControlChanged() => _ctrlSeq = (byte)(_ctrlSeq == 255 ? 1 : _ctrlSeq + 1);
+
+    public void NotifyLinkControlChanged(SyncField field)
+    {
+        Sync.Bump(field, SyncOrigin.Pc);
+        NotifyLinkControlChanged();
+    }
+
+    public void NotifyLinkControlChanged(params SyncField[] fields)
+    {
+        foreach (var f in fields) Sync.Bump(f, SyncOrigin.Pc);
+        NotifyLinkControlChanged();
+    }
 
     /// <summary>Change the jitter-buffer target at runtime (rebuilds the buffer when the packet count changes).</summary>
     public void SetJitterMs(double ms)
@@ -402,7 +417,12 @@ public sealed class Receiver : IDisposable
                 long nowTicks = Stopwatch.GetTimestamp();
                 if (nowTicks < _pingMuteUntil) continue;
                 _pingSeq++;
-                LinkControl.WritePing(_pingPkt.AsSpan(Protocol.HeaderSize), NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode, FrontFocus);
+                var payload = _pingPkt.AsSpan(Protocol.HeaderSize);
+                LinkControl.WritePing(payload, NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode, FrontFocus, FrontFocusAudioRecord);
+                byte flags2 = SettingsSync.FlagPeerSync;
+                if (FrontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
+                if (VoiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
+                SettingsSync.Write(payload.Slice(LinkControl.Size), flags2, Sync.Revs);
                 Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)
                 {

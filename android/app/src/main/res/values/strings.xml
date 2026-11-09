@@ -71,6 +71,16 @@
     <string name="auto_optimize_help">Chooses a capture path and starting settings for this phone. A value you set yourself is left unchanged.</string>
     <string name="redetect">Re-detect</string>
     <string name="detected_placeholder">Detected: —</string>
+    <string name="front_focus_ar_option">Front focus (higher latency)</string>
+    <string name="front_focus_ar_help">Uses AudioRecord so the phone can aim at you. Adds a little latency compared with AAudio exclusive.</string>
+    <string name="speech_low_warning">Speech is very quiet (below −40 dBFS). Move closer or raise input gain.</string>
+    <string name="auto_update_option">Auto update</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_current">You have the latest version (%1$s).</string>
+    <string name="update_available">Version %1$s is available.</string>
+    <string name="update_failed">Update check failed: %1$s</string>
+    <string name="update_installing">Installing update…</string>
     <string name="reset_audio">Reset audio settings</string>
     <string name="gain_option">Mic gain</string>
     <string name="gain_value">+%1$d dB</string>

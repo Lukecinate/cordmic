@@ -113,8 +113,9 @@ public class PolicySimTests
 
             Assert.Equal(0, after.CatchUp); // packet-drop catch-up is off
             Assert.True(after.Urate < 8, $"{row.name} after urate {after.Urate} too high");
-            // Overflow, not sample-hunting, is how a standing backlog drains. ~150 ppm → < 450 slips/min.
-            Assert.True(after.SlipPerMin < 450, $"{row.name} slip {after.SlipPerMin} still hunting");
+            // Overflow, not sample-hunting, is how a standing backlog drains. The cap may rise
+            // toward ±800 ppm when a modest standing error persists (~2300 slips/min theoretical).
+            Assert.True(after.SlipPerMin < 900, $"{row.name} slip {after.SlipPerMin} still hunting");
             Assert.True(after.Orate < 80, $"{row.name} after orate {after.Orate} too high");
         }
         File.WriteAllText("/tmp/cordmic-052-sim.txt", report.ToString());

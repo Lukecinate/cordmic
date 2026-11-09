@@ -1,6 +1,7 @@
 package dev.cordmic
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -48,8 +49,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var presetLayout: TextInputLayout
     private lateinit var aaudio: MaterialSwitch
     private lateinit var frontFocus: MaterialSwitch
+    private lateinit var frontFocusAr: MaterialSwitch
     private lateinit var autoOptimize: MaterialSwitch
+    private lateinit var autoUpdate: MaterialSwitch
     private lateinit var detectedSummary: TextView
+    private lateinit var speechLowWarning: TextView
+    private lateinit var updateStatus: TextView
     private lateinit var ncMode: MaterialAutoCompleteTextView
     private lateinit var ncModeLayout: TextInputLayout
     private lateinit var voiceClarity: MaterialSwitch
@@ -75,6 +80,8 @@ class MainActivity : AppCompatActivity() {
     private var lastRunning: Boolean? = null
     private var usbCache: String? = null
     private var usbCheckedAt = 0L
+    private var updateReceiver: BroadcastReceiver? = null
+    private var updateBusy = false
 
     /** Screenshot tests render fixed states; the live loop then leaves the screen alone. */
     @VisibleForTesting var previewState: UiState? = null
@@ -114,8 +121,12 @@ class MainActivity : AppCompatActivity() {
         preset = findViewById(R.id.preset); presetLayout = findViewById(R.id.presetLayout)
         aaudio = findViewById(R.id.aaudio)
         frontFocus = findViewById(R.id.frontFocus)
+        frontFocusAr = findViewById(R.id.frontFocusAr)
         autoOptimize = findViewById(R.id.autoOptimize)
+        autoUpdate = findViewById(R.id.autoUpdate)
         detectedSummary = findViewById(R.id.detectedSummary)
+        speechLowWarning = findViewById(R.id.speechLowWarning)
+        updateStatus = findViewById(R.id.updateStatus)
         ncMode = findViewById(R.id.ncMode); ncModeLayout = findViewById(R.id.ncModeLayout)
         voiceClarity = findViewById(R.id.voiceClarity)
         autoVolume = findViewById(R.id.autoVolume)
@@ -138,7 +149,9 @@ class MainActivity : AppCompatActivity() {
         presetIndex = p.getInt("preset", 0).coerceIn(0, presets.lastIndex)
         aaudio.isChecked = p.getBoolean("aaudio", true)
         frontFocus.isChecked = p.getBoolean("frontFocus", true)
+        frontFocusAr.isChecked = p.getBoolean("frontFocusAr", false)
         autoOptimize.isChecked = p.getBoolean("autoOptimize", true)
+        autoUpdate.isChecked = p.getBoolean("autoUpdate", false)
         ncModeIndex = when (p.getString("ncMode", null)) {
             "off" -> 0
             "strong" -> 2
@@ -163,7 +176,7 @@ class MainActivity : AppCompatActivity() {
             ncModeIndex = pos
             markUserSet("userSetNc")
             persistAudio()
-            MicService.current?.noiseMode = ncModes[pos].first
+            MicService.current?.applyNoiseMode(ncModes[pos].first)
         }
         showNcMode()
 
@@ -171,7 +184,9 @@ class MainActivity : AppCompatActivity() {
         port.doOnTextChange { portLayout.error = null; updateSummary() }
         findViewById<View>(R.id.aaudioRow).setOnClickListener { if (aaudio.isEnabled) aaudio.toggle() }
         findViewById<View>(R.id.frontFocusRow).setOnClickListener { frontFocus.toggle() }
+        findViewById<View>(R.id.frontFocusArRow).setOnClickListener { frontFocusAr.toggle() }
         findViewById<View>(R.id.autoOptimizeRow).setOnClickListener { autoOptimize.toggle() }
+        findViewById<View>(R.id.autoUpdateRow).setOnClickListener { autoUpdate.toggle() }
         findViewById<View>(R.id.clarityRow).setOnClickListener { voiceClarity.toggle() }
         findViewById<View>(R.id.autoVolRow).setOnClickListener { autoVolume.toggle() }
         aaudio.setOnCheckedChangeListener { _, _ ->
@@ -182,9 +197,30 @@ class MainActivity : AppCompatActivity() {
         frontFocus.setOnCheckedChangeListener { _, checked ->
             if (applyingRemote) return@setOnCheckedChangeListener
             markUserSet("userSetFrontFocus")
+            if (!checked && frontFocusAr.isChecked) {
+                applyingRemote = true
+                frontFocusAr.isChecked = false
+                applyingRemote = false
+            }
             persistAudio()
             MicService.current?.applyFrontFocus(checked)
         }
+        frontFocusAr.setOnCheckedChangeListener { _, checked ->
+            if (applyingRemote) return@setOnCheckedChangeListener
+            markUserSet("userSetFrontFocus")
+            if (checked && !frontFocus.isChecked) {
+                applyingRemote = true
+                frontFocus.isChecked = true
+                applyingRemote = false
+            }
+            persistAudio()
+            MicService.current?.applyFrontFocusAr(checked)
+        }
+        autoUpdate.setOnCheckedChangeListener { _, checked ->
+            if (applyingRemote) return@setOnCheckedChangeListener
+            getPreferences(MODE_PRIVATE).edit().putBoolean("autoUpdate", checked).apply()
+        }
+        findViewById<View>(R.id.checkUpdate).setOnClickListener { checkForUpdates(interactive = true) }
         autoOptimize.setOnCheckedChangeListener { _, checked ->
             if (applyingRemote) return@setOnCheckedChangeListener
             persistAudio()
@@ -199,29 +235,31 @@ class MainActivity : AppCompatActivity() {
         voiceClarity.setOnCheckedChangeListener { _, checked ->
             if (applyingRemote) return@setOnCheckedChangeListener
             persistAudio()
-            MicService.current?.voiceClarity = checked
+            MicService.current?.applyClarity(checked)
         }
         autoVolume.setOnCheckedChangeListener { _, checked ->
             if (applyingRemote) return@setOnCheckedChangeListener
             persistAudio()
-            MicService.current?.agc = checked
+            MicService.current?.applyAgc(checked)
         }
         findViewById<View>(R.id.resetAudio).setOnClickListener {
             ncModeIndex = 1
             voiceClarity.isChecked = true
             autoVolume.isChecked = true
             frontFocus.isChecked = true
+            frontFocusAr.isChecked = false
             gain.value = VoiceChain.DEFAULT_GAIN_DB.toFloat()
             showNcMode()
             clearUserSets()
             persistAudio()
             if (autoOptimize.isChecked) applyAdvice()
             MicService.current?.let {
-                it.noiseMode = NoiseMode.LIGHT
-                it.voiceClarity = true
-                it.agc = true
-                it.gainDb = gain.value.toInt()
+                it.applyNoiseMode(NoiseMode.LIGHT)
+                it.applyClarity(true)
+                it.applyAgc(true)
+                it.applyGain(gain.value.toInt())
                 it.applyFrontFocus(frontFocus.isChecked)
+                it.applyFrontFocusAr(frontFocusAr.isChecked)
             }
         }
         gain.addOnChangeListener { _, value, fromUser ->
@@ -230,7 +268,7 @@ class MainActivity : AppCompatActivity() {
             val db = value.toInt()
             markUserSet("userSetGain")
             getPreferences(MODE_PRIVATE).edit().putInt("gain", db).apply()
-            MicService.current?.gainDb = db
+            MicService.current?.applyGain(db)
         }
 
         toggle.setOnClickListener {
@@ -252,10 +290,20 @@ class MainActivity : AppCompatActivity() {
         if (autoOptimize.isChecked) applyAdvice()
         showDetected()
         render(liveState(), immediate = true)
+        updateReceiver = UpdateInstaller.register(this)
+        maybeAutoCheckUpdates()
     }
 
     override fun onResume() { super.onResume(); handler.post(refresh) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(refresh) }
+    override fun onDestroy() {
+        val receiver = updateReceiver
+        if (receiver != null) {
+            try { unregisterReceiver(receiver) } catch (e: Exception) { }
+        }
+        updateReceiver = null
+        super.onDestroy()
+    }
 
     private fun currentState(): UiState = previewState ?: liveState()
 
@@ -361,6 +409,7 @@ class MainActivity : AppCompatActivity() {
         updateSummary()
         showDetected()
         val liveStreamer = MicService.current
+        if (liveStreamer == null) speechLowWarning.visibility = android.view.View.GONE
         if (liveStreamer != null && !gain.isPressed) {
             applyingRemote = true
             val wantIdx = ncModes.indexOfFirst { it.first == liveStreamer.noiseMode }.let { if (it < 0) ncModeIndex else it }
@@ -368,6 +417,8 @@ class MainActivity : AppCompatActivity() {
             if (voiceClarity.isChecked != liveStreamer.voiceClarity) voiceClarity.isChecked = liveStreamer.voiceClarity
             if (autoVolume.isChecked != liveStreamer.agc) autoVolume.isChecked = liveStreamer.agc
             if (frontFocus.isChecked != liveStreamer.frontFocus) frontFocus.isChecked = liveStreamer.frontFocus
+            if (frontFocusAr.isChecked != liveStreamer.frontFocusAr) frontFocusAr.isChecked = liveStreamer.frontFocusAr
+            speechLowWarning.visibility = if (liveStreamer.speechLow) android.view.View.VISIBLE else android.view.View.GONE
             val g = liveStreamer.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
             if (gain.value != g) gain.value = g
             applyingRemote = false
@@ -421,7 +472,9 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("agc", autoVolume.isChecked)
             .putBoolean("aaudio", aaudio.isChecked)
             .putBoolean("frontFocus", frontFocus.isChecked)
+            .putBoolean("frontFocusAr", frontFocusAr.isChecked)
             .putBoolean("autoOptimize", autoOptimize.isChecked)
+            .putBoolean("autoUpdate", autoUpdate.isChecked)
             .putInt("gain", gain.value.toInt())
             .putInt("preset", presetIndex)
             .apply()
@@ -442,22 +495,27 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("userSetAaudio", false)
             .putBoolean("userSetPreset", false)
             .putBoolean("userSetFrontFocus", false)
+            .putBoolean("upgradeGainNudge", false)
             .apply()
     }
 
     private fun migrateUserLocks(p: android.content.SharedPreferences) {
-        if (p.contains("prefsVersion")) return
+        val ver = p.getInt("prefsVersion", 0)
+        if (ver >= 3) return
         val ed = p.edit()
-        val upgrading = listOf("gain", "aaudio", "preset", "nc", "ncMode", "clarity", "agc").any { p.contains(it) }
-        if (upgrading) {
-            if (p.contains("gain")) ed.putBoolean("userSetGain", true)
-            if (p.contains("aaudio")) ed.putBoolean("userSetAaudio", true)
-            if (p.contains("preset")) ed.putBoolean("userSetPreset", true)
-            if (p.contains("nc") || p.contains("ncMode")) ed.putBoolean("userSetNc", true)
-            if (p.contains("clarity")) ed.putBoolean("userSetClarity", true)
-            if (p.contains("agc")) ed.putBoolean("userSetAgc", true)
+        if (ver == 0) {
+            val upgrading = listOf("gain", "aaudio", "preset", "nc", "ncMode", "clarity", "agc").any { p.contains(it) }
+            if (upgrading) {
+                if (p.contains("aaudio")) ed.putBoolean("userSetAaudio", true)
+                if (p.contains("preset")) ed.putBoolean("userSetPreset", true)
+                if (p.contains("nc") || p.contains("ncMode")) ed.putBoolean("userSetNc", true)
+                if (p.contains("clarity")) ed.putBoolean("userSetClarity", true)
+                if (p.contains("agc")) ed.putBoolean("userSetAgc", true)
+            }
         }
-        ed.putInt("prefsVersion", 2).apply()
+        // Allow a one-shot gain nudge after upgrade when speech stays far below target.
+        ed.putBoolean("upgradeGainNudge", true)
+        ed.putInt("prefsVersion", 3).apply()
     }
 
     private fun applyAdvice() {
@@ -483,9 +541,10 @@ class MainActivity : AppCompatActivity() {
         showGain()
         persistAudio()
         MicService.current?.let {
-            it.noiseMode = advice.noiseMode
-            it.gainDb = advice.suggestedGainDb
+            it.applyNoiseMode(advice.noiseMode)
+            it.applyGain(advice.suggestedGainDb)
             it.applyFrontFocus(advice.frontFocus)
+            it.applyFrontFocusAr(frontFocusAr.isChecked)
         }
     }
 
@@ -569,6 +628,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
+    private fun maybeAutoCheckUpdates() {
+        val p = getPreferences(MODE_PRIVATE)
+        if (!p.getBoolean("autoUpdate", false)) return
+        val last = p.getLong("lastUpdateCheck", 0L)
+        if (System.currentTimeMillis() - last < AppUpdate.MIN_CHECK_MS) return
+        checkForUpdates(interactive = false)
+    }
+
+    private fun checkForUpdates(interactive: Boolean) {
+        if (updateBusy) return
+        updateBusy = true
+        updateStatus.text = getString(R.string.update_checking)
+        Thread({
+            val result = UpdateInstaller.fetchOffer(BuildConfig.VERSION_NAME)
+            handler.post {
+                updateBusy = false
+                result.fold(
+                    onSuccess = { offer ->
+                        getPreferences(MODE_PRIVATE).edit().putLong("lastUpdateCheck", System.currentTimeMillis()).apply()
+                        if (offer == null) {
+                            updateStatus.text = getString(R.string.update_current, BuildConfig.VERSION_NAME)
+                        } else {
+                            updateStatus.text = getString(R.string.update_available, offer.tag)
+                            if (interactive || getPreferences(MODE_PRIVATE).getBoolean("autoUpdate", false)) {
+                                applyUpdate(offer)
+                            }
+                        }
+                    },
+                    onFailure = { e ->
+                        updateStatus.text = getString(R.string.update_failed, e.message ?: e.toString())
+                    },
+                )
+            }
+        }, "cordmic-update").start()
+    }
+
+    private fun applyUpdate(offer: UpdateInstaller.Offer) {
+        updateStatus.text = getString(R.string.update_installing)
+        Thread({
+            val r = runCatching {
+                val apk = UpdateInstaller.downloadAndVerify(this, offer)
+                UpdateInstaller.startInstall(this, apk)
+            }
+            handler.post {
+                r.onFailure { updateStatus.text = getString(R.string.update_failed, it.message ?: it.toString()) }
+            }
+        }, "cordmic-update-dl").start()
+    }
+
     private fun startClicked() {
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) needed += Manifest.permission.POST_NOTIFICATIONS
@@ -593,7 +702,9 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("clarity", voiceClarity.isChecked)
             .putBoolean("agc", autoVolume.isChecked)
             .putBoolean("frontFocus", frontFocus.isChecked)
+            .putBoolean("frontFocusAr", frontFocusAr.isChecked)
             .putBoolean("autoOptimize", autoOptimize.isChecked)
+            .putBoolean("autoUpdate", autoUpdate.isChecked)
             .putInt("gain", gainDb).apply()
         val i = Intent(this, MicService::class.java)
             .putExtra(MicService.EXTRA_HOST, host)
@@ -606,8 +717,10 @@ class MainActivity : AppCompatActivity() {
             .putExtra(MicService.EXTRA_AGC, autoVolume.isChecked)
             .putExtra(MicService.EXTRA_GAIN, gainDb)
             .putExtra(MicService.EXTRA_FRONT_FOCUS, frontFocus.isChecked)
+            .putExtra(MicService.EXTRA_FRONT_FOCUS_AR, frontFocusAr.isChecked)
             .putExtra(MicService.EXTRA_AUTO_OPTIMIZE, autoOptimize.isChecked)
             .putExtra(MicService.EXTRA_USER_SET_GAIN, userSet("userSetGain"))
+            .putExtra(MicService.EXTRA_UPGRADE_GAIN_NUDGE, getPreferences(MODE_PRIVATE).getBoolean("upgradeGainNudge", false))
         startForegroundService(i)
     }
 

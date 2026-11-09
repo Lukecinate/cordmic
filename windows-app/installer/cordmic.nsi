@@ -7,7 +7,7 @@ SetCompressorDictSize 64
 
 !define APPNAME   "CordMic"
 !ifndef VERSION
-  !define VERSION "0.5.4"
+  !define VERSION "0.5.5"
 !endif
 !define PUBLISHER "CordMic contributors"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CordMic"
@@ -71,8 +71,8 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright (c) ${PUBLISHER}. MIT Licens
 
 LangString TxtWelcomeTitle ${LANG_ENGLISH} "Install CordMic"
 LangString TxtWelcomeTitle ${LANG_INDONESIAN} "Pasang CordMic"
-LangString TxtWelcomeText ${LANG_ENGLISH} "CordMic turns an Android phone into a PC microphone over a USB cable (USB tethering), with no Wi-Fi and no USB debugging.$\r$\n$\r$\nThis installer will:$\r$\n  • install the CordMic tray app$\r$\n  • open UDP port 50005 in the firewall (local network only)$\r$\n  • give the phone adapter a low priority so games keep using LAN/Wi-Fi$\r$\n$\r$\nThe virtual mic (VB-CABLE) is installed separately from its official site; a setup guide opens after installation."
-LangString TxtWelcomeText ${LANG_INDONESIAN} "CordMic menjadikan HP Android sebagai mikrofon PC lewat kabel USB (USB tethering), tanpa Wi-Fi dan tanpa USB debugging.$\r$\n$\r$\nInstaller ini akan:$\r$\n  • memasang aplikasi tray CordMic$\r$\n  • membuka port UDP 50005 di firewall (hanya jaringan lokal)$\r$\n  • membuat adapter HP berprioritas rendah agar game tetap pakai LAN/Wi-Fi$\r$\n$\r$\nMic virtual (VB-CABLE) dipasang terpisah dari situs resminya; panduan akan muncul setelah instalasi."
+LangString TxtWelcomeText ${LANG_ENGLISH} "CordMic turns an Android phone into a PC microphone over a USB cable (USB tethering), with no Wi-Fi and no USB debugging.$\r$\n$\r$\nThis installer will:$\r$\n  • install the CordMic tray app$\r$\n  • open UDP port 50005 in the firewall (local network only)$\r$\n  • give the phone adapter a low priority so games keep using LAN/Wi-Fi$\r$\n$\r$\nAn optional step can download VB-CABLE from its official site (verified, not bundled). A reboot may be required afterward."
+LangString TxtWelcomeText ${LANG_INDONESIAN} "CordMic menjadikan HP Android sebagai mikrofon PC lewat kabel USB (USB tethering), tanpa Wi-Fi dan tanpa USB debugging.$\r$\n$\r$\nInstaller ini akan:$\r$\n  • memasang aplikasi tray CordMic$\r$\n  • membuka port UDP 50005 di firewall (hanya jaringan lokal)$\r$\n  • membuat adapter HP berprioritas rendah agar game tetap pakai LAN/Wi-Fi$\r$\n$\r$\nLangkah opsional dapat mengunduh VB-CABLE dari situs resminya (diverifikasi, tidak dibundle). Restart mungkin diperlukan setelahnya."
 LangString TxtFinishTitle ${LANG_ENGLISH} "CordMic is installed"
 LangString TxtFinishTitle ${LANG_INDONESIAN} "CordMic sudah terpasang"
 LangString TxtFinishText ${LANG_ENGLISH} "CordMic runs in the system tray (bottom right). The setup guide opens when the app starts."
@@ -97,6 +97,12 @@ LangString SecStartupName ${LANG_ENGLISH} "Start automatically with Windows"
 LangString SecStartupName ${LANG_INDONESIAN} "Jalan otomatis saat Windows mulai"
 LangString SecDesktopName ${LANG_ENGLISH} "Desktop shortcut"
 LangString SecDesktopName ${LANG_INDONESIAN} "Shortcut di Desktop"
+LangString SecCableName ${LANG_ENGLISH} "Download and install VB-CABLE (official)"
+LangString SecCableName ${LANG_INDONESIAN} "Unduh dan pasang VB-CABLE (resmi)"
+LangString TxtCableFail ${LANG_ENGLISH} "Could not download or verify VB-CABLE. The official page will open so you can install it yourself."
+LangString TxtCableFail ${LANG_INDONESIAN} "Tidak bisa mengunduh atau memverifikasi VB-CABLE. Halaman resmi akan dibuka supaya kamu bisa memasangnya sendiri."
+LangString TxtCableReboot ${LANG_ENGLISH} "VB-CABLE setup finished. A reboot may be required before the virtual microphone appears."
+LangString TxtCableReboot ${LANG_INDONESIAN} "Setup VB-CABLE selesai. Komputer mungkin perlu di-restart sebelum mikrofon virtual muncul."
 
 Function .onInit
   ${IfNot} ${RunningX64}
@@ -104,6 +110,7 @@ Function .onInit
     Abort
   ${EndIf}
   SetRegView 64
+  Call AdjustCableSection
 FunctionEnd
 
 Function un.onInit
@@ -171,6 +178,7 @@ Section "$(SecMainName)" SecMain
   SetOutPath "$INSTDIR\tools"
   File "tools\set-tether-metric.ps1"
   File "tools\cordmic-setup.ps1"
+  File "tools\install-vbcable.ps1"
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 
@@ -203,7 +211,30 @@ Section "$(SecMainName)" SecMain
   ${AndIf} $0 != 2
     DetailPrint "VB-CABLE optimize skipped or failed (exit $0). CordMic will still work."
   ${EndIf}
+
+  ${If} ${Silent}
+    Call LaunchUnelevated
+  ${EndIf}
 SectionEnd
+
+Section "$(SecCableName)" SecCable
+  DetailPrint "Downloading the official VB-CABLE package (VB-Audio donationware)..."
+  nsExec::ExecToLog '"${PS}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\tools\install-vbcable.ps1"'
+  Pop $0
+  ${If} $0 != 0
+    DetailPrint "VB-CABLE download/verify failed (exit $0)."
+    MessageBox MB_ICONEXCLAMATION|MB_OK "$(TxtCableFail)"
+    ExecShell "open" "https://vb-audio.com/Cable/"
+  ${Else}
+    DetailPrint "$(TxtCableReboot)"
+  ${EndIf}
+SectionEnd
+
+Function AdjustCableSection
+  ; Default-checked when no CABLE device is present; uncheck if it already looks installed.
+  IfFileExists "$SYSDIR\drivers\vbaudio_cable64_win10.sys" 0 +2
+    SectionSetFlags ${SecCable} 0
+FunctionEnd
 
 Section "$(SecStartupName)" SecStartup
   WriteRegStr HKCU "${RUNKEY}" "CordMic" '"$INSTDIR\CordMic.exe" --tray'

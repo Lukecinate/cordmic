@@ -114,6 +114,7 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
     override val name = "AudioRecord"
     private var rec: AudioRecord? = null
     var dirCode: Int = 0; private set
+    var capturedMics: Int = 0; private set
 
     @SuppressLint("MissingPermission") // checked by the Activity before the service starts
     override fun open(): Boolean {
@@ -123,6 +124,9 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
         if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
         r.startRecording()
         dirCode = applyFrontFocus(r, frontFocus)
+        capturedMics = try {
+            if (Build.VERSION.SDK_INT >= 28) r.activeMicrophones.size else 0
+        } catch (_: Throwable) { 0 }
         rec = r
         return true
     }
@@ -134,7 +138,7 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
     }
 
     override fun stats() = EngineStats(name, rate, bufferFrames = rec?.bufferSizeInFrames, dirCode = dirCode,
-        micCount = DeviceProbe.profile.micCount.takeIf { it > 0 })
+        micCount = capturedMics.takeIf { it > 0 } ?: DeviceProbe.profile.micCount.takeIf { it > 0 })
     override fun sessionId(): Int = rec?.audioSessionId ?: 0
 
     override fun close() { rec?.run { stop(); release() }; rec = null }

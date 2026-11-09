@@ -2,8 +2,7 @@ namespace CordMic.Core;
 
 /// <summary>
 /// Jitter-buffer sizing against the WASAPI render period.
-/// The floor is two pulls (so a full period plus another period of leftover remains after a
-/// callback). Overflow trims to a high-water mark one period above the target, not all the way
+/// The floor is two pulls, or three when a callback consumes a single packet. Overflow trims to a high-water mark one period above the target, not all the way
 /// back to the target. Max depth is the target plus five periods so a short 2.7 ms callback has burst room.
 /// </summary>
 public static class JitterPolicy
@@ -20,7 +19,9 @@ public static class JitterPolicy
         int requested = Math.Max(1, (int)Math.Round(requestedMs / packetMs));
         int pull = PullPackets(renderPeriodMs, packetMs);
         if (pull <= 0) return requested;
-        return Math.Max(requested, 2 * pull);
+        // A single-packet pull (2.7 ms exclusive period) needs three packets of target
+        // so overflow/underrun have room instead of oscillating around a 10 ms floor.
+        return Math.Max(requested, pull <= 1 ? 3 * pull : 2 * pull);
     }
 
     /// <summary>Trim-to mark: target plus one render period.</summary>

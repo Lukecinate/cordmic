@@ -68,6 +68,16 @@
     <string name="auto_optimize_help">Memilih jalur rekaman dan pengaturan awal untuk HP ini. Nilai yang Anda atur sendiri tidak diganti.</string>
     <string name="redetect">Deteksi ulang</string>
     <string name="detected_placeholder">Terdeteksi: —</string>
+        <string name="front_focus_ar_option">Fokus depan (latensi lebih tinggi)</string>
+    <string name="front_focus_ar_help">Memakai AudioRecord agar HP bisa mengarah ke kamu. Latensinya sedikit lebih tinggi daripada AAudio eksklusif.</string>
+    <string name="speech_low_warning">Suara sangat pelan (di bawah −40 dBFS). Dekatkan HP atau naikkan gain.</string>
+    <string name="auto_update_option">Perbarui otomatis</string>
+    <string name="check_for_updates">Periksa pembaruan</string>
+    <string name="update_checking">Memeriksa pembaruan…</string>
+    <string name="update_current">Kamu sudah memakai versi terbaru (%1$s).</string>
+    <string name="update_available">Versi %1$s tersedia.</string>
+    <string name="update_failed">Gagal memeriksa pembaruan: %1$s</string>
+    <string name="update_installing">Memasang pembaruan…</string>
     <string name="reset_audio">Reset pengaturan audio</string>
     <string name="gain_option">Gain mic</string>
     <string name="gain_value">+%1$d dB</string>

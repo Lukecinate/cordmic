@@ -64,8 +64,21 @@ internal sealed class AppController : ApplicationContext
     public bool DisplayedVoiceClarity => SettingsPresentation.VisibleVoiceClarity(_settings.VoiceClarity);
     public bool DisplayedAutoVolume => SettingsPresentation.VisibleAutoVolume(_settings.AutoVolume);
     public bool DisplayedFrontFocus => SettingsPresentation.VisibleFrontFocus(_settings.FrontFocus);
+    public bool DisplayedFrontFocusAr => _settings.FrontFocusAudioRecord;
+    public bool DisplayedAutoUpdate => _settings.AutoUpdate;
+    public bool SpeechLow => _rx?.Phone.SpeechLow == true;
+    public string UpdateCheckStatus { get; private set; } = "";
+    public string CurrentVersion
+    {
+        get
+        {
+            var v = typeof(AppController).Assembly.GetName().Version;
+            return v is null ? "0.5.5" : $"{v.Major}.{v.Minor}.{v.Build}";
+        }
+    }
     public int DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
     public string DetectedSummary => _rx?.Phone.Known == true ? _rx.Phone.DetectedSummary : "";
+
     /// <summary>Name of the output the controller would open right now, for the connect window.</summary>
     public string? WantedOutputName => WantedOutput()?.Name;
     public TetherAdapter? Adapter => _net.Current;
@@ -98,6 +111,7 @@ internal sealed class AppController : ApplicationContext
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
         Tick();
+        MaybeAutoCheckUpdates();
 
         if (openWizard || !_settings.FirstRunDone) ShowWizard();
     }
@@ -131,6 +145,7 @@ internal sealed class AppController : ApplicationContext
             Log = Log, RxThreadInit = Native.BoostAudioThread,
             NoiseMode = _settings.NoiseMode, VoiceClarity = _settings.VoiceClarity,
             FrontFocus = _settings.FrontFocus,
+            FrontFocusAudioRecord = _settings.FrontFocusAudioRecord,
             Agc = _settings.AutoVolume,
             MicGainDb = Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb),
         };
@@ -618,7 +633,7 @@ internal sealed class AppController : ApplicationContext
         _settings.NoiseCancellation = mode != NoiseMode.Off;
         NoteLocalSettingsChanged();
         Save();
-        if (_rx is { } rx) { rx.NoiseMode = mode; rx.NotifyLinkControlChanged(); }
+        if (_rx is { } rx) { rx.NoiseMode = mode; rx.NotifyLinkControlChanged(SyncField.Noise); }
         Log("noise cancellation -> " + mode.ToString().ToLowerInvariant());
     }
 
@@ -628,7 +643,7 @@ internal sealed class AppController : ApplicationContext
         _settings.VoiceClarity = on;
         NoteLocalSettingsChanged();
         Save();
-        if (_rx is { } rx) { rx.VoiceClarity = on; rx.NotifyLinkControlChanged(); }
+        if (_rx is { } rx) { rx.VoiceClarity = on; rx.NotifyLinkControlChanged(SyncField.Clarity); }
         Log("voice clarity -> " + (on ? "on" : "off"));
     }
 
@@ -638,7 +653,7 @@ internal sealed class AppController : ApplicationContext
         _settings.AutoVolume = on;
         NoteLocalSettingsChanged();
         Save();
-        if (_rx is { } rx) { rx.Agc = on; rx.NotifyLinkControlChanged(); }
+        if (_rx is { } rx) { rx.Agc = on; rx.NotifyLinkControlChanged(SyncField.Agc); }
         Log("auto volume -> " + (on ? "on" : "off"));
     }
 
@@ -646,10 +661,44 @@ internal sealed class AppController : ApplicationContext
     {
         if (_settings.FrontFocus == on) return;
         _settings.FrontFocus = on;
+        if (!on && _settings.FrontFocusAudioRecord)
+        {
+            _settings.FrontFocusAudioRecord = false;
+            if (_rx is { } rx0) rx0.FrontFocusAudioRecord = false;
+        }
         NoteLocalSettingsChanged();
         Save();
-        if (_rx is { } rx) { rx.FrontFocus = on; rx.NotifyLinkControlChanged(); }
+        if (_rx is { } rx) { rx.FrontFocus = on; rx.NotifyLinkControlChanged(SyncField.FrontFocus); }
         Log("front focus -> " + (on ? "on" : "off"));
+    }
+
+    public void SetFrontFocusAudioRecord(bool on)
+    {
+        if (_settings.FrontFocusAudioRecord == on) return;
+        _settings.FrontFocusAudioRecord = on;
+        if (on && !_settings.FrontFocus)
+        {
+            _settings.FrontFocus = true;
+            if (_rx is { } rx0) rx0.FrontFocus = true;
+        }
+        NoteLocalSettingsChanged();
+        Save();
+        if (_rx is { } rx)
+        {
+            rx.FrontFocus = _settings.FrontFocus;
+            rx.FrontFocusAudioRecord = on;
+            rx.NotifyLinkControlChanged(SyncField.FrontFocusAr);
+        }
+        Log("front focus (higher latency) -> " + (on ? "on" : "off"));
+    }
+
+    public void SetAutoUpdate(bool on)
+    {
+        if (_settings.AutoUpdate == on) return;
+        _settings.AutoUpdate = on;
+        Save();
+        Log("auto update -> " + (on ? "on" : "off"));
+        if (on) _ = CheckForUpdatesAsync(interactive: false);
     }
 
     public void ResetAudioSettings()
@@ -662,9 +711,10 @@ internal sealed class AppController : ApplicationContext
             rx.NoiseMode = _settings.NoiseMode;
             rx.VoiceClarity = _settings.VoiceClarity;
             rx.FrontFocus = _settings.FrontFocus;
+            rx.FrontFocusAudioRecord = _settings.FrontFocusAudioRecord;
             rx.Agc = _settings.AutoVolume;
             rx.MicGainDb = _settings.MicGainDb;
-            rx.NotifyLinkControlChanged();
+            rx.NotifyLinkControlChanged(SyncField.Noise, SyncField.Clarity, SyncField.Agc, SyncField.Gain, SyncField.FrontFocus, SyncField.FrontFocusAr);
         }
         Log("audio settings reset to defaults");
     }
@@ -680,7 +730,7 @@ internal sealed class AppController : ApplicationContext
         {
             rx.MicGainDb = db;
             rx.Agc = _settings.AutoVolume;
-            rx.NotifyLinkControlChanged();
+            rx.NotifyLinkControlChanged(SyncField.Gain);
         }
         Log($"mic gain -> +{db} dB");
     }
@@ -727,33 +777,144 @@ internal sealed class AppController : ApplicationContext
     private void AbsorbPhoneEcho(PhoneLink phone)
     {
         if (!phone.Known) return;
+
+        if (phone.SyncCapable && phone.SyncRevs is { Length: > 0 } revs && _rx is { } rx)
+        {
+            bool changed = false;
+            void Take(SyncField field, Action apply)
+            {
+                int i = (int)field;
+                if (i >= revs.Length) return;
+                var remote = revs[i];
+                if (!SettingsSync.ShouldApply(rx.Sync[field], remote)) return;
+                apply();
+                rx.Sync.ApplyRemote(field, remote);
+                changed = true;
+            }
+            Take(SyncField.Noise, () =>
+            {
+                var nc = SettingsPresentation.NoiseModeFromPhone(phone.NoiseCancellation, phone.NoiseBits, _settings.NoiseMode);
+                _settings.NoiseMode = nc;
+                _settings.NoiseCancellation = nc != NoiseMode.Off;
+                rx.NoiseMode = nc;
+            });
+            Take(SyncField.Clarity, () =>
+            {
+                _settings.VoiceClarity = phone.VoiceClarity;
+                rx.VoiceClarity = phone.VoiceClarity;
+            });
+            Take(SyncField.Agc, () =>
+            {
+                _settings.AutoVolume = phone.Agc;
+                rx.Agc = phone.Agc;
+            });
+            Take(SyncField.Gain, () =>
+            {
+                if (phone.GainDb >= 0)
+                {
+                    _settings.MicGainDb = phone.GainDb;
+                    rx.MicGainDb = phone.GainDb;
+                }
+            });
+            Take(SyncField.FrontFocus, () =>
+            {
+                _settings.FrontFocus = phone.FrontFocus;
+                rx.FrontFocus = phone.FrontFocus;
+            });
+            Take(SyncField.FrontFocusAr, () =>
+            {
+                _settings.FrontFocusAudioRecord = phone.FrontFocusAudioRecord;
+                rx.FrontFocusAudioRecord = phone.FrontFocusAudioRecord;
+            });
+            if (changed) Save();
+            return;
+        }
+
         if (!SettingsPresentation.ShouldAcceptPhoneEcho(_lastLocalSettingsUtc, DateTime.UtcNow)) return;
 
-        bool changed = false;
-        var nc = SettingsPresentation.NoiseModeFromPhone(phone.NoiseCancellation, phone.NoiseBits, _settings.NoiseMode);
-        if (nc != _settings.NoiseMode)
+        bool staleChanged = false;
+        var ncLegacy = SettingsPresentation.NoiseModeFromPhone(phone.NoiseCancellation, phone.NoiseBits, _settings.NoiseMode);
+        if (ncLegacy != _settings.NoiseMode)
         {
-            _settings.NoiseMode = nc;
-            _settings.NoiseCancellation = nc != NoiseMode.Off;
-            changed = true;
+            _settings.NoiseMode = ncLegacy;
+            _settings.NoiseCancellation = ncLegacy != NoiseMode.Off;
+            staleChanged = true;
         }
         if (phone.Agc != _settings.AutoVolume)
         {
             _settings.AutoVolume = phone.Agc;
-            changed = true;
+            staleChanged = true;
         }
         // Older phones leave PONG bit 5 clear and pack no mic/dir nibble — do not treat that as Off.
         if ((phone.MicCount > 0 || phone.DirCode != 0) && phone.FrontFocus != _settings.FrontFocus)
         {
             _settings.FrontFocus = phone.FrontFocus;
-            changed = true;
+            staleChanged = true;
         }
         if (phone.GainDb >= 0 && SettingsPresentation.GainChanged(_settings.MicGainDb, phone.GainDb))
         {
             _settings.MicGainDb = phone.GainDb;
-            changed = true;
+            staleChanged = true;
         }
-        if (changed) Save();
+        if (staleChanged) Save();
+    }
+
+    public async Task CheckForUpdatesAsync(bool interactive)
+    {
+        try
+        {
+            UpdateCheckStatus = L.T("ui.update.checking");
+            var info = await UpdateClient.FetchLatestAsync().ConfigureAwait(true);
+            _settings.LastUpdateCheckUtcTicks = DateTime.UtcNow.Ticks;
+            Save();
+            if (!AppUpdate.IsNewer(info.Tag, CurrentVersion))
+            {
+                UpdateCheckStatus = L.T("ui.update.current", CurrentVersion);
+                return;
+            }
+            UpdateCheckStatus = L.T("ui.update.available", info.Tag);
+            if (!interactive && !_settings.AutoUpdate) return;
+            var setup = await UpdateClient.DownloadVerifiedSetupAsync(info, CurrentVersion).ConfigureAwait(true);
+            UpdateCheckStatus = L.T("ui.update.installing");
+            UpdateClient.LaunchSilentAndExit(setup);
+            Quit();
+        }
+        catch (Exception ex)
+        {
+            UpdateCheckStatus = L.T("ui.update.failed", ex.Message);
+            Log("update: " + ex.Message);
+        }
+    }
+
+    public async Task InstallVbCableAsync()
+    {
+        try
+        {
+            if (CableInstaller.LooksInstalled())
+            {
+                UpdateCheckStatus = L.T("ui.cable.already");
+                return;
+            }
+            UpdateCheckStatus = L.T("ui.cable.downloading");
+            var setup = await CableInstaller.DownloadAndVerifyAsync().ConfigureAwait(true);
+            CableInstaller.LaunchSetup(setup);
+            UpdateCheckStatus = L.T("ui.cable.launched");
+            Log("VB-CABLE official setup launched; a reboot may be required");
+        }
+        catch (Exception ex)
+        {
+            UpdateCheckStatus = L.T("ui.cable.failed", ex.Message);
+            Log("VB-CABLE install: " + ex.Message);
+            try { Process.Start(new ProcessStartInfo(VbCable.PageUrl) { UseShellExecute = true }); } catch (Exception) { }
+        }
+    }
+
+    public void MaybeAutoCheckUpdates()
+    {
+        if (!_settings.AutoUpdate) return;
+        var last = _settings.LastUpdateCheckUtcTicks <= 0 ? DateTime.MinValue : new DateTime(_settings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
+        if (DateTime.UtcNow - last < AppUpdate.MinCheckInterval) return;
+        _ = CheckForUpdatesAsync(interactive: false);
     }
 
     private void Save()

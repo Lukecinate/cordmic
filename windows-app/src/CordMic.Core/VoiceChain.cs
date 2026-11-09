@@ -24,12 +24,13 @@ public sealed class VoiceChain
     public const int DefaultGainDb = 6;
     /// <summary>AGC envelope target. −18 dBFS leaves headroom for Discord/game mic sliders around 50–60 %.</summary>
     public const double TargetDbfs = -18;
-    public const double MaxAgcDb = 12;
+    public const double MaxAgcDb = 24;
     public const double CeilingDbfs = -1;
-    private const double LightFloor = 0.20;   // −14 dB
-    private const double StrongFloor = 0.10;  // −20 dB
-    private const double GateOpen = 0.007943;  // −42 dBFS
-    private const double GateClose = 0.003162; // −50 dBFS
+    private const double LightFloor = 0.32;   // −10 dB — milder than Strong at the same speech level
+    private const double StrongFloor = 0.05;  // −26 dB
+    public const double DefaultGateOpenDbfs = -42;
+    public const double DefaultGateCloseDbfs = -50;
+    public const double SpeechLowDbfs = -40;
 
     private readonly int _sr;
     private Biquad _hp, _shelf, _presence;
@@ -42,11 +43,13 @@ public sealed class VoiceChain
     private readonly double[] _mag = new double[NoiseFft / 2 + 1];
     private readonly double[] _noise = new double[NoiseFft / 2 + 1];
     private readonly double[] _binGain = new double[NoiseFft / 2 + 1];
-    private readonly double _rmsCoeff, _agcRise, _agcFall, _peakRel, _limRel;
+    private readonly double _rmsCoeff, _agcRise, _agcFall, _agcGateRel, _peakRel, _limRel;
     private int _fill = NoiseHop;
     private int _emit;
     private bool _haveHop;
     private double _rms, _agc = 1, _peak, _lim = 1;
+    private double _gateOpen = DbToLin(DefaultGateOpenDbfs);
+    private double _gateClose = DbToLin(DefaultGateCloseDbfs);
     private bool _gated = true;
     private NoiseMode _mode = NoiseMode.Light;
     private int _gainDb = DefaultGainDb;
@@ -81,6 +84,28 @@ public sealed class VoiceChain
         set => _gainDb = Math.Clamp(value, 0, MaxGainDb);
     }
 
+    /// <summary>
+    /// Place the AGC gate relative to a measured pause floor. Open ≈ floor + 10 dB,
+    /// close ≈ floor + 4 dB, clamped so a very high floor cannot unmute hiss.
+    /// A missing or implausible floor keeps the −42 / −50 dBFS defaults.
+    /// </summary>
+    public void SetNoiseFloorDbfs(double? floorDbfs)
+    {
+        var (open, close) = GatesFromFloor(floorDbfs);
+        _gateOpen = open;
+        _gateClose = close;
+    }
+
+    public static (double Open, double Close) GatesFromFloor(double? floorDbfs)
+    {
+        if (floorDbfs is null || double.IsNaN(floorDbfs.Value) || floorDbfs.Value < -85 || floorDbfs.Value > -15)
+            return (DbToLin(DefaultGateOpenDbfs), DbToLin(DefaultGateCloseDbfs));
+        double openDb = Math.Clamp(floorDbfs.Value + 10.0, -55, -28);
+        double closeDb = Math.Clamp(floorDbfs.Value + 4.0, -65, -38);
+        if (closeDb > openDb - 4) closeDb = openDb - 6;
+        return (DbToLin(openDb), DbToLin(closeDb));
+    }
+
     /// <summary>Samples of delay the chain is inserting right now (STFT hop, or 0 when suppression is off).</summary>
     public int DelayFrames => _mode == NoiseMode.Off ? 0 : NoiseDelayFrames;
 
@@ -100,6 +125,7 @@ public sealed class VoiceChain
         _rmsCoeff = 1 - Math.Exp(-1.0 / (0.040 * sampleRate)); // ~40 ms mean-square window
         _agcRise = 1 - Math.Exp(-1.0 / (0.22 * sampleRate));  // reach target within about a second of speech
         _agcFall = 1 - Math.Exp(-1.0 / (0.025 * sampleRate)); // faster downward when speech is hot
+        _agcGateRel = 1 - Math.Exp(-1.0 / (0.080 * sampleRate)); // drop makeup during pauses so hiss is not held up
         _peakRel = 1 - Math.Exp(-1.0 / (0.030 * sampleRate));
         _limRel = 1 - Math.Exp(-1.0 / (0.050 * sampleRate));
     }
@@ -137,10 +163,10 @@ public sealed class VoiceChain
                 // RMS envelope so typical speech (not just a plosive peak) sits near −18 dBFS.
                 _rms += (y * y - _rms) * _rmsCoeff;
                 double level = Math.Sqrt(Math.Max(_rms, 0));
-                if (level < GateClose) _gated = true;
-                else if (level > GateOpen) _gated = false;
+                if (level < _gateClose) _gated = true;
+                else if (level > _gateOpen) _gated = false;
                 double want = _gated ? 1.0 : Math.Clamp(target / Math.Max(level, 1e-5), 0.25, maxAgc);
-                double coeff = _gated ? _agcRise : (want > _agc ? _agcRise : _agcFall);
+                double coeff = _gated ? _agcGateRel : (want > _agc ? _agcRise : _agcFall);
                 _agc += (want - _agc) * coeff;
                 y *= _agc;
             }
@@ -207,8 +233,8 @@ public sealed class VoiceChain
         double mean = sumBin / half;
         bool noiseLike = maxBin < mean * 12.0 + 1e-12;
         double floor = _mode == NoiseMode.Strong ? StrongFloor : LightFloor;
-        double oversub = _mode == NoiseMode.Strong ? 1.5 : 1.0;
-        double smooth = _mode == NoiseMode.Strong ? 0.45 : 0.65;
+        double oversub = _mode == NoiseMode.Strong ? 1.85 : 1.0;
+        double smooth = _mode == NoiseMode.Strong ? 0.38 : 0.70;
         for (int k = 0; k <= half; k++)
         {
             double m = _mag[k];

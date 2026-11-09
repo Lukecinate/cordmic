@@ -38,6 +38,8 @@ object Protocol {
         val nc = f and 1 != 0
         val stored = (f shr 3) and 3
         val mode = if (extended) NoiseMode.from(stored) else if (nc) NoiseMode.LIGHT else NoiseMode.OFF
+        val sync = if (len >= HEADER_SIZE + LINK_SIZE + SettingsSync.SIZE)
+            SettingsSync.tryRead(buf, HEADER_SIZE + LINK_SIZE) else null
         return PingControl(
             noiseCancellation = nc,
             agc = f and 2 != 0,
@@ -47,6 +49,8 @@ object Protocol {
             voiceClarity = f and 4 != 0,
             noiseMode = mode,
             frontFocus = extended && f and 64 != 0,
+            frontFocusAr = (extended && f and 128 != 0) || (sync?.frontFocusAr == true),
+            sync = sync,
         )
     }
 
@@ -54,7 +58,8 @@ object Protocol {
     fun writePongStatus(buf: ByteArray, off: Int, noiseCancellation: Boolean, agc: Boolean, aaudio: Boolean,
                         exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String,
                         noiseMode: NoiseMode = NoiseMode.OFF, frontFocus: Boolean = false,
-                        dirCode: Int = 0, micCount: Int = 0): Int {
+                        dirCode: Int = 0, micCount: Int = 0, frontFocusAr: Boolean = false,
+                        speechLow: Boolean = false, sync: SyncClock? = null, voiceClarity: Boolean = true): Int {
         buf[off] = LINK_MAGIC
         var f = 0
         if (noiseCancellation) f = f or 1
@@ -68,16 +73,28 @@ object Protocol {
         buf[off + 2] = gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toByte()
         val engine = if (aaudio) 1 else 2
         buf[off + 3] = (engine or ((dirCode and 3) shl 2) or ((micCount.coerceIn(0, 15) and 15) shl 4)).toByte()
+        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE else 0
         val name = deviceName.encodeToByteArray()
-        val n = minOf(name.size, buf.size - off - LINK_SIZE)
+        val n = minOf(name.size, buf.size - off - LINK_SIZE - syncBytes)
         if (n > 0) name.copyInto(buf, off + LINK_SIZE, 0, n)
-        return LINK_SIZE + maxOf(0, n)
+        var used = LINK_SIZE + maxOf(0, n)
+        if (sync != null && off + used + 1 + SettingsSync.SIZE <= buf.size) {
+            buf[off + used] = 0
+            used += 1
+            var flags2 = SettingsSync.FLAG_PEER_SYNC
+            if (frontFocusAr) flags2 = flags2 or SettingsSync.FLAG_FRONT_FOCUS_AR
+            if (speechLow) flags2 = flags2 or SettingsSync.FLAG_SPEECH_LOW
+            if (voiceClarity) flags2 = flags2 or SettingsSync.FLAG_VOICE_CLARITY
+            used += SettingsSync.write(buf, off + used, flags2, sync.revs)
+        }
+        return used
     }
 
     data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Int, val changeSeq: Int,
                             val extended: Boolean = false, val voiceClarity: Boolean = true,
                             val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF,
-                            val frontFocus: Boolean = true)
+                            val frontFocus: Boolean = true, val frontFocusAr: Boolean = false,
+                            val sync: SyncPayload? = null)
 
     fun writeHeader(buf: ByteArray, type: Byte, seq: Int, tsUs: Long, frames: Int, flags: Int) {
         val bb = ByteBuffer.wrap(buf, 0, HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)

@@ -30,8 +30,10 @@ class Streamer(context: Context, private val cfg: Config) {
         val voiceClarity: Boolean = true,
         val autoVolume: Boolean = true,
         val frontFocus: Boolean = true,
+        val frontFocusAr: Boolean = false,
         val autoOptimize: Boolean = true,
         val userSetGain: Boolean = false,
+        val upgradeGainNudge: Boolean = false,
     )
 
     @Volatile private var running = false
@@ -62,10 +64,15 @@ class Streamer(context: Context, private val cfg: Config) {
     @Volatile var agc: Boolean = cfg.autoVolume
     @Volatile var gainDb: Int = cfg.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB)
     @Volatile var frontFocus: Boolean = cfg.frontFocus
+    @Volatile var frontFocusAr: Boolean = cfg.frontFocusAr
+    @Volatile var speechLow: Boolean = false
+        private set
     @Volatile var dirCode: Int = if (cfg.frontFocus) 2 else 0
         private set
     @Volatile private var ctrlSeq = -1
     @Volatile private var reopenEngine = false
+    @Volatile private var peerSync = false
+    val sync = SyncClock()
     val detectedSummary: String get() = DeviceProbe.summary
     private val platformNs = PlatformNs()
     val noiseLatencyMs: Double get() = voice.noiseLatencyMs
@@ -105,14 +112,52 @@ class Streamer(context: Context, private val cfg: Config) {
     /** Highest absolute PCM16 sample (0..32768) captured since the previous call. */
     fun takePeak(): Int = peak.getAndSet(0)
 
-    fun applyFrontFocus(on: Boolean) {
+    fun applyFrontFocus(on: Boolean, fromUser: Boolean = true) {
         if (frontFocus == on) return
+        if (fromUser) sync.bump(SyncField.FRONT_FOCUS, SyncOrigin.PHONE)
         frontFocus = on
         reopenEngine = true
     }
 
+    fun applyFrontFocusAr(on: Boolean, fromUser: Boolean = true) {
+        if (frontFocusAr == on) return
+        if (fromUser) sync.bump(SyncField.FRONT_FOCUS_AR, SyncOrigin.PHONE)
+        frontFocusAr = on
+        if (on && !frontFocus) {
+            if (fromUser) sync.bump(SyncField.FRONT_FOCUS, SyncOrigin.PHONE)
+            frontFocus = true
+        }
+        reopenEngine = true
+    }
+
+    fun applyNoiseMode(mode: NoiseMode, fromUser: Boolean = true) {
+        if (noiseMode == mode) return
+        if (fromUser) sync.bump(SyncField.NOISE, SyncOrigin.PHONE)
+        noiseMode = mode
+    }
+
+    fun applyClarity(on: Boolean, fromUser: Boolean = true) {
+        if (voiceClarity == on) return
+        if (fromUser) sync.bump(SyncField.CLARITY, SyncOrigin.PHONE)
+        voiceClarity = on
+    }
+
+    fun applyAgc(on: Boolean, fromUser: Boolean = true) {
+        if (agc == on) return
+        if (fromUser) sync.bump(SyncField.AGC, SyncOrigin.PHONE)
+        agc = on
+    }
+
+    fun applyGain(db: Int, fromUser: Boolean = true) {
+        val v = db.coerceIn(0, VoiceChain.MAX_GAIN_DB)
+        if (gainDb == v) return
+        if (fromUser) sync.bump(SyncField.GAIN, SyncOrigin.PHONE)
+        gainDb = v
+    }
+
     private fun openEngine(): CaptureEngine? {
-        if (cfg.useAAudio) {
+        val wantAaudio = cfg.useAAudio && !frontFocusAr
+        if (wantAaudio) {
             val e = AAudioCapture(cfg.sampleRate, cfg.preset)
             if (e.open()) {
                 dirCode = if (frontFocus) 2 else 0
@@ -207,16 +252,24 @@ class Streamer(context: Context, private val cfg: Config) {
                     val speech = if (speechFrames > cfg.sampleRate / 5)
                         DeviceProbe.rmsDbfs(speechSumSq, speechFrames) else null
                     DeviceProbe.noteLevels(floor, speech)
-                    if (cfg.autoOptimize && !cfg.userSetGain && ctrlSeq < 0) {
+                    voice.setNoiseFloorDbfs(floor)
+                    val speechAfter = speech?.let { it + gainDb }
+                    speechLow = speechAfter != null && speechAfter < VoiceChain.SPEECH_LOW_DBFS
+                    val shouldNudge = cfg.autoOptimize && ctrlSeq < 0 &&
+                        (!cfg.userSetGain || (cfg.upgradeGainNudge && speechAfter != null && speechAfter < VoiceChain.SPEECH_LOW_DBFS))
+                    if (shouldNudge) {
                         val g = DeviceTune.suggestedGain(speech, floor)
-                        gainDb = g
-                        Log.i(TAG, "auto gain -> +${g}dB from floor=${"%.1f".format(floor)} speech=${speech?.let { "%.1f".format(it) } ?: "-"}")
+                        if (g != gainDb) {
+                            gainDb = g
+                            Log.i(TAG, "auto gain -> +${g}dB from floor=${"%.1f".format(floor)} speech=${speech?.let { "%.1f".format(it) } ?: "-"}")
+                        }
                     }
                 }
             }
-            val wantNs = noiseMode != NoiseMode.OFF
+            // Light uses the platform suppressor when it is available (no extra delay).
+            // Strong uses only our STFT so the two modes stay audibly different.
+            val wantNs = noiseMode == NoiseMode.LIGHT
             platformNs.apply(engine.sessionId(), wantNs)
-            // Light prefers the platform suppressor (no extra delay). Strong always runs the OLA STFT.
             voice.mode = when {
                 noiseMode == NoiseMode.STRONG -> NoiseMode.STRONG
                 noiseMode == NoiseMode.LIGHT && platformNs.active -> NoiseMode.OFF
@@ -259,14 +312,49 @@ class Streamer(context: Context, private val cfg: Config) {
         engine?.close()
     }
 
-    /** Handles HELLO (discovery reply) and PING (RTT) from the PC. */
+    private fun applyPing(c: Protocol.PingControl) {
+        val payload = c.sync
+        if (payload != null) {
+            peerSync = true
+            fun take(field: SyncField, apply: () -> Unit) {
+                val remote = payload.revs[field.ordinal]
+                if (SettingsSync.shouldApply(sync[field], remote)) {
+                    apply()
+                    sync.applyRemote(field, remote)
+                }
+            }
+            take(SyncField.NOISE) { noiseMode = c.noiseMode }
+            if (c.extended) {
+                take(SyncField.CLARITY) { voiceClarity = c.voiceClarity }
+                take(SyncField.AGC) { agc = c.agc }
+                take(SyncField.FRONT_FOCUS) { applyFrontFocus(c.frontFocus, fromUser = false) }
+                take(SyncField.FRONT_FOCUS_AR) { applyFrontFocusAr(c.frontFocusAr, fromUser = false) }
+            }
+            take(SyncField.GAIN) { gainDb = c.gainDb }
+            ctrlSeq = c.changeSeq
+            return
+        }
+        if (c.changeSeq != 0 && c.changeSeq != ctrlSeq) {
+            ctrlSeq = c.changeSeq
+            noiseMode = c.noiseMode
+            if (c.extended) {
+                voiceClarity = c.voiceClarity
+                agc = c.agc
+                applyFrontFocus(c.frontFocus, fromUser = false)
+                applyFrontFocusAr(c.frontFocusAr, fromUser = false)
+            }
+            gainDb = c.gainDb
+        }
+    }
+
+        /** Handles HELLO (discovery reply) and PING (RTT) from the PC. */
     private fun controlLoop() {
         // PING -> PONG latency is part of the RTT the PC shows; at default priority this thread could wait
         // behind other apps while the phone is busy. Audio priority keeps the reply prompt (it only sleeps in receive()).
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val rb = ByteArray(256)
         val rp = DatagramPacket(rb, rb.size)
-        val tb = ByteArray(Protocol.HEADER_SIZE + 64)
+        val tb = ByteArray(Protocol.HEADER_SIZE + 96)
         while (running) {
             val s = sock
             if (s == null || s.isClosed) { SystemClock.sleep(100); continue }
@@ -286,16 +374,7 @@ class Streamer(context: Context, private val cfg: Config) {
                     Protocol.T_PING -> {
                         lastHeard = SystemClock.elapsedRealtime()
                         Protocol.readPingControl(rb, rp.length)?.let { c ->
-                            if (c.changeSeq != 0 && c.changeSeq != ctrlSeq) {
-                                ctrlSeq = c.changeSeq
-                                noiseMode = c.noiseMode
-                                if (c.extended) {
-                                    voiceClarity = c.voiceClarity
-                                    agc = c.agc
-                                    applyFrontFocus(c.frontFocus)
-                                }
-                                gainDb = c.gainDb
-                            }
+                            applyPing(c)
                         }
                         val st = engineStats
                         val n = Protocol.writePongStatus(
@@ -308,6 +387,10 @@ class Streamer(context: Context, private val cfg: Config) {
                             frontFocus = frontFocus,
                             dirCode = dirCode,
                             micCount = DeviceProbe.profile.micCount,
+                            frontFocusAr = frontFocusAr,
+                            speechLow = speechLow,
+                            sync = if (peerSync) sync else null,
+                            voiceClarity = voiceClarity,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

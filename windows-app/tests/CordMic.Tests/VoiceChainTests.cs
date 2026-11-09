@@ -154,4 +154,51 @@ public class VoiceChainTests
         Assert.True(hissDb < -48, $"hiss was boosted to {hissDb:F1} dBFS");
     }
 
+
+    [Fact]
+    public void GatesFollowMeasuredFloorAndKeepDefaultsWhenUnknown()
+    {
+        var (o0, c0) = VoiceChain.GatesFromFloor(null);
+        Assert.InRange(20 * Math.Log10(o0), -43, -41);
+        Assert.InRange(20 * Math.Log10(c0), -51, -49);
+
+        var (o, c) = VoiceChain.GatesFromFloor(-52);
+        double openDb = 20 * Math.Log10(o);
+        double closeDb = 20 * Math.Log10(c);
+        Assert.InRange(openDb, -43, -41);   // −52 + 10
+        Assert.InRange(closeDb, -49, -47);  // −52 + 4
+        Assert.True(closeDb < openDb);
+    }
+
+    [Fact]
+    public void StrongSuppressesMoreNoiseThanLightAtTheSameSpeechLevel()
+    {
+        var rng = new Random(3);
+        short[] Noise(int n)
+        {
+            var s = new short[n];
+            for (int i = 0; i < n; i++) s[i] = (short)(rng.Next(-1200, 1201));
+            return s;
+        }
+
+        var lightIn = Noise(48000);
+        var strongIn = (short[])lightIn.Clone();
+        var light = new VoiceChain(48000) { Mode = NoiseMode.Light, Agc = false, VoiceClarity = false, GainDb = 0 };
+        var strong = new VoiceChain(48000) { Mode = NoiseMode.Strong, Agc = false, VoiceClarity = false, GainDb = 0 };
+        light.Process(lightIn);
+        strong.Process(strongIn);
+        double lightRms = Rms(lightIn, 24000, 12000);
+        double strongRms = Rms(strongIn, 24000, 12000);
+        _out.WriteLine($"NC light rms {lightRms:F0} strong rms {strongRms:F0} ratio {strongRms / Math.Max(lightRms, 1):F2}");
+        Assert.True(strongRms < lightRms * 0.75, $"Strong ({strongRms:F0}) was not clearly quieter than Light ({lightRms:F0})");
+
+        // A mid-level tone should survive both modes.
+        var toneL = Tone(24000, 1500, 8000);
+        var toneS = (short[])toneL.Clone();
+        light.Reset(); strong.Reset();
+        light.Process(toneL); strong.Process(toneS);
+        Assert.True(Peak(toneL, 8000, 8000) > 5000);
+        Assert.True(Peak(toneS, 8000, 8000) > 4500);
+    }
+
 }

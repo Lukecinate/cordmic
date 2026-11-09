@@ -118,12 +118,13 @@ public static class LinkControl
     /// <see cref="NoiseMode"/>, and bit 6 is front focus. Older phones ignore the extra bits.
     /// </summary>
     public static void WritePing(Span<byte> dst, bool noiseCancellation, bool agc, int gainDb, byte changeSeq,
-        bool extended, bool voiceClarity, NoiseMode mode, bool frontFocus = false)
+        bool extended, bool voiceClarity, NoiseMode mode, bool frontFocus = false, bool frontFocusAudioRecord = false)
     {
         if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
         int f = (noiseCancellation ? 1 : 0) | (agc ? 2 : 0);
         if (extended)
-            f |= 32 | (voiceClarity ? 4 : 0) | (((int)mode & 3) << 3) | (frontFocus ? 64 : 0);
+            f |= 32 | (voiceClarity ? 4 : 0) | (((int)mode & 3) << 3) | (frontFocus ? 64 : 0)
+                | (frontFocusAudioRecord ? 128 : 0);
         dst[0] = Magic;
         dst[1] = (byte)f;
         dst[2] = (byte)Math.Clamp(gainDb, 0, VoiceChain.MaxGainDb);
@@ -139,9 +140,15 @@ public static class LinkControl
 
     public static bool TryReadPing(ReadOnlySpan<byte> src, out bool noiseCancellation, out bool agc, out int gainDb,
         out byte changeSeq, out bool extended, out bool voiceClarity, out NoiseMode mode, out bool frontFocus)
+        => TryReadPing(src, out noiseCancellation, out agc, out gainDb, out changeSeq, out extended, out voiceClarity,
+            out mode, out frontFocus, out _);
+
+    public static bool TryReadPing(ReadOnlySpan<byte> src, out bool noiseCancellation, out bool agc, out int gainDb,
+        out byte changeSeq, out bool extended, out bool voiceClarity, out NoiseMode mode, out bool frontFocus,
+        out bool frontFocusAudioRecord)
     {
         noiseCancellation = false; agc = false; gainDb = 0; changeSeq = 0;
-        extended = false; voiceClarity = false; mode = NoiseMode.Off; frontFocus = false;
+        extended = false; voiceClarity = false; mode = NoiseMode.Off; frontFocus = false; frontFocusAudioRecord = false;
         if (src.Length < Size || src[0] != Magic) return false;
         int f = src[1];
         noiseCancellation = (f & 1) != 0;
@@ -151,6 +158,7 @@ public static class LinkControl
         extended = (f & 32) != 0;
         voiceClarity = (f & 4) != 0;
         frontFocus = extended && (f & 64) != 0;
+        frontFocusAudioRecord = extended && (f & 128) != 0;
         int stored = (f >> 3) & 3;
         if (extended)
             mode = stored == 2 ? NoiseMode.Strong : stored == 1 ? NoiseMode.Light : NoiseMode.Off;
@@ -165,7 +173,7 @@ public static class LinkControl
     /// bits 4–7 mic count 0–15. Older readers still see AAudio from flags bit 2.
     /// Flags bit 5 is front-focus requested/on.
     /// </summary>
-    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off, bool frontFocus = false, int dirCode = 0, int micCount = 0)
+    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off, bool frontFocus = false, int dirCode = 0, int micCount = 0, bool frontFocusAudioRecord = false, bool speechLow = false, FieldRev[]? sync = null, bool voiceClarity = true)
     {
         if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
         dst[0] = Magic;
@@ -179,10 +187,23 @@ public static class LinkControl
         if (!string.IsNullOrEmpty(deviceName))
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(deviceName);
-            n = Math.Min(bytes.Length, Math.Max(0, dst.Length - Size));
+            int room = dst.Length - Size - (sync != null ? 1 + SettingsSync.Size : 0);
+            n = Math.Min(bytes.Length, Math.Max(0, room));
             bytes.AsSpan(0, n).CopyTo(dst[Size..]);
         }
-        return Size + n;
+        int used = Size + n;
+        if (sync != null && dst.Length - used >= 1 + SettingsSync.Size)
+        {
+            dst[used] = 0;
+            used++;
+            byte flags2 = SettingsSync.FlagPeerSync;
+            if (frontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
+            if (speechLow) flags2 |= SettingsSync.FlagSpeechLow;
+            if (voiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
+            SettingsSync.Write(dst.Slice(used, SettingsSync.Size), flags2, sync);
+            used += SettingsSync.Size;
+        }
+        return used;
     }
 
     public static bool TryReadPong(ReadOnlySpan<byte> src, out PhoneLink phone)
@@ -191,11 +212,26 @@ public static class LinkControl
         if (src.Length < Size || src[0] != Magic) return false;
         int f = src[1];
         string name = "";
+        bool syncCapable = false, frontAr = false, speechLow = false, voiceClarity = true;
+        FieldRev[]? revs = null;
         if (src.Length > Size)
         {
-            int n = src.Length - Size;
-            while (n > 0 && src[Size + n - 1] == 0) n--;
-            name = System.Text.Encoding.UTF8.GetString(src.Slice(Size, n)).Trim();
+            var after = src[Size..];
+            int n = after.Length;
+            if (SettingsSync.TryReadTrailing(after, out var flags2, out var got, out int nameLen))
+            {
+                syncCapable = true;
+                revs = got;
+                frontAr = (flags2 & SettingsSync.FlagFrontFocusAr) != 0;
+                speechLow = (flags2 & SettingsSync.FlagSpeechLow) != 0;
+                voiceClarity = (flags2 & SettingsSync.FlagVoiceClarity) != 0;
+                n = nameLen;
+            }
+            else
+            {
+                while (n > 0 && after[n - 1] == 0) n--;
+            }
+            if (n > 0) name = System.Text.Encoding.UTF8.GetString(after[..n]).Trim();
             if (name.Length > 40) name = name[..40];
         }
         int stored = (f >> 6) & 3;
@@ -205,13 +241,13 @@ public static class LinkControl
         int mics = (packed >> 4) & 15;
         phone = new PhoneLink(true, (f & 1) != 0, (f & 2) != 0, (f & 4) != 0 || (packed & 3) == 1,
             (f & 8) != 0, (f & 16) != 0, Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb), name, ncMode, stored,
-            (f & 32) != 0, dirCode, mics);
+            (f & 32) != 0, dirCode, mics, frontAr, speechLow, syncCapable, revs, voiceClarity);
         return true;
     }
 }
 
 /// <summary>What the phone last reported about its capture path and voice chain. <see cref="Known"/> is false for a 0.4.2 peer.</summary>
-public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0, bool FrontFocus = false, int DirCode = 0, int MicCount = 0)
+public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0, bool FrontFocus = false, int DirCode = 0, int MicCount = 0, bool FrontFocusAudioRecord = false, bool SpeechLow = false, bool SyncCapable = false, FieldRev[]? SyncRevs = null, bool VoiceClarity = true)
 {
     public string Mode =>
         !Known ? "?" :

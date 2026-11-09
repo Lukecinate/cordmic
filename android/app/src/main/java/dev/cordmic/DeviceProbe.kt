@@ -87,6 +87,7 @@ object DeviceProbe {
     }
 
     fun noteEngine(stats: EngineStats, directionWorks: Boolean) {
+        val extra = liveMicCount()
         val cur = profile
         profile = cur.copy(
             aaudioAvailable = cur.aaudioAvailable || stats.engine == "AAudio",
@@ -95,7 +96,7 @@ object DeviceProbe {
             nativeSampleRate = if (stats.sampleRate > 0) stats.sampleRate else cur.nativeSampleRate,
             framesPerBurst = stats.framesPerBurst ?: cur.framesPerBurst,
             directionWorks = directionWorks,
-            micCount = stats.micCount ?: cur.micCount,
+            micCount = maxOf(stats.micCount ?: 0, extra, cur.micCount),
         )
         summary = DeviceTune.formatDetected(
             profile.model, profile.aaudioAvailable && stats.engine == "AAudio",
@@ -163,18 +164,18 @@ object DeviceProbe {
         if (api >= 28) {
             safe {
                 val list = am?.microphones
-                if (list != null) {
-                    micCount = list.size
+                if (!list.isNullOrEmpty()) {
+                    micCount = maxOf(micCount, list.size)
                     hasFront = list.any { looksFront(it) }
                 }
             }
         }
-        if (micCount == 0) {
-            safe {
-                val inputs = am?.getDevices(AudioManager.GET_DEVICES_INPUTS)
-                micCount = inputs?.count { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC } ?: 0
-                hasFront = micCount > 0
-            }
+        safe {
+            val inputs = am?.getDevices(AudioManager.GET_DEVICES_INPUTS) ?: return@safe
+            val onDevice = inputs.count { isOnDeviceMic(it) }
+            val builtin = inputs.count { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+            micCount = maxOf(micCount, onDevice, builtin)
+            if (onDevice > 0 || builtin > 0) hasFront = true
         }
 
         val hasNs = safe { NoiseSuppressor.isAvailable() } == true
@@ -230,6 +231,46 @@ object DeviceProbe {
             noiseFloorDbfs = profile.noiseFloorDbfs,
             speechLevelDbfs = profile.speechLevelDbfs,
         )
+    }
+
+    private fun liveMicCount(): Int {
+        val am = audioManager ?: return 0
+        val api = Build.VERSION.SDK_INT
+        var n = 0
+        if (api >= 28) safe { am.microphones?.size }?.let { n = maxOf(n, it) }
+        safe {
+            val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            n = maxOf(n, inputs.count { isOnDeviceMic(it) }, inputs.count { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC })
+        }
+        return n
+    }
+
+    private fun isOnDeviceMic(info: AudioDeviceInfo): Boolean {
+        if (!info.isSource) return false
+        return when (info.type) {
+            AudioDeviceInfo.TYPE_BUILTIN_MIC -> true
+            AudioDeviceInfo.TYPE_TELEPHONY,
+            AudioDeviceInfo.TYPE_REMOTE_SUBMIX,
+            AudioDeviceInfo.TYPE_FM_TUNER,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_HDMI,
+            AudioDeviceInfo.TYPE_LINE_ANALOG,
+            AudioDeviceInfo.TYPE_LINE_DIGITAL -> false
+            else -> {
+                val name = info.productName?.toString().orEmpty()
+                val addr = if (Build.VERSION.SDK_INT >= 28) info.address.orEmpty() else ""
+                name.contains("mic", ignoreCase = true) ||
+                    addr.contains("bottom", ignoreCase = true) ||
+                    addr.contains("top", ignoreCase = true) ||
+                    addr.contains("back", ignoreCase = true) ||
+                    addr.contains("front", ignoreCase = true)
+            }
+        }
     }
 
     private fun looksFront(info: MicrophoneInfo): Boolean = try {
