@@ -23,7 +23,9 @@ enum class NoiseMode(val code: Int) {
 
 /**
  * Same chain as CordMic.Core.VoiceChain: voice-clarity EQ, optional Hann-OLA noise suppression,
- * user gain, gated AGC toward −18 dBFS, and a peak limiter at −1 dBFS.
+ * smoothed user gain, gated AGC toward −18 dBFS, a pause expander, and a peak limiter at −1 dBFS.
+ * The gate and noise floor are measured before the user gain and the floor is tracked continuously,
+ * so a higher gain cannot open the gate on hiss; AGC makeup keeps the floor at or below −52 dBFS.
  * STFT delay is [NOISE_DELAY_FRAMES] samples (2.67 ms at 48 kHz) when suppression is on.
  */
 class VoiceChain(private val sampleRate: Int = 48000) {
@@ -32,6 +34,10 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         get() = mode != NoiseMode.OFF
         set(value) { mode = if (value) (if (mode == NoiseMode.OFF) NoiseMode.LIGHT else mode) else NoiseMode.OFF }
     var agc: Boolean = true
+    /** Pause expander depth; set from the user's noise mode even when the platform suppressor replaces the STFT. */
+    var expander: NoiseMode = NoiseMode.LIGHT
+    /** Tracked pause floor before user gain, dBFS. */
+    val noiseFloorDbfs: Double get() = 20 * kotlin.math.log10(max(floor, 1e-6))
     var voiceClarity: Boolean = true
     var highPass: Boolean
         get() = voiceClarity
@@ -51,6 +57,21 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     private val agcGateRel: Double
     private val peakRel: Double
     private val limRel: Double
+    private val floorDown: Double
+    private val floorUp: Double
+    private val floorUpOpen: Double
+    private val gainSmooth: Double
+    private val expOpen: Double
+    private val expClose: Double
+    private val holdFrames: Int
+    private var rmsPre = 0.0
+    private var floor = dbToLin(INITIAL_FLOOR_DBFS)
+    private var userGain = Double.NaN
+    private var expGain = 1.0
+    private var hold = 0
+    private var gateTick = 0
+    private var belowFloor = 0
+    private var floorKnown = false
     private val blockIn = DoubleArray(NOISE_FFT)
     private val hopOut = DoubleArray(NOISE_HOP)
     private val ola = DoubleArray(NOISE_HOP)
@@ -83,12 +104,22 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         agcGateRel = 1 - exp(-1.0 / (0.080 * sampleRate))
         peakRel = 1 - exp(-1.0 / (0.030 * sampleRate))
         limRel = 1 - exp(-1.0 / (0.050 * sampleRate))
+        floorDown = 1 - exp(-1.0 / (0.30 * sampleRate))
+        floorUp = Math.pow(10.0, FLOOR_RISE_DB_PER_SEC / 20.0 / sampleRate)
+        floorUpOpen = Math.pow(10.0, FLOOR_RISE_OPEN_DB_PER_SEC / 20.0 / sampleRate)
+        gainSmooth = 1 - exp(-1.0 / (0.020 * sampleRate))
+        expOpen = 1 - exp(-1.0 / (0.005 * sampleRate))
+        expClose = 1 - exp(-1.0 / (0.150 * sampleRate))
+        holdFrames = (GATE_HOLD_SEC * sampleRate).toInt()
     }
 
     fun reset() {
         hp.reset(); shelf.reset(); presence.reset()
         fill = NOISE_HOP; emit = 0; haveHop = false
         rms = 0.0; agcGain = 1.0; peak = 0.0; lim = 1.0; gated = true
+        rmsPre = 0.0; floor = dbToLin(INITIAL_FLOOR_DBFS); userGain = Double.NaN; expGain = 1.0
+        hold = 0; gateTick = 0; belowFloor = 0; floorKnown = false
+        gatesFromFloor(INITIAL_FLOOR_DBFS).let { gateOpen = it.first; gateClose = it.second }
         blockIn.fill(0.0); hopOut.fill(0.0); ola.fill(0.0); noise.fill(0.0)
         binGain.fill(1.0)
     }
@@ -97,6 +128,9 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         val (o, c) = gatesFromFloor(floorDbfs)
         gateOpen = o
         gateClose = c
+        if (floorDbfs != null && !floorDbfs.isNaN() && floorDbfs >= -85 && floorDbfs <= -15) {
+            floor = dbToLin(floorDbfs); floorKnown = true
+        }
     }
 
     /** In-place on little-endian PCM16 starting at [off], [frames] frames. */
@@ -121,9 +155,16 @@ class VoiceChain(private val sampleRate: Int = 48000) {
 
     fun process(samples: ShortArray, n: Int = samples.size) {
         val user = dbToLin(gainDb.toDouble())
+        if (userGain.isNaN()) userGain = user
         val maxAgc = dbToLin(min(MAX_AGC_DB, (MAX_GAIN_DB - gainDb).toDouble()))
         val target = dbToLin(TARGET_DBFS)
         val thresh = dbToLin(CEILING_DBFS)
+        val noiseCeil = dbToLin(NOISE_CEILING_DBFS)
+        val pause = when (expander) {
+            NoiseMode.STRONG -> dbToLin(STRONG_PAUSE_DB)
+            NoiseMode.LIGHT -> dbToLin(LIGHT_PAUSE_DB)
+            else -> 1.0
+        }
         val stft = mode != NoiseMode.OFF
         for (i in 0 until n) {
             var x = samples[i] / 32768.0
@@ -133,22 +174,45 @@ class VoiceChain(private val sampleRate: Int = 48000) {
                 x = presence.process(x)
             }
             x = if (stft) noiseStep(x) else { fill = NOISE_HOP; emit = 0; haveHop = false; x }
-            var y = x * user
+            gateStep(x)
+            userGain += (user - userGain) * gainSmooth
+            var y = x * userGain
             if (agc) {
                 rms += (y * y - rms) * rmsCoeff
                 val level = sqrt(max(rms, 0.0))
-                if (level < gateClose) gated = true
-                else if (level > gateOpen) gated = false
-                val want = if (gated) 1.0 else (target / max(level, 1e-5)).coerceIn(0.25, maxAgc)
+                // Do not lift the pause floor above the noise ceiling; until a pause is seen only the fixed cap applies.
+                val cap = if (floorKnown) (noiseCeil / max(floor * userGain, 1e-9)).coerceIn(1.0, maxAgc) else maxAgc
+                val want = if (gated) 1.0 else (target / max(level, 1e-5)).coerceIn(0.25, cap)
                 val coeff = if (gated) agcGateRel else if (want > agcGain) agcRise else agcFall
                 agcGain += (want - agcGain) * coeff
                 y *= agcGain
             }
+            val expWant = if (gated) pause else 1.0
+            expGain += (expWant - expGain) * (if (expWant > expGain) expOpen else expClose)
+            y *= expGain
             y = limitStep(y, thresh)
             var s = round(y * 32768.0).toInt()
             if (s > 32767) s = 32767 else if (s < -32768) s = -32768
             samples[i] = s.toShort()
         }
+    }
+
+    /** Pre-gain envelope, continuous floor tracking, and the gate with a short hold. */
+    private fun gateStep(x: Double) {
+        rmsPre += (x * x - rmsPre) * rmsCoeff
+        val level = sqrt(max(rmsPre, 0.0))
+        if (level < floor) {
+            floor += (level - floor) * floorDown
+            if (!floorKnown && ++belowFloor >= sampleRate / 4) floorKnown = true
+        } else floor *= if (gated) floorUp else floorUpOpen
+        floor = floor.coerceIn(1e-5, 0.1)
+        if (++gateTick >= GATE_UPDATE_FRAMES) {
+            gateTick = 0
+            val (o, c) = gatesFromFloor(20 * kotlin.math.log10(floor))
+            gateOpen = o; gateClose = c
+        }
+        if (level > gateOpen) { gated = false; hold = holdFrames }
+        else if (level < gateClose) { if (hold > 0) hold-- else gated = true }
     }
 
     private fun limitStep(y0: Double, thresh: Double): Double {
@@ -287,6 +351,14 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         const val DEFAULT_GATE_OPEN_DBFS = -42.0
         const val DEFAULT_GATE_CLOSE_DBFS = -50.0
         const val SPEECH_LOW_DBFS = -40.0
+        const val NOISE_CEILING_DBFS = -52.0
+        const val INITIAL_FLOOR_DBFS = -54.0
+        const val LIGHT_PAUSE_DB = -6.0
+        const val STRONG_PAUSE_DB = -12.0
+        private const val FLOOR_RISE_DB_PER_SEC = 1.5
+        private const val FLOOR_RISE_OPEN_DB_PER_SEC = 0.5
+        private const val GATE_HOLD_SEC = 0.20
+        private const val GATE_UPDATE_FRAMES = 64
 
         fun gatesFromFloor(floorDbfs: Double?): Pair<Double, Double> {
             if (floorDbfs == null || floorDbfs.isNaN() || floorDbfs < -85 || floorDbfs > -15)

@@ -54,15 +54,39 @@ public sealed class JitterBuffer
     private const int SlipCrossfade = 32;
     private const double BasePpm = 150;
     private const double MaxPpm = 800;
+    /// <summary>Length of the fade to silence written when the buffer runs dry (2 ms at 48 kHz).</summary>
+    private const int UnderrunFadeFrames = 96;
+    private short[] _tailFrom = Array.Empty<short>();
+    private int _tailPos = UnderrunFadeFrames;
+    // Adaptive target state, in frames of playout.
+    private int _extraPackets;
+    private long _clockFrames;
+    private long _lastUnderrunAt = long.MinValue / 2;
+    private long _lastRaiseAt = long.MinValue / 2;
+    private long _calmSince;
 
     public int FramesPerPacket { get; private set; }
     public int Channels { get; }
     public int SampleRate { get; }
     public int BytesPerPacket { get; private set; }
-    public int Target { get; }
-    public int MaxDepth { get; }
+    /// <summary>Target configured at construction (before any adaptive raise).</summary>
+    public int BaseTarget { get; }
+    /// <summary>Target in use: <see cref="BaseTarget"/> plus the adaptive extra packets.</summary>
+    public int Target => BaseTarget + _extraPackets;
+    public int MaxDepth => _baseMax + _extraPackets;
     /// <summary>Overflow trim target (usually one period above <see cref="Target"/>).</summary>
-    public int HighWater { get; }
+    public int HighWater => _baseHigh + _extraPackets;
+    private readonly int _baseMax, _baseHigh;
+    /// <summary>
+    /// Raise the target by one packet when two underruns occur within <see cref="AdaptWindowSec"/>,
+    /// up to <see cref="MaxExtraPackets"/>; lower it again after <see cref="CalmSec"/> without one.
+    /// </summary>
+    public bool AdaptiveTarget { get; set; }
+    public const int MaxExtraPackets = 3;
+    public const double AdaptWindowSec = 10;
+    public const double CalmSec = 60;
+    /// <summary>Packets currently added to the target by the adaptive control.</summary>
+    public int ExtraPackets { get { lock (_lock) return _extraPackets; } }
     /// <summary>Packet-drop catch-up. Off in production; kept for tests and emergency use.</summary>
     public bool CatchUp { get; set; }
     /// <summary>Apply a slow, crossfaded sample-level correction when mean depth drifts outside a deadband.</summary>
@@ -80,10 +104,10 @@ public sealed class JitterBuffer
         Channels = channels;
         SampleRate = sampleRate;
         BytesPerPacket = framesPerPacket * channels * 2;
-        Target = targetPackets;
-        MaxDepth = maxPackets ?? Math.Max(targetPackets * 3, targetPackets + 4);
-        HighWater = highWaterPackets ?? targetPackets;
-        if (HighWater < Target) throw new ArgumentOutOfRangeException(nameof(highWaterPackets));
+        BaseTarget = targetPackets;
+        _baseMax = maxPackets ?? Math.Max(targetPackets * 3, targetPackets + 4);
+        _baseHigh = highWaterPackets ?? targetPackets;
+        if (_baseHigh < BaseTarget) throw new ArgumentOutOfRangeException(nameof(highWaterPackets));
         Alloc(BytesPerPacket);
     }
 
@@ -92,7 +116,7 @@ public sealed class JitterBuffer
         BytesPerPacket = bytes;
         // Span can briefly be MaxDepth+1 between insert and trim; the ring must be larger than that
         // so two live sequence numbers never share a slot.
-        _cap = NextPow2(Math.Max(8, MaxDepth + 2));
+        _cap = NextPow2(Math.Max(8, _baseMax + MaxExtraPackets + 2));
         _mask = _cap - 1;
         _pool = new byte[_cap * bytes];
         _seq = new uint[_cap];
@@ -101,6 +125,8 @@ public sealed class JitterBuffer
         _out = new byte[bytes];
         _keep = new byte[bytes];
         _lastFrame = new short[Channels];
+        _tailFrom = new short[Channels];
+        _tailPos = UnderrunFadeFrames;
         _extra = new byte[2 * Channels];
         _count = 0;
     }
@@ -162,6 +188,7 @@ public sealed class JitterBuffer
         _ppm = 0; _integ = 0; _slipAcc = 0; _offTargetSec = 0; _depthAtPeg = double.NaN;
         _fadeIn = false;
         Array.Clear(_lastFrame);
+        _tailPos = UnderrunFadeFrames;
         ResetWindowLocked();
         Stats.Resets++;
     }
@@ -264,6 +291,8 @@ public sealed class JitterBuffer
         Stats.Underruns++;
         _buffering = true;
         _pendingDrop = 0;
+        StartUnderrunFadeLocked();
+        NoteUnderrunLocked();
         return false;
     }
 
@@ -320,9 +349,66 @@ public sealed class JitterBuffer
             }
             if (pos >= dst.Length)
                 ApplySlipLocked(dst);
+            else
+            {
+                WriteUnderrunTailLocked(dst[pos..]);
+                pos = dst.Length;
+            }
             AccountLocked(before, dst.Length / (2 * Channels));
         }
-        if (pos < dst.Length) dst[pos..].Clear();
+    }
+
+    /// <summary>Begin a short fade from the last played sample so a dry buffer does not end on a step.</summary>
+    private void StartUnderrunFadeLocked()
+    {
+        if (_tailFrom.Length != Channels) _tailFrom = new short[Channels];
+        Array.Copy(_lastFrame, _tailFrom, Math.Min(_lastFrame.Length, _tailFrom.Length));
+        _tailPos = 0;
+        Array.Clear(_lastFrame);
+        _fadeIn = true;
+    }
+
+    /// <summary>Fills the unplayed part of a pull: the remaining underrun fade, then silence.</summary>
+    private void WriteUnderrunTailLocked(Span<byte> dst)
+    {
+        int fb = 2 * Channels;
+        int frames = dst.Length / fb;
+        int f = 0;
+        for (; f < frames && _tailPos < UnderrunFadeFrames; f++, _tailPos++)
+        {
+            double g = 0.5 + 0.5 * Math.Cos(Math.PI * (_tailPos + 1) / UnderrunFadeFrames);
+            for (int c = 0; c < Channels; c++)
+            {
+                int v = (int)Math.Round(_tailFrom[c] * g);
+                int i = (f * Channels + c) * 2;
+                dst[i] = (byte)v; dst[i + 1] = (byte)(v >> 8);
+            }
+        }
+        if (f * fb < dst.Length) dst[(f * fb)..].Clear();
+    }
+
+    private void NoteUnderrunLocked()
+    {
+        long now = _clockFrames;
+        long window = (long)(AdaptWindowSec * SampleRate);
+        if (AdaptiveTarget && _extraPackets < MaxExtraPackets
+            && now - _lastUnderrunAt <= window && now - _lastRaiseAt >= SampleRate)
+        {
+            _extraPackets++;
+            _lastRaiseAt = now;
+        }
+        _lastUnderrunAt = now;
+        _calmSince = now;
+    }
+
+    private void AdaptCalmLocked()
+    {
+        if (!AdaptiveTarget || _extraPackets == 0) return;
+        if (_clockFrames - _calmSince >= (long)(CalmSec * SampleRate))
+        {
+            _extraPackets--;
+            _calmSince = _clockFrames;
+        }
     }
 
     /// <summary>Skip or insert at most one frame, crossfading so adjacent samples stay continuous.</summary>
@@ -471,7 +557,11 @@ public sealed class JitterBuffer
             {
                 int i = (f * Channels + c) * 2;
                 int s = (short)(dst[i] | (dst[i + 1] << 8));
-                int v = (int)Math.Round(s * w);
+                // Ramp from the sample that preceded the gap (zero after concealment or an underrun fade),
+                // so an overflow trim splices without a step.
+                double held = _lastFrame.Length > c ? _lastFrame[c] : 0;
+                int v = (int)Math.Round(held + (s - held) * w);
+                v = Math.Clamp(v, short.MinValue, short.MaxValue);
                 dst[i] = (byte)v; dst[i + 1] = (byte)(v >> 8);
             }
         }
@@ -500,6 +590,8 @@ public sealed class JitterBuffer
     private void AccountLocked(long beforeFrames, int pulledFrames)
     {
         if (_next is null || pulledFrames <= 0) return;
+        _clockFrames += pulledFrames;
+        AdaptCalmLocked();
         if (DriftLock)
             _slipAcc = Math.Clamp(_slipAcc + pulledFrames * (_ppm / 1e6), -2, 2);
         long after = QueuedFramesLocked();

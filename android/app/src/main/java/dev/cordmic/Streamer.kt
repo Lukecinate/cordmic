@@ -275,6 +275,7 @@ class Streamer(context: Context, private val cfg: Config) {
                 noiseMode == NoiseMode.LIGHT && platformNs.active -> NoiseMode.OFF
                 else -> noiseMode
             }
+            voice.expander = noiseMode // pause expander follows the user's choice, even with the platform suppressor
             voice.voiceClarity = voiceClarity
             voice.agc = agc
             voice.gainDb = gainDb

@@ -2,6 +2,51 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.6] - 2026-11-10
+
+Less hiss and less static. The phone's gate and noise floor no longer depend on the mic gain, the floor
+is tracked for the whole session, pauses between words are lowered, and the PC jitter buffer no longer
+produces a hard step when it runs dry or trims a burst. Android `versionCode` is 14 / `versionName` 0.5.6.
+Wire version stays 1 and the protocol is unchanged, so 0.5.6 works with 0.5.5 and 0.5.4 on the other
+side (the phone fixes apply with any PC version, the PC fixes with any phone version). The release APK is
+signed with the same key as 0.5.5. The Windows installer is not Authenticode-signed.
+
+### Fixed
+- **Hiss was boosted when the mic gain was raised.** The Auto volume gate compared the level after the
+  user gain with a floor measured before it. At +10 dB or more, steady room noise or mic hiss crossed the
+  open threshold and AGC lifted it by up to +18 dB. The gate and the floor now both use the signal before
+  the user gain.
+- **The noise floor was measured only once.** 0.5.5 took the RMS of the first two seconds after Start,
+  which included any speech in that window and never followed later changes (a fan, a different room).
+  The floor is now tracked continuously: it follows quiet passages down within about 0.3 s and rises at
+  most 1.5 dB/s in pauses (0.5 dB/s while the gate is open, so sustained speech does not lift it). The gate
+  keeps the previous offsets (open about +10 dB, close about +4 dB above the floor) and now holds open for
+  200 ms so word endings are not clipped.
+- **AGC makeup lifted the noise floor along with quiet speech.** Makeup gain is now limited so the tracked
+  floor stays at or below −52 dBFS after gain. The fixed cap still applies until a pause has been observed.
+- **Clicks when the PC jitter buffer ran dry.** An underrun ended on a hard step to silence and playback
+  resumed on another hard step. The buffer now fades from the last sample to silence over 2 ms and ramps
+  back in over 32 samples.
+- **Clicks when a burst was trimmed.** After an overflow drop the next packet was faded in from zero,
+  which is itself a step from the previous sample. It now ramps from the last played sample.
+- **Zipper noise on live gain changes.** A new Mic gain value now ramps over about 20 ms instead of
+  applying in one sample.
+
+### Added
+- **Pause expander.** While the gate is closed the output is lowered by about 6 dB with Light noise
+  cancellation and about 12 dB with Strong (Off leaves pauses unchanged). It opens in about 5 ms and
+  releases over about 150 ms. It follows the selected noise mode even when Light uses the phone's own
+  suppressor, so the default setup also benefits.
+- **Adaptive jitter target on the PC.** When two underruns occur within 10 seconds, the target (and the
+  overflow limits with it) is raised by one packet (5 ms), up to three packets above the preset. After
+  60 seconds without an underrun it steps back down by one packet. The `jtarget` field in the stats line
+  shows the target in use.
+
+### Changed
+- The Noise cancellation help text on the phone mentions the pause attenuation.
+- New tests: pre-gain gating with raised gain, expander depth per mode, gain ramp, AGC with a tracked floor,
+  underrun fade and resume, overflow splice continuity, and the adaptive target (.NET 138 tests, Kotlin 32).
+
 ## [0.5.5] - 2026-11-09
 
 Front focus that can actually take effect, an AGC gate that follows the measured noise floor,

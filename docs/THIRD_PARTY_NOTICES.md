@@ -43,8 +43,9 @@ The logo is covered by the project's MIT license.
 ## Libraries
 
 WASAPI playback is CordMic's own COM interop (`IAudioClient3`). NAudio was removed in 0.5.0. Noise suppression,
-automatic gain and the soft limiter are original CordMic code in `VoiceChain` (C# reference and Kotlin port). No
-third-party DSP library is bundled.
+automatic gain, the noise-floor tracker, the pause expander and the limiter are original CordMic code in `VoiceChain` (C# reference and Kotlin port). No
+third-party DSP library is bundled. VB-CABLE (VB-Audio, donationware) is not bundled; when the user asks for it,
+the official package is downloaded from VB-Audio and VB-Audio's own setup is started.
 
 | Component | Used by | License |
 |---|---|---|

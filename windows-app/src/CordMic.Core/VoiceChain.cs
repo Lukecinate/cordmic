@@ -11,7 +11,10 @@ public enum NoiseMode
 /// <summary>
 /// Voice chain used on the phone (the C# class is the tested reference; the Kotlin port matches it):
 /// optional voice-clarity EQ (high-pass, low shelf, presence), optional STFT noise suppression,
-/// user gain, gated AGC, and a peak limiter at −1 dBFS.
+/// user gain (smoothed), gated AGC, a pause expander, and a peak limiter at −1 dBFS.
+/// The gate and the noise floor are measured before the user gain and the floor is tracked
+/// continuously, so raising the gain cannot open the gate on hiss. AGC makeup is limited so the
+/// tracked floor stays at or below <see cref="NoiseCeilingDbfs"/> after gain.
 /// Light/Strong suppression is a Hann-windowed 256-point STFT with 50 % overlap (hop 128, 2.67 ms
 /// of added delay at 48 kHz). Gains are smoothed and floored so bins are never fully muted.
 /// </summary>
@@ -31,6 +34,17 @@ public sealed class VoiceChain
     public const double DefaultGateOpenDbfs = -42;
     public const double DefaultGateCloseDbfs = -50;
     public const double SpeechLowDbfs = -40;
+    /// <summary>AGC makeup never lifts the tracked noise floor above this level.</summary>
+    public const double NoiseCeilingDbfs = -52;
+    /// <summary>Floor assumed before any measurement (gives the −44 / −50 dBFS default gates).</summary>
+    public const double InitialFloorDbfs = -54;
+    /// <summary>Pause attenuation applied by the expander: Light −6 dB, Strong −12 dB, Off none.</summary>
+    public const double LightPauseDb = -6, StrongPauseDb = -12;
+    private const double FloorRiseDbPerSec = 1.5;
+    /// <summary>Slower rise while the gate is open, so sustained speech does not lift the floor.</summary>
+    private const double FloorRiseOpenDbPerSec = 0.5;
+    private const double GateHoldSec = 0.20;
+    private const int GateUpdateFrames = 64;
 
     private readonly int _sr;
     private Biquad _hp, _shelf, _presence;
@@ -44,6 +58,11 @@ public sealed class VoiceChain
     private readonly double[] _noise = new double[NoiseFft / 2 + 1];
     private readonly double[] _binGain = new double[NoiseFft / 2 + 1];
     private readonly double _rmsCoeff, _agcRise, _agcFall, _agcGateRel, _peakRel, _limRel;
+    private readonly double _floorDown, _floorUp, _floorUpOpen, _gainSmooth, _expOpen, _expClose;
+    private readonly int _holdFrames;
+    private double _rmsPre, _floor = DbToLin(InitialFloorDbfs), _userGain = double.NaN, _exp = 1;
+    private int _hold, _gateTick, _belowFloor;
+    private bool _floorKnown;
     private int _fill = NoiseHop;
     private int _emit;
     private bool _haveHop;
@@ -70,6 +89,10 @@ public sealed class VoiceChain
     }
 
     public bool Agc { get; set; } = true;
+    /// <summary>Pause expander depth. The phone sets this to the user's noise mode even when the platform suppressor replaces the STFT.</summary>
+    public NoiseMode Expander { get; set; } = NoiseMode.Light;
+    /// <summary>Tracked pause floor before user gain, in dBFS.</summary>
+    public double NoiseFloorDbfs => 20 * Math.Log10(Math.Max(_floor, 1e-6));
     public bool VoiceClarity { get; set; } = true;
     /// <summary>Alias for <see cref="VoiceClarity"/> so existing tests can disable the EQ section.</summary>
     public bool HighPass
@@ -94,6 +117,7 @@ public sealed class VoiceChain
         var (open, close) = GatesFromFloor(floorDbfs);
         _gateOpen = open;
         _gateClose = close;
+        if (floorDbfs is { } f && !double.IsNaN(f) && f >= -85 && f <= -15) { _floor = DbToLin(f); _floorKnown = true; }
     }
 
     public static (double Open, double Close) GatesFromFloor(double? floorDbfs)
@@ -128,6 +152,13 @@ public sealed class VoiceChain
         _agcGateRel = 1 - Math.Exp(-1.0 / (0.080 * sampleRate)); // drop makeup during pauses so hiss is not held up
         _peakRel = 1 - Math.Exp(-1.0 / (0.030 * sampleRate));
         _limRel = 1 - Math.Exp(-1.0 / (0.050 * sampleRate));
+        _floorDown = 1 - Math.Exp(-1.0 / (0.30 * sampleRate));
+        _floorUp = Math.Pow(10, FloorRiseDbPerSec / 20.0 / sampleRate);
+        _floorUpOpen = Math.Pow(10, FloorRiseOpenDbPerSec / 20.0 / sampleRate);
+        _gainSmooth = 1 - Math.Exp(-1.0 / (0.020 * sampleRate));
+        _expOpen = 1 - Math.Exp(-1.0 / (0.005 * sampleRate));
+        _expClose = 1 - Math.Exp(-1.0 / (0.150 * sampleRate));
+        _holdFrames = (int)(GateHoldSec * sampleRate);
     }
 
     public void Reset()
@@ -135,6 +166,8 @@ public sealed class VoiceChain
         _hp.Reset(); _shelf.Reset(); _presence.Reset();
         _fill = NoiseHop; _emit = 0; _haveHop = false;
         _rms = 0; _agc = 1; _peak = 0; _lim = 1; _gated = true;
+        _rmsPre = 0; _floor = DbToLin(InitialFloorDbfs); _userGain = double.NaN; _exp = 1; _hold = 0; _gateTick = 0; _belowFloor = 0; _floorKnown = false;
+        (_gateOpen, _gateClose) = GatesFromFloor(InitialFloorDbfs);
         Array.Clear(_blockIn); Array.Clear(_hopOut); Array.Clear(_ola); Array.Clear(_noise);
         for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
     }
@@ -142,9 +175,17 @@ public sealed class VoiceChain
     public void Process(Span<short> samples)
     {
         double user = DbToLin(_gainDb);
+        if (double.IsNaN(_userGain)) _userGain = user;
         double maxAgc = DbToLin(Math.Min(MaxAgcDb, MaxGainDb - _gainDb));
         double target = DbToLin(TargetDbfs);
         double thresh = DbToLin(CeilingDbfs);
+        double noiseCeil = DbToLin(NoiseCeilingDbfs);
+        double pause = Expander switch
+        {
+            NoiseMode.Strong => DbToLin(StrongPauseDb),
+            NoiseMode.Light => DbToLin(LightPauseDb),
+            _ => 1.0,
+        };
         bool stft = _mode != NoiseMode.Off;
         for (int i = 0; i < samples.Length; i++)
         {
@@ -157,24 +198,56 @@ public sealed class VoiceChain
             }
             if (stft) x = NoiseStep(x);
             else { _fill = NoiseHop; _emit = 0; _haveHop = false; }
-            double y = x * user;
+            GateStep(x);
+            _userGain += (user - _userGain) * _gainSmooth;
+            double y = x * _userGain;
             if (Agc)
             {
                 // RMS envelope so typical speech (not just a plosive peak) sits near −18 dBFS.
                 _rms += (y * y - _rms) * _rmsCoeff;
                 double level = Math.Sqrt(Math.Max(_rms, 0));
-                if (level < _gateClose) _gated = true;
-                else if (level > _gateOpen) _gated = false;
-                double want = _gated ? 1.0 : Math.Clamp(target / Math.Max(level, 1e-5), 0.25, maxAgc);
+                // Do not lift the pause floor above the noise ceiling (no hiss pumping on quiet phones).
+                // Until a pause has been observed the floor is a guess, so only the fixed cap applies.
+                double cap = _floorKnown ? Math.Clamp(noiseCeil / Math.Max(_floor * _userGain, 1e-9), 1.0, maxAgc) : maxAgc;
+                double want = _gated ? 1.0 : Math.Clamp(target / Math.Max(level, 1e-5), 0.25, cap);
                 double coeff = _gated ? _agcGateRel : (want > _agc ? _agcRise : _agcFall);
                 _agc += (want - _agc) * coeff;
                 y *= _agc;
             }
+            double expWant = _gated ? pause : 1.0;
+            _exp += (expWant - _exp) * (expWant > _exp ? _expOpen : _expClose);
+            y *= _exp;
             y = LimitStep(y, thresh);
             int s = (int)Math.Round(y * 32768.0);
             if (s > 32767) s = 32767;
             else if (s < -32768) s = -32768;
             samples[i] = (short)s;
+        }
+    }
+
+    /// <summary>Pre-gain envelope, continuous floor tracking, and the gate with a short hold.</summary>
+    private void GateStep(double x)
+    {
+        _rmsPre += (x * x - _rmsPre) * _rmsCoeff;
+        double level = Math.Sqrt(Math.Max(_rmsPre, 0));
+        if (level < _floor)
+        {
+            _floor += (level - _floor) * _floorDown;
+            if (!_floorKnown && ++_belowFloor >= _sr / 4) _floorKnown = true;
+        }
+        else _floor *= _gated ? _floorUp : _floorUpOpen;
+        if (_floor < 1e-5) _floor = 1e-5;
+        else if (_floor > 0.1) _floor = 0.1;
+        if (++_gateTick >= GateUpdateFrames)
+        {
+            _gateTick = 0;
+            (_gateOpen, _gateClose) = GatesFromFloor(20 * Math.Log10(_floor));
+        }
+        if (level > _gateOpen) { _gated = false; _hold = _holdFrames; }
+        else if (level < _gateClose)
+        {
+            if (_hold > 0) _hold--;
+            else _gated = true;
         }
     }
 

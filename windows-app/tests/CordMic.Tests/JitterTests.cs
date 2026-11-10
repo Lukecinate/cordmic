@@ -78,12 +78,20 @@ public class JitterTests
         var jb = new JitterBuffer(FPP, targetPackets: 2);
         jb.Push(1, Pkt(1)); jb.Push(2, Pkt(2));
         jb.Pull(NB); jb.Pull(NB);
-        Assert.Equal(Sil, jb.Pull(NB));
+        // 0.5.6: the dry pull fades from the last sample to silence over 2 ms instead of stepping.
+        var dry = jb.Pull(NB);
         Assert.Equal(1, jb.Stats.Underruns);
+        short last = (short)(Pkt(2)[0] | (Pkt(2)[1] << 8));
+        short first = (short)(dry[0] | (dry[1] << 8));
+        Assert.InRange(Math.Abs((int)first), 1, Math.Abs((int)last));
+        Assert.True(dry.AsSpan(96 * 2).ToArray().All(b => b == 0), "fade did not reach silence");
         jb.Push(3, Pkt(3));
         Assert.Equal(Sil, jb.Pull(NB));
         jb.Push(4, Pkt(4));
-        Assert.Equal(Pkt(3), jb.Pull(NB));
+        // Resume ramps in over 32 frames, then plays the packet unchanged.
+        var resumed = jb.Pull(NB);
+        Assert.Equal(Pkt(3).AsSpan(64).ToArray(), resumed.AsSpan(64).ToArray());
+        Assert.True(Math.Abs((short)(resumed[0] | (resumed[1] << 8))) < Math.Abs((short)(Pkt(3)[0] | (Pkt(3)[1] << 8))));
     }
 
     [Fact]

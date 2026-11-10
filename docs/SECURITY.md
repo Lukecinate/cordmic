@@ -1,7 +1,8 @@
 # Security notes
 
 CordMic is a local USB-tethering audio app. This page describes the privileged
-helper introduced in 0.5.2 and how to undo what it changes.
+helper introduced in 0.5.2 and how to undo what it changes, and the network
+access the apps perform (current as of 0.5.6).
 
 ## What the app changes
 
@@ -69,6 +70,29 @@ are logged to `%LOCALAPPDATA%\CordMic\logs\cable-helper.log`.
 Exit codes: `0` success (including "already configured" and "nothing to
 restore"), `1` usage, `2` no matching VB-CABLE endpoints (the installer treats
 this as fine), `3` I/O or backup failure with no changes, `4` partial write.
+
+## Network access
+
+Audio, discovery and control traffic stay on the USB tethering link (UDP 50005,
+local subnet only). Apart from that, CordMic makes only these requests, all over
+HTTPS and without an account:
+
+- **Update check** (phone and PC, from 0.5.5): the latest GitHub Release of
+  `Lukecinate/cordmic`, when *Check for updates* is used or, if *Auto update* is
+  on, at launch and about every six hours. A downloaded asset is installed only
+  if its SHA-256 matches the release's `SHA256SUMS` and its version is newer.
+  Android additionally requires the APK signing certificate to match the
+  installed app.
+- **VB-CABLE download** (installer task and Settings button, from 0.5.5):
+  VB-Audio's official `VBCABLE_Driver_Pack46.zip` from `download.vb-audio.com`,
+  checked against a pinned SHA-256 (and the Authenticode signer where possible)
+  before VB-Audio's own setup is started. VB-CABLE binaries are never
+  redistributed by CordMic.
+
+There is no telemetry or analytics. The phone's device probe runs locally; only
+a short capability summary and the model name are sent to the PC over the
+tethering link. The elevated `--configure-cable` / `--restore-cable` helper
+performs no network access.
 
 ## How to undo
 

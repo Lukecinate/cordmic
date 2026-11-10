@@ -114,6 +114,7 @@ public sealed class Receiver : IDisposable
         {
             CatchUp = false,
             DriftLock = true,
+            AdaptiveTarget = true,
             RenderPeriodMs = _renderPeriodMs,
         };
     }
@@ -170,7 +171,7 @@ public sealed class Receiver : IDisposable
     public void SetRenderPeriodMs(double periodMs)
     {
         if (periodMs < 0) periodMs = 0;
-        if (Math.Abs(periodMs - _renderPeriodMs) < 0.05 && _jb.Target == TargetPackets()) return;
+        if (Math.Abs(periodMs - _renderPeriodMs) < 0.05 && _jb.BaseTarget == TargetPackets()) return;
         _renderPeriodMs = periodMs;
         ApplyTarget(force: false);
     }
@@ -185,13 +186,13 @@ public sealed class Receiver : IDisposable
     {
         int target = TargetPackets();
         double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
-        if (!force && _jb.Target == target && _jb.FramesPerPacket == FramesPerPacket
+        if (!force && _jb.BaseTarget == target && _jb.FramesPerPacket == FramesPerPacket
             && Math.Abs(_jb.RenderPeriodMs - _renderPeriodMs) < 0.05)
         {
             LogTarget(pktMs, target);
             return;
         }
-        if (_jb.Target != target || _jb.FramesPerPacket != FramesPerPacket
+        if (_jb.BaseTarget != target || _jb.FramesPerPacket != FramesPerPacket
             || Math.Abs(_jb.RenderPeriodMs - _renderPeriodMs) >= 0.05 || force)
             _jb = MakeJb(FramesPerPacket);
         LogTarget(pktMs, target);
