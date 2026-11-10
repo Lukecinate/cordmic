@@ -20,6 +20,8 @@ object SettingsSync {
     const val FLAG_SPEECH_LOW = 1 shl 1
     const val FLAG_PEER_SYNC = 1 shl 2
     const val FLAG_VOICE_CLARITY = 1 shl 3
+    /** PING only (0.5.7): the PC wants the diagnostics block in the PONG. Older phones ignore it. */
+    const val FLAG_WANT_DIAG = 1 shl 4
 
     fun nextSeq(local: Int, remote: Int): Int {
         val n = maxOf(local and 0xFF, remote and 0xFF) + 1
@@ -75,6 +77,7 @@ data class SyncPayload(val flags2: Int, val revs: Array<FieldRev>) {
     val speechLow: Boolean get() = flags2 and SettingsSync.FLAG_SPEECH_LOW != 0
     val peerSync: Boolean get() = flags2 and SettingsSync.FLAG_PEER_SYNC != 0
     val voiceClarity: Boolean get() = flags2 and SettingsSync.FLAG_VOICE_CLARITY != 0
+    val wantDiag: Boolean get() = flags2 and SettingsSync.FLAG_WANT_DIAG != 0
     override fun equals(other: Any?) = other is SyncPayload && flags2 == other.flags2 && revs.contentEquals(other.revs)
     override fun hashCode() = 31 * flags2 + revs.contentHashCode()
 }

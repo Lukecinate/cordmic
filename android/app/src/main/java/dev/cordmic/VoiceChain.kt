@@ -81,6 +81,9 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     private val mag = DoubleArray(NOISE_FFT / 2 + 1)
     private val noise = DoubleArray(NOISE_FFT / 2 + 1)
     private val binGain = DoubleArray(NOISE_FFT / 2 + 1) { 1.0 }
+    private val psd = DoubleArray(NOISE_FFT / 2 + 1)
+    private val prevClean = DoubleArray(NOISE_FFT / 2 + 1)
+    private val rawGain = DoubleArray(NOISE_FFT / 2 + 1)
     private var fill = NOISE_HOP
     private var emit = 0
     private var haveHop = false
@@ -121,6 +124,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         hold = 0; gateTick = 0; belowFloor = 0; floorKnown = false
         gatesFromFloor(INITIAL_FLOOR_DBFS).let { gateOpen = it.first; gateClose = it.second }
         blockIn.fill(0.0); hopOut.fill(0.0); ola.fill(0.0); noise.fill(0.0)
+        psd.fill(0.0); prevClean.fill(0.0)
         binGain.fill(1.0)
     }
 
@@ -152,6 +156,10 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             i++; p += 2
         }
     }
+
+    /** Last chain state for the PC log (pre-gain floor, gate, AGC and expander gain). Local only; sent only when the PC asks. */
+    @Volatile var diagnostics: VoiceDiag = VoiceDiag(INITIAL_FLOOR_DBFS, true, false, 0.0, 0.0, false)
+        private set
 
     fun process(samples: ShortArray, n: Int = samples.size) {
         val user = dbToLin(gainDb.toDouble())
@@ -195,6 +203,14 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             if (s > 32767) s = 32767 else if (s < -32768) s = -32768
             samples[i] = s.toShort()
         }
+        diagnostics = VoiceDiag(
+            floorDbfs = 20 * kotlin.math.log10(max(floor, 1e-9)),
+            gated = gated,
+            agc = agc,
+            agcGainDb = if (agc) 20 * kotlin.math.log10(max(agcGain, 1e-9)) else 0.0,
+            expanderDb = 20 * kotlin.math.log10(max(expGain, 1e-9)),
+            floorKnown = floorKnown,
+        )
     }
 
     /** Pre-gain envelope, continuous floor tracking, and the gate with a short hold. */
@@ -249,34 +265,63 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             im[i] = 0.0
         }
         fft(re, im, false)
+        val half = NOISE_FFT / 2
         var maxBin = 0.0
         var sumBin = 0.0
-        val half = NOISE_FFT / 2
+        var frameE = 0.0
+        var noiseE = 0.0
         for (k in 0..half) {
-            val m = sqrt(re[k] * re[k] + im[k] * im[k])
+            val p = re[k] * re[k] + im[k] * im[k]
+            val m = sqrt(p)
             mag[k] = m
             if (k > 0) {
                 if (m > maxBin) maxBin = m
                 sumBin += m
             }
+            psd[k] = if (psd[k] <= 0) p else 0.6 * psd[k] + 0.4 * p
+            frameE += psd[k]
+            noiseE += noise[k]
         }
         val mean = sumBin / half
         val noiseLike = maxBin < mean * 12.0 + 1e-12
-        val floor = if (mode == NoiseMode.STRONG) STRONG_FLOOR else LIGHT_FLOOR
-        val oversub = if (mode == NoiseMode.STRONG) 1.85 else 1.0
-        val smooth = if (mode == NoiseMode.STRONG) 0.38 else 0.70
+        // Only a frame close to the current noise level may pull the estimate up quickly.
+        val nearFloor = noiseE <= 0 || frameE < 2.5 * noiseE
+        val strong = mode == NoiseMode.STRONG
+        val floorG = if (strong) STRONG_FLOOR else LIGHT_FLOOR
+        val over = if (strong) STRONG_OVER_SUB else 1.0
+        val dd = if (strong) 0.94 else 0.92
+        var hfS = 0.0
+        var hfN = 0.0
         for (k in 0..half) {
-            val m = mag[k]
-            var nse = noise[k]
-            nse = when {
-                noiseLike -> 0.80 * nse + 0.20 * m
-                m < nse -> 0.70 * nse + 0.30 * m
-                else -> nse // freeze on speech/tone so vowels are not slowly gated
+            val sp = psd[k]
+            var n = noise[k]
+            n = when {
+                n <= 0 -> if (noiseLike) sp else 0.0 // bootstrap only from a noise-like frame
+                sp < n -> 0.8 * n + 0.2 * sp
+                noiseLike && nearFloor -> 0.95 * n + 0.05 * sp
+                else -> n * NOISE_RISE_PER_HOP
             }
-            noise[k] = nse
-            var g = 1.0 - oversub * nse / (m + 1e-12)
-            if (g < floor) g = floor else if (g > 1) g = 1.0
-            binGain[k] = smooth * binGain[k] + (1 - smooth) * g
+            noise[k] = n
+            if (k >= HF_BIN) { hfS += sp; hfN += n }
+            val nn = max(over * n, 1e-20)
+            val post = mag[k] * mag[k] / nn
+            // Decision-directed a-priori SNR, then a Wiener gain.
+            val prio = dd * prevClean[k] / nn + (1 - dd) * max(post - 1, 0.0)
+            val g = prio / (1 + prio)
+            rawGain[k] = g.coerceIn(floorG, 1.0)
+        }
+        // Whispers and s/f/sh sounds: keep the band above 3 kHz while it is clearly above its noise.
+        val hfActive = hfN > 0 && hfS > HF_PROTECT_RATIO * hfN
+        for (k in 0..half) {
+            val l = rawGain[if (k > 0) k - 1 else k]
+            val c = rawGain[k]
+            val r = rawGain[if (k < half) k + 1 else k]
+            var g = 0.25 * l + 0.5 * c + 0.25 * r
+            if (hfActive && k >= HF_BIN && g < HF_PROTECT_FLOOR) g = HF_PROTECT_FLOOR
+            val a = if (g > binGain[k]) GAIN_RISE else GAIN_FALL
+            binGain[k] = a * binGain[k] + (1 - a) * g
+            val clean = binGain[k] * mag[k]
+            prevClean[k] = clean * clean
         }
         for (k in 0 until NOISE_FFT) {
             val bin = if (k <= half) k else NOISE_FFT - k
@@ -289,6 +334,9 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             ola[i] = re[i + NOISE_HOP]
         }
     }
+
+    /** Current per-bin suppression gains (tests and diagnostics). */
+    fun copyBinGains(dst: DoubleArray) = binGain.copyInto(dst, 0, 0, minOf(dst.size, binGain.size))
 
     private class Biquad(
         private val b0: Double, private val b1: Double, private val b2: Double,
@@ -347,7 +395,14 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         const val MAX_AGC_DB = 24.0
         const val CEILING_DBFS = -1.0
         private const val LIGHT_FLOOR = 0.32
-        private const val STRONG_FLOOR = 0.05
+        private const val STRONG_FLOOR = 0.18 // −15 dB: a little natural background
+        private const val STRONG_OVER_SUB = 1.6
+        private const val HF_BIN = 16 // 3 kHz
+        private const val HF_PROTECT_RATIO = 2.0
+        private const val HF_PROTECT_FLOOR = 0.6
+        private const val GAIN_RISE = 0.45
+        private const val GAIN_FALL = 0.82
+        private val NOISE_RISE_PER_HOP = Math.pow(10.0, 3.0 / 10 / 375.0)
         const val DEFAULT_GATE_OPEN_DBFS = -42.0
         const val DEFAULT_GATE_CLOSE_DBFS = -50.0
         const val SPEECH_LOW_DBFS = -40.0
@@ -416,3 +471,13 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         }
     }
 }
+
+/** Phone voice-chain state shown in the PC log. */
+data class VoiceDiag(
+    val floorDbfs: Double,
+    val gated: Boolean,
+    val agc: Boolean,
+    val agcGainDb: Double,
+    val expanderDb: Double,
+    val floorKnown: Boolean,
+)

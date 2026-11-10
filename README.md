@@ -9,7 +9,7 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 cleans up the voice, streams it to a Windows tray app, and the tray app plays it into a virtual audio cable that
 Discord, Zoom, OBS and games can select as a microphone.
 
-Current version: **0.5.6** ([changelog](CHANGELOG.md), [downloads](https://github.com/Lukecinate/cordmic/releases/latest)).
+Current version: **0.5.7** ([changelog](CHANGELOG.md), [downloads](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 - **Cable only.** The phone appears as a wired network adapter (RNDIS/NCM). Audio never uses Wi-Fi or the internet.
 - **Low latency.** 48 kHz mono PCM in 5 ms packets, AAudio exclusive capture where the phone grants it, a
@@ -195,8 +195,14 @@ A stats line looks like this (fields explained under [Python receiver](#python-r
 
 ```
 stats peer=… rx=… lost=0 (0.00%) late=0 plc=0 underrun=… ovf=… buf=…ms jitter=…ms rtt=…ms bufavg=…ms bufmin=…ms
-      slip=… period=2.7ms jtarget=15.0ms/3pkt urate=…/min orate=…/min nc=light agc=on gain=+6dB phone=AAudio-excl dir=… dev=…
+      slip=… period=2.7ms jtarget=15.0ms/3pkt urate=…/min orate=…/min nc=light agc=on gain=+6dB phone=AAudio-excl dir=…
+      mics=… floor=-62dBFS gate=closed agcgain=+8.5dB exp=-6.0dB dev=…
 ```
+
+From 0.5.7 the phone also reports its voice chain: `floor` = background noise level measured before the mic gain
+(`~` until the first pause has been measured), `gate` = Auto volume gate (`open` while speaking), `agcgain` = current
+Auto volume makeup (`off` when Auto volume is off), `exp` = current pause expander gain. They show `-` with an older
+phone.
 
 `jtarget` is the target in use, including any adaptive raise (0.5.6). `urate` / `orate` are underruns and
 overflow drops per minute.
@@ -264,8 +270,12 @@ All voice processing runs on the phone, before the packet is sent. The chain is 
 
 1. **Voice clarity** (optional): 120 Hz high-pass, −5 dB low shelf at 220 Hz, +2.5 dB presence at 3 kHz.
 2. **Noise suppression**: Light uses the platform `NoiseSuppressor` when available; otherwise (and for Strong) a
-   Hann-windowed 256-point STFT with 50 % overlap (2.67 ms added delay), smoothed and floored bin gains (−10 dB Light,
-   −26 dB Strong) so no bin is fully muted.
+   Hann-windowed 256-point STFT with 50 % overlap (2.67 ms added delay). Each bin uses a Wiener gain from a
+   decision-directed SNR estimate, smoothed across neighbouring bins and over time (faster to open than to close), with
+   a floor of −10 dB (Light) or −15 dB (Strong) so a little natural background remains and leftover hiss does not
+   flutter. The noise estimate follows quieter passages quickly and rises only about 3 dB/s otherwise, so speech,
+   whispers and fricatives do not train it. While the band above 3 kHz is clearly above its noise, those bins are
+   kept at −4.4 dB or higher so s/f/sh sounds and whispers survive Strong.
 3. **Mic gain**, ramped over about 20 ms when changed.
 4. **Gate and noise floor**, measured before the gain. The floor is tracked continuously (down within about 0.3 s,
    up at most 1.5 dB/s in pauses). The gate opens about 10 dB and closes about 4 dB above the floor, with a 200 ms hold.
@@ -292,7 +302,7 @@ installer (Install is tapped once; "install unknown apps" may be requested). Win
 | Red, "Port busy" | Another receiver (e.g. the Python `cordmic_receiver`) is running. Close it; CordMic retries every 5 seconds |
 | Amber, "No virtual mic yet" | Use **Install VB-CABLE** in Settings; restart the PC if the device does not appear |
 | Crackle or short dropouts | Check `underrun` / `ovf` / `urate` in the log. Since 0.5.6 the target rises by itself after repeated underruns; if they continue, choose *Latency → Safe (20 ms)* and then *Output mode → Stable*. Avoid USB hubs |
-| Hiss between words | Keep Noise cancellation on Light or Strong (both lower pauses), lower Mic gain and let Auto volume do the rest. Keep the game's voice-activation threshold moderate |
+| Hiss between words | Keep Noise cancellation on Light or Strong (both lower pauses), lower Mic gain and let Auto volume do the rest. Keep the game's voice-activation threshold moderate. The log's `floor` shows the phone's background level (above about −50 dBFS is a noisy room or a high Mic gain) |
 | Voice too quiet | Move closer, raise Mic gain a few dB, and leave Auto volume on. A warning appears below about −40 dBFS |
 | Front focus shows "unsupported" | The phone's AAudio path has no direction API. Turn on *Front focus (higher latency)* to use AudioRecord, or leave it off for the lowest latency |
 | Game ping rises after plugging in the phone | *Fix phone network priority* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator), or turn off mobile data on the phone |
@@ -377,7 +387,10 @@ settings in use. Do not attach voice recordings to public issues.
   PING/PONG carry a control payload (magic `0xC5`): noise mode, voice clarity, AGC, front focus (both variants)
   and gain on PING; engine, exclusive / low-latency, direction code, mic count, model name and a speech-level flag on
   PONG. From 0.5.5 both sides can append per-setting sequence numbers and origins so that the latest edit wins.
-  Older apps ignore the extra bytes; the wire version is still 1.
+  From 0.5.7 the PC sets a request bit in that block and the phone then adds a 6-byte diagnostics block (magic
+  `0xC7`: pre-gain floor, gate, AGC gain, expander gain, check byte) between the name and the sync block. It is sent
+  only when asked and only to the connected PC; nothing leaves the USB link. Older apps ignore the extra bytes; the
+  wire version is still 1.
 - **Jitter buffer.** Reorders packets by sequence number and conceals single gaps with a short decay. The preset
   (Low 5 / Normal 10 / Safe 20 ms) is raised to at least two render pulls, or three packets (15 ms) when one pull
   consumes a single packet (a 2.7 ms period). Overflow trims to one period above the target; the hard cap is the
@@ -460,8 +473,8 @@ official install.
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (138 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss), settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables |
-| Kotlin (32 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander), settings sync, update parsing, English/Indonesian string parity, level meter, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+| .NET (149 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables |
+| Kotlin (39 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 ## Python receiver (developer tool)
 
@@ -497,6 +510,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 0.5.7 | Smoother Strong noise reduction (spectral floor, per-band gain smoothing, whisper and consonant protection); phone noise floor, gate, Auto volume gain and expander in the PC log |
 | 0.5.6 | Pre-gain gate and continuously tracked noise floor, floor-limited AGC makeup, pause expander, gain ramp; jitter-buffer underrun fades, overflow splices and an adaptive target |
 | 0.5.5 | Front focus (higher latency) via AudioRecord, relative AGC gate, in-app updates, live two-way settings, optional official VB-CABLE download |
 | 0.5.4 | Front focus on by default, background device detection, Optimize automatically, Detected line, RMS-based AGC |

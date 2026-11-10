@@ -54,7 +54,7 @@
     <string name="aaudio_option">Mesin latensi rendah (AAudio)</string>
     <string name="aaudio_help">Memakai jalur audio cepat Android. Matikan hanya jika suara putus-putus.</string>
     <string name="nc_option">Peredam bising</string>
-    <string name="nc_help">Ringan memakai peredam bawaan HP bila ada (tanpa delay extra). Kuat memakai filter spektral singkat (2,7 ms). Jeda antarkata diturunkan sekitar 6 dB (Ringan) atau 12 dB (Kuat).</string>
+    <string name="nc_help">Ringan memakai peredam bawaan HP bila ada (tanpa delay extra). Kuat memakai filter spektral singkat (2,7 ms) yang menyisakan sedikit suara latar alami dan menjaga bisikan serta bunyi s/f. Jeda antarkata diturunkan sekitar 6 dB (Ringan) atau 12 dB (Kuat).</string>
     <string name="nc_off">Mati</string>
     <string name="nc_light">Ringan (disarankan)</string>
     <string name="nc_strong">Kuat</string>

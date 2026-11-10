@@ -2,7 +2,7 @@
 
 CordMic is a local USB-tethering audio app. This page describes the privileged
 helper introduced in 0.5.2 and how to undo what it changes, and the network
-access the apps perform (current as of 0.5.6).
+access the apps perform (current as of 0.5.7).
 
 ## What the app changes
 
@@ -91,7 +91,10 @@ HTTPS and without an account:
 
 There is no telemetry or analytics. The phone's device probe runs locally; only
 a short capability summary and the model name are sent to the PC over the
-tethering link. The elevated `--configure-cable` / `--restore-cable` helper
+tethering link. From 0.5.7 the phone also reports four voice-chain levels (noise
+floor, gate state, Auto volume gain, pause expander gain) to the connected PC
+when the PC asks for them; they are written only to the local PC log. No audio
+or level data is sent anywhere else. The elevated `--configure-cable` / `--restore-cable` helper
 performs no network access.
 
 ## How to undo

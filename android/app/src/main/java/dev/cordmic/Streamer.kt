@@ -72,6 +72,7 @@ class Streamer(context: Context, private val cfg: Config) {
     @Volatile private var ctrlSeq = -1
     @Volatile private var reopenEngine = false
     @Volatile private var peerSync = false
+    @Volatile private var wantDiag = false
     val sync = SyncClock()
     val detectedSummary: String get() = DeviceProbe.summary
     private val platformNs = PlatformNs()
@@ -317,6 +318,7 @@ class Streamer(context: Context, private val cfg: Config) {
         val payload = c.sync
         if (payload != null) {
             peerSync = true
+            wantDiag = payload.wantDiag
             fun take(field: SyncField, apply: () -> Unit) {
                 val remote = payload.revs[field.ordinal]
                 if (SettingsSync.shouldApply(sync[field], remote)) {
@@ -392,6 +394,7 @@ class Streamer(context: Context, private val cfg: Config) {
                             speechLow = speechLow,
                             sync = if (peerSync) sync else null,
                             voiceClarity = voiceClarity,
+                            diag = if (peerSync && wantDiag) voice.diagnostics else null,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

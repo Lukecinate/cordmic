@@ -9,7 +9,7 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi saat ini: **0.5.6** ([changelog](CHANGELOG.md), [unduhan](https://github.com/Lukecinate/cordmic/releases/latest)).
+Versi saat ini: **0.5.7** ([changelog](CHANGELOG.md), [unduhan](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 - **Hanya kabel.** HP muncul sebagai adapter jaringan kabel (RNDIS/NCM). Audio tidak lewat Wi-Fi atau internet.
 - **Latensi rendah.** PCM 48 kHz mono dalam paket 5 ms, capture AAudio eksklusif bila diizinkan HP, jitter buffer
@@ -195,8 +195,14 @@ Contoh baris statistik (arti kolom ada di [Receiver Python](#receiver-python-ala
 
 ```
 stats peer=… rx=… lost=0 (0.00%) late=0 plc=0 underrun=… ovf=… buf=…ms jitter=…ms rtt=…ms bufavg=…ms bufmin=…ms
-      slip=… period=2.7ms jtarget=15.0ms/3pkt urate=…/min orate=…/min nc=light agc=on gain=+6dB phone=AAudio-excl dir=… dev=…
+      slip=… period=2.7ms jtarget=15.0ms/3pkt urate=…/min orate=…/min nc=light agc=on gain=+6dB phone=AAudio-excl dir=…
+      mics=… floor=-62dBFS gate=closed agcgain=+8.5dB exp=-6.0dB dev=…
 ```
+
+Sejak 0.5.7, HP versi 0.5.7 juga melaporkan rantai suaranya: `floor` = level noise latar yang diukur sebelum gain mic
+(`~` sampai jeda pertama terukur), `gate` = gate Volume otomatis (`open` saat bicara), `agcgain` = makeup Volume
+otomatis saat ini (`off` bila Volume otomatis mati), `exp` = gain expander jeda saat ini. Dengan HP versi lama
+kolom-kolom ini berisi `-`.
 
 `jtarget` adalah target yang sedang dipakai, termasuk kenaikan adaptif (0.5.6). `urate` / `orate` adalah
 underrun dan overflow drop per menit.
@@ -264,8 +270,12 @@ implementasi referensi C# (`CordMic.Core/VoiceChain.cs`) yang memuat test.
 
 1. **Voice clarity** (opsional): high-pass 120 Hz, low shelf −5 dB di 220 Hz, presence +2,5 dB di 3 kHz.
 2. **Peredam noise**: Ringan memakai `NoiseSuppressor` bawaan bila ada; selain itu (dan untuk Kuat) STFT 256 titik
-   dengan jendela Hann dan overlap 50 % (delay 2,67 ms), gain bin dihaluskan dan diberi batas bawah (−10 dB Ringan,
-   −26 dB Kuat) sehingga tidak ada bin yang dibisukan total.
+   dengan jendela Hann dan overlap 50 % (delay 2,67 ms). Tiap bin memakai gain Wiener dari estimasi SNR
+   decision-directed, dihaluskan antar-bin tetangga dan terhadap waktu (lebih cepat membuka daripada menutup), dengan
+   batas bawah −10 dB (Ringan) atau −15 dB (Kuat) sehingga sedikit suara latar alami tetap ada dan sisa desis tidak
+   bergetar. Estimasi noise cepat mengikuti bagian yang lebih tenang dan hanya naik sekitar 3 dB/detik di luar itu,
+   sehingga suara bicara, bisikan, dan konsonan desis tidak ikut dianggap noise. Selama pita di atas 3 kHz jelas di atas
+   noise-nya, bin tersebut dijaga minimal −4,4 dB agar bunyi s/f/sy dan bisikan tetap terdengar di mode Kuat.
 3. **Gain mic**, berubah bertahap sekitar 20 ms saat diatur.
 4. **Gate dan lantai noise**, diukur sebelum gain. Lantai dilacak terus-menerus (turun dalam sekitar 0,3 detik, naik
    paling cepat 1,5 dB/detik saat jeda). Gate terbuka sekitar 10 dB dan tertutup sekitar 4 dB di atas lantai, dengan
@@ -293,7 +303,7 @@ UAC atau SmartScreen masih bisa muncul. Tidak ada data lain yang dikirim.
 | Merah, "Port dipakai" | Receiver lain (mis. `cordmic_receiver` Python) sedang jalan. Tutup; CordMic mencoba lagi tiap 5 detik |
 | Kuning tua, "Belum ada mic virtual" | Pakai **Pasang VB-CABLE** di Pengaturan; restart PC bila perangkat belum muncul |
 | Kresek atau putus sesaat | Periksa `underrun` / `ovf` / `urate` di log. Sejak 0.5.6 target naik sendiri setelah underrun berulang; bila masih terjadi, pilih *Latensi → Safe (20 ms)* lalu *Mode output → Stabil*. Hindari USB hub |
-| Desis di antara kata | Biarkan noise cancellation di Ringan atau Kuat (keduanya menurunkan jeda), turunkan Gain mic dan biarkan Volume otomatis bekerja. Pakai ambang voice activation game yang sedang |
+| Desis di antara kata | Biarkan noise cancellation di Ringan atau Kuat (keduanya menurunkan jeda), turunkan Gain mic dan biarkan Volume otomatis bekerja. Pakai ambang voice activation game yang sedang. Kolom `floor` di log menunjukkan level latar HP (di atas sekitar −50 dBFS berarti ruangan bising atau Gain mic terlalu tinggi) |
 | Suara terlalu pelan | Dekatkan HP, naikkan Gain mic beberapa dB, dan biarkan Volume otomatis aktif. Peringatan muncul di bawah sekitar −40 dBFS |
 | Fokus depan "unsupported" | Jalur AAudio HP tidak punya API arah. Nyalakan *Fokus depan (latensi lebih tinggi)* untuk memakai AudioRecord, atau biarkan mati untuk latensi terendah |
 | Ping game naik setelah HP dicolok | *Perbaiki prioritas jaringan HP* di menu tray (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai administrator), atau matikan data seluler HP |
@@ -376,8 +386,11 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
   Payload AUDIO berupa PCM mentah: 240 frame × 2 byte = 480 byte per 5 ms (~100 kbit/s). PING/PONG membawa
   payload kontrol (magic `0xC5`): mode noise, voice clarity, AGC, fokus depan (kedua varian), dan gain di PING;
   engine, exclusive / low-latency, kode arah, jumlah mic, nama model, dan penanda level bicara di PONG. Sejak 0.5.5
-  kedua sisi bisa menambahkan nomor urut dan asal per pengaturan agar perubahan terakhir yang berlaku. Aplikasi lama
-  mengabaikan byte tambahan; versi wire tetap 1.
+  kedua sisi bisa menambahkan nomor urut dan asal per pengaturan agar perubahan terakhir yang berlaku. Sejak 0.5.7 PC
+  memasang bit permintaan di blok itu, lalu HP menambahkan blok diagnostik 6 byte (magic `0xC7`: lantai sebelum gain,
+  gate, gain AGC, gain expander, byte cek) di antara nama dan blok sinkronisasi. Blok ini hanya dikirim bila diminta
+  dan hanya ke PC yang terhubung; tidak ada data yang keluar dari link USB. Aplikasi lama mengabaikan byte tambahan;
+  versi wire tetap 1.
 - **Jitter buffer.** Mengurutkan paket berdasarkan nomor urut dan menyamarkan celah tunggal dengan peluruhan singkat.
   Preset (Low 5 / Normal 10 / Safe 20 ms) dinaikkan minimal dua kali pengambilan render, atau tiga paket (15 ms) bila
   satu pengambilan hanya memakai satu paket (periode 2,7 ms). Overflow dipangkas ke satu periode di atas target;
@@ -459,8 +472,8 @@ lokal ditandatangani kunci debug, dan updater di aplikasi akan menolaknya sebaga
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, UDP loopback (bersih dan lossy) |
-| .NET (138 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis), sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi |
-| Kotlin (32 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander), sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+| .NET (149 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi |
+| Kotlin (39 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 ## Receiver Python (alat developer)
 
@@ -496,6 +509,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 0.5.7 | Peredam noise Kuat yang lebih halus (batas bawah spektral, penghalusan gain per pita, perlindungan bisikan dan konsonan); lantai noise, gate, gain Volume otomatis, dan expander HP tampil di log PC |
 | 0.5.6 | Gate sebelum gain dan lantai noise yang dilacak terus, makeup AGC dibatasi lantai, expander jeda, ramp gain; underrun jitter buffer memudar, sambungan overflow halus, dan target adaptif |
 | 0.5.5 | Fokus depan (latensi lebih tinggi) via AudioRecord, gate AGC relatif, pembaruan di aplikasi, pengaturan dua arah langsung, unduhan VB-CABLE resmi opsional |
 | 0.5.4 | Fokus depan default aktif, deteksi perangkat di background, Optimalkan otomatis, baris Detected, AGC berbasis RMS |

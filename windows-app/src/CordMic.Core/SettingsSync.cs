@@ -35,6 +35,8 @@ public static class SettingsSync
     public const byte FlagSpeechLow = 1 << 1;
     public const byte FlagPeerSync = 1 << 2;
     public const byte FlagVoiceClarity = 1 << 3;
+    /// <summary>PING only (0.5.7): ask the phone for the diagnostics block. Older phones ignore the bit.</summary>
+    public const byte FlagWantDiag = 1 << 4;
 
     public static byte NextSeq(byte local, byte remote)
     {

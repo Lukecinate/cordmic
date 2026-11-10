@@ -2,6 +2,54 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.7] - 2026-11-10
+
+Smoother Strong noise reduction and phone voice-chain diagnostics in the PC log. Android `versionCode` is
+15 / `versionName` 0.5.7. Wire version stays 1. The diagnostics are requested by the PC and sent by the phone
+only on request, so 0.5.7 works with 0.5.6, 0.5.5 and 0.5.4 on the other side; with an older peer the new log
+fields show `-`. The release APK is signed with the same key as 0.5.6. The Windows installer is not
+Authenticode-signed.
+
+### Fixed
+- **Strong noise cancellation sounded static, robotic or watery on louder speech.** The 0.5.6 Strong filter
+  used spectral subtraction with a −26 dB floor and fast per-bin changes, so leftover hiss fluttered from
+  hop to hop (musical noise), and its noise estimate could follow whispers and s/f/sh sounds and then cut
+  them. In a synthetic test (white noise at −50 dBFS with a voiced harmonic signal) about 6 % of per-bin
+  gain steps exceeded 8 dB, the RMS step was 4.3 dB and the speech harmonics were cut by 15 dB. With 0.5.7
+  the same signal has no steps above 8 dB, an RMS step of 0.7 dB and harmonics at about −6 dB.
+  - Each bin now uses a Wiener gain from a decision-directed SNR estimate instead of direct subtraction.
+  - The Strong floor is −15 dB (was −26 dB), so a little natural background remains instead of a
+    fluttering near-silence. Light stays at −10 dB.
+  - Gains are smoothed across neighbouring bins and over time, opening faster than they close.
+  - The noise estimate is computed on smoothed power, follows quieter passages within a few tens of
+    milliseconds and otherwise rises only about 3 dB/s, so speech, whispers and fricatives do not train it.
+  - While the band above 3 kHz is clearly above its noise level, those bins are kept at −4.4 dB or higher.
+    A synthetic fricative or whisper burst over −55 dBFS hiss now passes Strong within 1 dB (was −25 dB).
+  - The Light filter uses the same estimator and is also steadier.
+
+### Added
+- **Phone diagnostics in the PC log.** The stats line now ends with `floor=` (the phone's background level
+  before the mic gain, prefixed with `~` until a pause has been measured), `gate=` (`open` / `closed`),
+  `agcgain=` (current Auto volume makeup, or `off`) and `exp=` (current pause expander gain). The PC sets a
+  new request bit in the PING settings block; a 0.5.7 phone then adds a 6-byte block (magic `0xC7`, with a
+  check byte) between the device name and the settings block of its PONG. Phones that do not know the bit
+  ignore it, and PCs that do not set it receive the 0.5.6 layout. The values go only to the connected PC.
+
+### Changed
+- The PC no longer resets the phone's reported direction, mic count and settings revisions when an audio
+  packet updates the noise / AGC flags.
+- Android: the noise cancellation help text mentions that Strong keeps some background and protects
+  whispers and s/f sounds.
+
+### Tests
+- .NET (149): Strong gain flutter (RMS per-hop step, share of steps above 8 dB, per-bin spread, harmonic
+  gain) at two noise levels, Light flutter, Strong noise-only floor, fricative and whisper retention with
+  no noise-estimate drift afterwards, diagnostics block golden bytes, PONG with and without diagnostics,
+  empty-name and unmeasured-floor cases, request bit compatibility, stats line fields.
+- Kotlin (39): the same flutter, floor, fricative and whisper checks on the Android chain, diagnostics golden
+  bytes (identical to C#), PONG layout with and without the request, PING request flag, and the chain's
+  reported floor, gate, AGC and expander state.
+
 ## [0.5.6] - 2026-11-10
 
 Less hiss and less static. The phone's gate and noise floor no longer depend on the mic gain, the floor

@@ -30,6 +30,40 @@ object Protocol {
     const val LINK_MAGIC: Byte = 0xC5.toByte()
     const val LINK_SIZE = 4
 
+    /**
+     * 0.5.7 diagnostics block, placed between the name separator and the sync block of a PONG, only when the
+     * PING asked for it (FLAG_WANT_DIAG). Bytes: magic 0xC7, floor dBFS (int8), AGC gain in 0.5 dB (int8),
+     * flags (bit0 gated, bit1 AGC on, bit2 floor measured), expander in 0.5 dB (int8), check = xor(0..4) ^ 0x5A.
+     */
+    const val DIAG_MAGIC: Byte = 0xC7.toByte()
+    const val DIAG_SIZE = 6
+
+    fun writeDiag(buf: ByteArray, off: Int, d: VoiceDiag): Int {
+        if (off + DIAG_SIZE > buf.size) return 0
+        buf[off] = DIAG_MAGIC
+        buf[off + 1] = Math.round(d.floorDbfs).toInt().coerceIn(-127, 0).toByte()
+        buf[off + 2] = Math.round(d.agcGainDb * 2).toInt().coerceIn(-127, 127).toByte()
+        var f = 0
+        if (d.gated) f = f or 1
+        if (d.agc) f = f or 2
+        if (d.floorKnown) f = f or 4
+        buf[off + 3] = f.toByte()
+        buf[off + 4] = Math.round(d.expanderDb * 2).toInt().coerceIn(-127, 0).toByte()
+        var x = 0
+        for (i in 0 until 5) x = x xor (buf[off + i].toInt() and 0xFF)
+        buf[off + 5] = (x xor 0x5A).toByte()
+        return DIAG_SIZE
+    }
+
+    fun readDiag(buf: ByteArray, off: Int, len: Int): VoiceDiag? {
+        if (len < DIAG_SIZE || buf[off] != DIAG_MAGIC) return null
+        var x = 0
+        for (i in 0 until 5) x = x xor (buf[off + i].toInt() and 0xFF)
+        if ((x xor 0x5A).toByte() != buf[off + 5]) return null
+        val f = buf[off + 3].toInt()
+        return VoiceDiag(buf[off + 1].toDouble(), f and 1 != 0, f and 2 != 0, buf[off + 2] / 2.0, buf[off + 4] / 2.0, f and 4 != 0)
+    }
+
     /** PC → phone. changeSeq 0 means "do not override the phone". */
     fun readPingControl(buf: ByteArray, len: Int): PingControl? {
         if (len < HEADER_SIZE + LINK_SIZE || buf[HEADER_SIZE] != LINK_MAGIC) return null
@@ -59,7 +93,8 @@ object Protocol {
                         exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String,
                         noiseMode: NoiseMode = NoiseMode.OFF, frontFocus: Boolean = false,
                         dirCode: Int = 0, micCount: Int = 0, frontFocusAr: Boolean = false,
-                        speechLow: Boolean = false, sync: SyncClock? = null, voiceClarity: Boolean = true): Int {
+                        speechLow: Boolean = false, sync: SyncClock? = null, voiceClarity: Boolean = true,
+                        diag: VoiceDiag? = null): Int {
         buf[off] = LINK_MAGIC
         var f = 0
         if (noiseCancellation) f = f or 1
@@ -73,7 +108,8 @@ object Protocol {
         buf[off + 2] = gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toByte()
         val engine = if (aaudio) 1 else 2
         buf[off + 3] = (engine or ((dirCode and 3) shl 2) or ((micCount.coerceIn(0, 15) and 15) shl 4)).toByte()
-        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE else 0
+        val withDiag = sync != null && diag != null
+        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE + (if (withDiag) DIAG_SIZE else 0) else 0
         val name = deviceName.encodeToByteArray()
         val n = minOf(name.size, buf.size - off - LINK_SIZE - syncBytes)
         if (n > 0) name.copyInto(buf, off + LINK_SIZE, 0, n)
@@ -81,6 +117,7 @@ object Protocol {
         if (sync != null && off + used + 1 + SettingsSync.SIZE <= buf.size) {
             buf[off + used] = 0
             used += 1
+            if (withDiag && off + used + DIAG_SIZE + SettingsSync.SIZE <= buf.size) used += writeDiag(buf, off + used, diag!!)
             var flags2 = SettingsSync.FLAG_PEER_SYNC
             if (frontFocusAr) flags2 = flags2 or SettingsSync.FLAG_FRONT_FOCUS_AR
             if (speechLow) flags2 = flags2 or SettingsSync.FLAG_SPEECH_LOW

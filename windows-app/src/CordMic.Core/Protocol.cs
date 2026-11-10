@@ -173,7 +173,7 @@ public static class LinkControl
     /// bits 4–7 mic count 0–15. Older readers still see AAudio from flags bit 2.
     /// Flags bit 5 is front-focus requested/on.
     /// </summary>
-    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off, bool frontFocus = false, int dirCode = 0, int micCount = 0, bool frontFocusAudioRecord = false, bool speechLow = false, FieldRev[]? sync = null, bool voiceClarity = true)
+    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off, bool frontFocus = false, int dirCode = 0, int micCount = 0, bool frontFocusAudioRecord = false, bool speechLow = false, FieldRev[]? sync = null, bool voiceClarity = true, PhoneDiag? diag = null)
     {
         if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
         dst[0] = Magic;
@@ -187,7 +187,7 @@ public static class LinkControl
         if (!string.IsNullOrEmpty(deviceName))
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(deviceName);
-            int room = dst.Length - Size - (sync != null ? 1 + SettingsSync.Size : 0);
+            int room = dst.Length - Size - (sync != null ? 1 + SettingsSync.Size + (diag != null ? PhoneDiag.Size : 0) : 0);
             n = Math.Min(bytes.Length, Math.Max(0, room));
             bytes.AsSpan(0, n).CopyTo(dst[Size..]);
         }
@@ -196,6 +196,11 @@ public static class LinkControl
         {
             dst[used] = 0;
             used++;
+            if (diag is { } d && dst.Length - used >= PhoneDiag.Size + SettingsSync.Size)
+            {
+                d.Write(dst.Slice(used, PhoneDiag.Size));
+                used += PhoneDiag.Size;
+            }
             byte flags2 = SettingsSync.FlagPeerSync;
             if (frontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
             if (speechLow) flags2 |= SettingsSync.FlagSpeechLow;
@@ -214,6 +219,7 @@ public static class LinkControl
         string name = "";
         bool syncCapable = false, frontAr = false, speechLow = false, voiceClarity = true;
         FieldRev[]? revs = null;
+        PhoneDiag? diag = null;
         if (src.Length > Size)
         {
             var after = src[Size..];
@@ -226,6 +232,14 @@ public static class LinkControl
                 speechLow = (flags2 & SettingsSync.FlagSpeechLow) != 0;
                 voiceClarity = (flags2 & SettingsSync.FlagVoiceClarity) != 0;
                 n = nameLen;
+                // 0.5.7: name, NUL, diagnostics, sync. A peer that did not send the block leaves the legacy layout.
+                if (n >= PhoneDiag.Size && PhoneDiag.TryRead(after.Slice(n - PhoneDiag.Size, PhoneDiag.Size), out var d)
+                    && (n == PhoneDiag.Size || after[n - PhoneDiag.Size - 1] == 0))
+                {
+                    diag = d;
+                    n -= PhoneDiag.Size;
+                    if (n > 0) n--;
+                }
             }
             else
             {
@@ -241,13 +255,13 @@ public static class LinkControl
         int mics = (packed >> 4) & 15;
         phone = new PhoneLink(true, (f & 1) != 0, (f & 2) != 0, (f & 4) != 0 || (packed & 3) == 1,
             (f & 8) != 0, (f & 16) != 0, Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb), name, ncMode, stored,
-            (f & 32) != 0, dirCode, mics, frontAr, speechLow, syncCapable, revs, voiceClarity);
+            (f & 32) != 0, dirCode, mics, frontAr, speechLow, syncCapable, revs, voiceClarity, diag);
         return true;
     }
 }
 
 /// <summary>What the phone last reported about its capture path and voice chain. <see cref="Known"/> is false for a 0.4.2 peer.</summary>
-public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0, bool FrontFocus = false, int DirCode = 0, int MicCount = 0, bool FrontFocusAudioRecord = false, bool SpeechLow = false, bool SyncCapable = false, FieldRev[]? SyncRevs = null, bool VoiceClarity = true)
+public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0, bool FrontFocus = false, int DirCode = 0, int MicCount = 0, bool FrontFocusAudioRecord = false, bool SpeechLow = false, bool SyncCapable = false, FieldRev[]? SyncRevs = null, bool VoiceClarity = true, PhoneDiag? Diag = null)
 {
     public string Mode =>
         !Known ? "?" :
@@ -268,5 +282,43 @@ public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool
         DirCode == 2 ? "unsupported" :
         FrontFocus ? "on" : "off";
     public string MicText => !Known || MicCount <= 0 ? "-" : MicCount.ToString();
+    /// <summary>Phone background level before its user gain; "~" marks the initial guess before a pause was measured.</summary>
+    public string FloorText => Diag is { } d ? $"{(d.FloorKnown ? "" : "~")}{d.FloorDbfs}dBFS" : "-";
+    public string GateText => Diag is { } d ? (d.Gated ? "closed" : "open") : "-";
+    public string AgcGainText => Diag is { } d ? (d.Agc ? $"{d.AgcGainDb:+0.0;-0.0;0.0}dB" : "off") : "-";
+    public string ExpanderText => Diag is { } d ? $"{d.ExpanderDb:0.0}dB" : "-";
     public string DetectedSummary => DeviceTune.FormatDetected(Name, AAudio, Exclusive, LowLatency, MicCount, DirCode, FrontFocus);
+}
+
+/// <summary>
+/// 0.5.7 phone diagnostics carried in a PONG only after the PC set <see cref="SettingsSync.FlagWantDiag"/>.
+/// Layout: magic 0xC7, floor dBFS (int8), AGC gain in 0.5 dB (int8), flags (bit0 gated, bit1 AGC on,
+/// bit2 floor measured), expander gain in 0.5 dB (int8), check byte = xor(bytes 0–4) ^ 0x5A.
+/// It sits between the name NUL and the sync block, so a reader without it sees an unchanged name.
+/// </summary>
+public readonly record struct PhoneDiag(int FloorDbfs, bool Gated, bool Agc, double AgcGainDb, double ExpanderDb, bool FloorKnown)
+{
+    public const byte Magic = 0xC7;
+    public const int Size = 6;
+
+    public void Write(Span<byte> dst)
+    {
+        dst[0] = Magic;
+        dst[1] = (byte)(sbyte)Math.Clamp(FloorDbfs, -127, 0);
+        dst[2] = (byte)(sbyte)Math.Clamp((int)Math.Round(AgcGainDb * 2), -127, 127);
+        dst[3] = (byte)((Gated ? 1 : 0) | (Agc ? 2 : 0) | (FloorKnown ? 4 : 0));
+        dst[4] = (byte)(sbyte)Math.Clamp((int)Math.Round(ExpanderDb * 2), -127, 0);
+        dst[5] = Check(dst);
+    }
+
+    static byte Check(ReadOnlySpan<byte> b) => (byte)(b[0] ^ b[1] ^ b[2] ^ b[3] ^ b[4] ^ 0x5A);
+
+    public static bool TryRead(ReadOnlySpan<byte> src, out PhoneDiag diag)
+    {
+        diag = default;
+        if (src.Length < Size || src[0] != Magic || src[5] != Check(src)) return false;
+        int f = src[3];
+        diag = new PhoneDiag((sbyte)src[1], (f & 1) != 0, (f & 2) != 0, (sbyte)src[2] / 2.0, (sbyte)src[4] / 2.0, (f & 4) != 0);
+        return true;
+    }
 }

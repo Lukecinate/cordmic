@@ -30,7 +30,8 @@ public sealed record StatsSnapshot(
         $"jtarget={Ms(JitterTargetMs)}ms/{JitterTargetPackets}pkt " +
         $"urate={Rate(UnderrunPerMin)}/min orate={Rate(OverflowPerMin)}/min " +
         $"nc={Phone.NoiseText} agc={Phone.AgcText} gain={Phone.GainText} phone={Phone.Mode} " +
-        $"dir={Phone.DirText} mics={Phone.MicText}" +
+        $"dir={Phone.DirText} mics={Phone.MicText} " +
+        $"floor={Phone.FloorText} gate={Phone.GateText} agcgain={Phone.AgcGainText} exp={Phone.ExpanderText}" +
         (string.IsNullOrEmpty(Phone.Name) ? "" : $" dev={Phone.Name.Replace(' ', '_')}");
 }
 
@@ -376,8 +377,11 @@ public sealed class Receiver : IDisposable
             _lastAudioTicks = Stopwatch.GetTimestamp();
             // 0.5.0 sets bits 12–14. All-zero flags are what 0.4.2 sends, so they do not count as a report.
             if ((h.Flags & 0x7000) != 0)
-                _phone = new PhoneLink(true, h.NoiseCancellation, h.Agc, h.AAudio, _phone.Exclusive, _phone.LowLatency,
-                    _phone.Known ? _phone.GainDb : -1, _phone.Name, _phone.Noise, _phone.NoiseBits);
+                _phone = _phone with
+                {
+                    Known = true, NoiseCancellation = h.NoiseCancellation, Agc = h.Agc, AAudio = h.AAudio,
+                    GainDb = _phone.Known ? _phone.GainDb : -1,
+                };
         }
         _jb.Push(h.Seq, payload);
     }
@@ -420,7 +424,7 @@ public sealed class Receiver : IDisposable
                 _pingSeq++;
                 var payload = _pingPkt.AsSpan(Protocol.HeaderSize);
                 LinkControl.WritePing(payload, NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode, FrontFocus, FrontFocusAudioRecord);
-                byte flags2 = SettingsSync.FlagPeerSync;
+                byte flags2 = SettingsSync.FlagPeerSync | SettingsSync.FlagWantDiag;
                 if (FrontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
                 if (VoiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
                 SettingsSync.Write(payload.Slice(LinkControl.Size), flags2, Sync.Revs);

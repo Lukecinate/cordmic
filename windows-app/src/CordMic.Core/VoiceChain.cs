@@ -16,7 +16,11 @@ public enum NoiseMode
 /// continuously, so raising the gain cannot open the gate on hiss. AGC makeup is limited so the
 /// tracked floor stays at or below <see cref="NoiseCeilingDbfs"/> after gain.
 /// Light/Strong suppression is a Hann-windowed 256-point STFT with 50 % overlap (hop 128, 2.67 ms
-/// of added delay at 48 kHz). Gains are smoothed and floored so bins are never fully muted.
+/// of added delay at 48 kHz). Since 0.5.7 the noise estimate only rises quickly on frames close to the
+/// current noise level (speech, whispers and fricatives do not train it), gains are a decision-directed
+/// Wiener estimate, smoothed across neighbouring bins and over time (fast open, slow release), floored
+/// (Light −10 dB, Strong −15 dB) so a little natural background remains, and the band above 3 kHz is
+/// held at −4.4 dB or more while it is clearly above its noise.
 /// </summary>
 public sealed class VoiceChain
 {
@@ -30,7 +34,13 @@ public sealed class VoiceChain
     public const double MaxAgcDb = 24;
     public const double CeilingDbfs = -1;
     private const double LightFloor = 0.32;   // −10 dB — milder than Strong at the same speech level
-    private const double StrongFloor = 0.05;  // −26 dB
+    private const double StrongFloor = 0.18;  // −15 dB: a little natural background instead of near-silence
+    private const double StrongOverSub = 1.6;
+    private const int HfBin = 16;              // 3 kHz at 48 kHz / 256 points
+    private const double HfProtectRatio = 2.0; // band power at least +3 dB over its noise
+    private const double HfProtectFloor = 0.6;
+    private const double GainRise = 0.45, GainFall = 0.82; // per-hop smoothing: open quickly, release slowly
+    private static readonly double NoiseRisePerHop = Math.Pow(10, 3.0 / 10 / 375.0); // about +3 dB/s
     public const double DefaultGateOpenDbfs = -42;
     public const double DefaultGateCloseDbfs = -50;
     public const double SpeechLowDbfs = -40;
@@ -57,6 +67,9 @@ public sealed class VoiceChain
     private readonly double[] _mag = new double[NoiseFft / 2 + 1];
     private readonly double[] _noise = new double[NoiseFft / 2 + 1];
     private readonly double[] _binGain = new double[NoiseFft / 2 + 1];
+    private readonly double[] _psd = new double[NoiseFft / 2 + 1];
+    private readonly double[] _prevClean = new double[NoiseFft / 2 + 1];
+    private readonly double[] _rawGain = new double[NoiseFft / 2 + 1];
     private readonly double _rmsCoeff, _agcRise, _agcFall, _agcGateRel, _peakRel, _limRel;
     private readonly double _floorDown, _floorUp, _floorUpOpen, _gainSmooth, _expOpen, _expClose;
     private readonly int _holdFrames;
@@ -169,6 +182,7 @@ public sealed class VoiceChain
         _rmsPre = 0; _floor = DbToLin(InitialFloorDbfs); _userGain = double.NaN; _exp = 1; _hold = 0; _gateTick = 0; _belowFloor = 0; _floorKnown = false;
         (_gateOpen, _gateClose) = GatesFromFloor(InitialFloorDbfs);
         Array.Clear(_blockIn); Array.Clear(_hopOut); Array.Clear(_ola); Array.Clear(_noise);
+        Array.Clear(_psd); Array.Clear(_prevClean);
         for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
     }
 
@@ -291,36 +305,60 @@ public sealed class VoiceChain
             _im[i] = 0;
         }
         Fft(_re, _im, false);
-        double maxBin = 0, sumBin = 0;
         int half = NoiseFft / 2;
+        double maxBin = 0, sumBin = 0, frameE = 0, noiseE = 0;
         for (int k = 0; k <= half; k++)
         {
-            double m = Math.Sqrt(_re[k] * _re[k] + _im[k] * _im[k]);
+            double p = _re[k] * _re[k] + _im[k] * _im[k];
+            double m = Math.Sqrt(p);
             _mag[k] = m;
             if (k > 0)
             {
                 if (m > maxBin) maxBin = m;
                 sumBin += m;
             }
+            _psd[k] = _psd[k] <= 0 ? p : 0.6 * _psd[k] + 0.4 * p;
+            frameE += _psd[k];
+            noiseE += _noise[k];
         }
         double mean = sumBin / half;
         bool noiseLike = maxBin < mean * 12.0 + 1e-12;
-        double floor = _mode == NoiseMode.Strong ? StrongFloor : LightFloor;
-        double oversub = _mode == NoiseMode.Strong ? 1.85 : 1.0;
-        double smooth = _mode == NoiseMode.Strong ? 0.38 : 0.70;
+        // Only a frame close to the current noise level may pull the estimate up quickly.
+        // Speech, whispers and fricatives are louder than that, so they no longer train the estimate.
+        bool nearFloor = noiseE <= 0 || frameE < 2.5 * noiseE;
+        bool strong = _mode == NoiseMode.Strong;
+        double floor = strong ? StrongFloor : LightFloor;
+        double over = strong ? StrongOverSub : 1.0;
+        double dd = strong ? 0.94 : 0.92;
+        double hfS = 0, hfN = 0;
         for (int k = 0; k <= half; k++)
         {
-            double m = _mag[k];
+            double s = _psd[k];
             double n = _noise[k];
-            // Only raise the noise estimate on noise-like frames. A slow upward leak on
-            // tonal bins was eating sustained vowels (and the 1 kHz quality probe) over a few seconds.
-            if (noiseLike) n = 0.80 * n + 0.20 * m;
-            else if (m < n) n = 0.70 * n + 0.30 * m;
+            if (n <= 0) n = noiseLike ? s : 0; // bootstrap only from a noise-like frame, never from a tone
+            else if (s < n) n = 0.8 * n + 0.2 * s;
+            else if (noiseLike && nearFloor) n = 0.95 * n + 0.05 * s;
+            else n *= NoiseRisePerHop;
             _noise[k] = n;
-            double g = 1.0 - oversub * n / (m + 1e-12);
-            if (g < floor) g = floor;
-            else if (g > 1) g = 1;
-            _binGain[k] = smooth * _binGain[k] + (1 - smooth) * g;
+            if (k >= HfBin) { hfS += s; hfN += n; }
+            double nn = Math.Max(over * n, 1e-20);
+            double post = _mag[k] * _mag[k] / nn;
+            // Decision-directed a-priori SNR (smooth over time), then a Wiener gain.
+            double prio = dd * _prevClean[k] / nn + (1 - dd) * Math.Max(post - 1, 0);
+            double g = prio / (1 + prio);
+            _rawGain[k] = g < floor ? floor : g > 1 ? 1 : g;
+        }
+        // Whispers and s/f/sh sounds: when the band above 3 kHz is clearly above its noise, keep it.
+        bool hfActive = hfN > 0 && hfS > HfProtectRatio * hfN;
+        for (int k = 0; k <= half; k++)
+        {
+            double l = _rawGain[k > 0 ? k - 1 : k], c = _rawGain[k], r = _rawGain[k < half ? k + 1 : k];
+            double g = 0.25 * l + 0.5 * c + 0.25 * r;
+            if (hfActive && k >= HfBin && g < HfProtectFloor) g = HfProtectFloor;
+            double a = g > _binGain[k] ? GainRise : GainFall;
+            _binGain[k] = a * _binGain[k] + (1 - a) * g;
+            double clean = _binGain[k] * _mag[k];
+            _prevClean[k] = clean * clean;
         }
         for (int k = 0; k < NoiseFft; k++)
         {
@@ -335,6 +373,9 @@ public sealed class VoiceChain
             _ola[i] = _re[i + NoiseHop];
         }
     }
+
+    /// <summary>Copies the current per-bin suppression gains (0..1, bins 0..NoiseFft/2). For tests and diagnostics.</summary>
+    public void CopyBinGains(Span<double> dst) => _binGain.AsSpan(0, Math.Min(dst.Length, _binGain.Length)).CopyTo(dst);
 
     /// <summary>Legacy name kept for callers. The runtime limiter is <see cref="LimitStep"/>; this maps onto the −1 dBFS ceiling without tanh.</summary>
     public static double SoftLimit(double x)

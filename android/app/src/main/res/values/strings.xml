@@ -57,7 +57,7 @@
     <string name="aaudio_option">Low-latency engine (AAudio)</string>
     <string name="aaudio_help">Uses the fast Android audio path. Turn off only if the audio cuts out.</string>
     <string name="nc_option">Noise cancellation</string>
-    <string name="nc_help">Light uses the phone suppressor when available (no extra delay). Strong uses a short spectral filter (2.7 ms). Pauses between words are lowered by about 6 dB (Light) or 12 dB (Strong).</string>
+    <string name="nc_help">Light uses the phone suppressor when available (no extra delay). Strong uses a short spectral filter (2.7 ms) that keeps a little natural background and protects whispers and s/f sounds. Pauses between words are lowered by about 6 dB (Light) or 12 dB (Strong).</string>
     <string name="nc_off">Off</string>
     <string name="nc_light">Light (recommended)</string>
     <string name="nc_strong">Strong</string>
