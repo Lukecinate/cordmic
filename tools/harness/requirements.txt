@@ -1,0 +1,6 @@
+numpy
+scipy
+soundfile
+onnxruntime
+pystoi
+pesq  # research use only (ITU-T P.862 licence); used for PESQ scores in the reference scripts

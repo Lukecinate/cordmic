@@ -287,6 +287,12 @@ public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool
     public string GateText => Diag is { } d ? (d.Gated ? "closed" : "open") : "-";
     public string AgcGainText => Diag is { } d ? (d.Agc ? $"{d.AgcGainDb:+0.0;-0.0;0.0}dB" : "off") : "-";
     public string ExpanderText => Diag is { } d ? $"{d.ExpanderDb:0.0}dB" : "-";
+    /// <summary>0.6.0: Android reports that another app has silenced CordMic's capture.</summary>
+    public bool Silenced => Diag is { Silenced: true };
+    /// <summary>0.6.0: the phone confirmed it bypassed its own suppression for PC Studio NR.</summary>
+    public bool StudioBypass => Diag is { StudioBypass: true };
+    /// <summary>0.6.0: the phone suspects hidden device noise suppression on its capture (logged only).</summary>
+    public bool NsSuspected => Diag is { NsSuspected: true };
     public string DetectedSummary => DeviceTune.FormatDetected(Name, AAudio, Exclusive, LowLatency, MicCount, DirCode, FrontFocus);
 }
 
@@ -294,9 +300,12 @@ public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool
 /// 0.5.7 phone diagnostics carried in a PONG only after the PC set <see cref="SettingsSync.FlagWantDiag"/>.
 /// Layout: magic 0xC7, floor dBFS (int8), AGC gain in 0.5 dB (int8), flags (bit0 gated, bit1 AGC on,
 /// bit2 floor measured), expander gain in 0.5 dB (int8), check byte = xor(bytes 0–4) ^ 0x5A.
+/// 0.6.0 adds flags bit3 (Android reports the capture as silenced by another app) and bit4 (the phone has bypassed
+/// its noise suppression, gate, AGC and expander because the PC asked for Studio) and bit5 (room tone fell sharply
+/// after start with no speech, so the device may apply hidden noise suppression; logged only). 0.5.7 readers ignore them.
 /// It sits between the name NUL and the sync block, so a reader without it sees an unchanged name.
 /// </summary>
-public readonly record struct PhoneDiag(int FloorDbfs, bool Gated, bool Agc, double AgcGainDb, double ExpanderDb, bool FloorKnown)
+public readonly record struct PhoneDiag(int FloorDbfs, bool Gated, bool Agc, double AgcGainDb, double ExpanderDb, bool FloorKnown, bool Silenced = false, bool StudioBypass = false, bool NsSuspected = false)
 {
     public const byte Magic = 0xC7;
     public const int Size = 6;
@@ -306,7 +315,7 @@ public readonly record struct PhoneDiag(int FloorDbfs, bool Gated, bool Agc, dou
         dst[0] = Magic;
         dst[1] = (byte)(sbyte)Math.Clamp(FloorDbfs, -127, 0);
         dst[2] = (byte)(sbyte)Math.Clamp((int)Math.Round(AgcGainDb * 2), -127, 127);
-        dst[3] = (byte)((Gated ? 1 : 0) | (Agc ? 2 : 0) | (FloorKnown ? 4 : 0));
+        dst[3] = (byte)((Gated ? 1 : 0) | (Agc ? 2 : 0) | (FloorKnown ? 4 : 0) | (Silenced ? 8 : 0) | (StudioBypass ? 16 : 0) | (NsSuspected ? 32 : 0));
         dst[4] = (byte)(sbyte)Math.Clamp((int)Math.Round(ExpanderDb * 2), -127, 0);
         dst[5] = Check(dst);
     }
@@ -318,7 +327,7 @@ public readonly record struct PhoneDiag(int FloorDbfs, bool Gated, bool Agc, dou
         diag = default;
         if (src.Length < Size || src[0] != Magic || src[5] != Check(src)) return false;
         int f = src[3];
-        diag = new PhoneDiag((sbyte)src[1], (f & 1) != 0, (f & 2) != 0, (sbyte)src[2] / 2.0, (sbyte)src[4] / 2.0, (f & 4) != 0);
+        diag = new PhoneDiag((sbyte)src[1], (f & 1) != 0, (f & 2) != 0, (sbyte)src[2] / 2.0, (sbyte)src[4] / 2.0, (f & 4) != 0, (f & 8) != 0, (f & 16) != 0, (f & 32) != 0);
         return true;
     }
 }

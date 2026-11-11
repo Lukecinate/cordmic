@@ -18,6 +18,8 @@ data class UiState(
     /** "rndis0 · 192.168.42.129/24", null = USB tethering off. */
     val usb: String? = null,
     val stats: EngineStats? = null,
+    /** 0.6.0: Android silenced the capture because another app uses the microphone. */
+    val micSilenced: Boolean = false,
 ) {
     val running: Boolean get() = phase.running
 }

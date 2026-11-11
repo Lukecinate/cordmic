@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using CordMic.Core.Dsp;
 
 namespace CordMic.Core;
 
@@ -11,7 +12,9 @@ public sealed record StatsSnapshot(
     double BufferAvgMs = double.NaN, double BufferMinMs = double.NaN, long CatchUpDrops = 0, long SampleSlips = 0,
     double RenderPeriodMs = 0, double JitterTargetMs = 0, int JitterTargetPackets = 0,
     double UnderrunPerMin = double.NaN, double OverflowPerMin = double.NaN,
-    PhoneLink Phone = default)
+    PhoneLink Phone = default,
+    double DriftPpm = double.NaN, long UnderrunConcealed = 0, string Studio = "off", double StudioCpuMs = double.NaN,
+    double StudioAgcGainDb = double.NaN, double SnrDb = double.NaN)
 {
     /// <summary>Jitter-buffer delay to show: the time-averaged depth once a window completed, else the instantaneous depth.</summary>
     public double BufferMs => double.IsNaN(BufferAvgMs) ? DepthMs : BufferAvgMs;
@@ -32,7 +35,9 @@ public sealed record StatsSnapshot(
         $"nc={Phone.NoiseText} agc={Phone.AgcText} gain={Phone.GainText} phone={Phone.Mode} " +
         $"dir={Phone.DirText} mics={Phone.MicText} " +
         $"floor={Phone.FloorText} gate={Phone.GateText} agcgain={Phone.AgcGainText} exp={Phone.ExpanderText}" +
-        (string.IsNullOrEmpty(Phone.Name) ? "" : $" dev={Phone.Name.Replace(' ', '_')}");
+        (string.IsNullOrEmpty(Phone.Name) ? "" : $" dev={Phone.Name.Replace(' ', '_')}") +
+        $" drift={Ms(DriftPpm, "F0")}ppm uplc={UnderrunConcealed} studio={Studio} studiocpu={Ms(StudioCpuMs, "F2")}ms " +
+        $"studiogain={Ms(StudioAgcGainDb)}dB snr={Ms(SnrDb, "F0")}dB silenced={(Phone.Silenced ? 1 : 0)} devns={(Phone.NsSuspected ? 1 : 0)}";
 }
 
 /// <summary>
@@ -76,6 +81,13 @@ public sealed class Receiver : IDisposable
     private long _rateTicks, _rateUnderruns, _rateOverflows;
     private double _underrunPerMin = double.NaN, _overflowPerMin = double.NaN;
     private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size + SettingsSync.Size];
+    // 0.6.0 Studio noise reduction (PC side) and the distance hint.
+    private volatile StudioProcessor? _studio;
+    private StudioPreset _studioPreset = StudioPreset.Off;
+    private bool _studioAutoVolume;
+    private double _studioStartGainDb = AgcB3.DefaultStartGainDb;
+    private volatile bool _studioFailed;
+    private readonly SnrHint _hint = new();
 
     public int Port { get; private set; }
     public int FramesPerPacket { get; private set; }
@@ -85,6 +97,10 @@ public sealed class Receiver : IDisposable
     public Action<string>? Log { get; set; }
     /// <summary>Called once on the receive thread (the Windows app raises it to MMCSS "Pro Audio").</summary>
     public Action? RxThreadInit { get; set; }
+    /// <summary>Called once on the Studio worker thread (the Windows app raises it to MMCSS "Pro Audio").</summary>
+    public Action? StudioThreadInit { get; set; }
+    /// <summary>Raised (from an audio thread) when Studio missed 3 deadlines in 1 s and was switched off for the session.</summary>
+    public event Action<string>? StudioFellBack;
 
     public Receiver(int port = Protocol.DefaultPort, string bind = "0.0.0.0", double jitterMs = 10,
                     int sampleRate = 48000, int channels = 1, int framesPerPacket = 240,
@@ -108,17 +124,26 @@ public sealed class Receiver : IDisposable
     {
         FramesPerPacket = fpp;
         double pktMs = fpp * 1000.0 / _sampleRate;
-        int target = JitterPolicy.EffectiveTargetPackets(_jitterMs, _renderPeriodMs, pktMs);
-        int max = JitterPolicy.MaxDepthPackets(_jitterMs, _renderPeriodMs, pktMs);
-        int high = JitterPolicy.HighWaterPackets(_jitterMs, _renderPeriodMs, pktMs);
+        int target = JitterPolicy.EffectiveTargetPackets(_jitterMs, PolicyPeriodMs, pktMs);
+        int max = JitterPolicy.MaxDepthPackets(_jitterMs, PolicyPeriodMs, pktMs);
+        int high = JitterPolicy.HighWaterPackets(_jitterMs, PolicyPeriodMs, pktMs);
+        // 0.6.0: pitch-repeat concealment and the cubic drift resampler replace the 3 ms decay and sample slips.
         return new JitterBuffer(fpp, _channels, target, max, _sampleRate, high)
         {
             CatchUp = false,
-            DriftLock = true,
+            DriftLock = false,
+            Resample = true,
+            PitchConcealment = true,
             AdaptiveTarget = true,
-            RenderPeriodMs = _renderPeriodMs,
+            RenderPeriodMs = PolicyPeriodMs,
         };
     }
+
+    /// <summary>
+    /// Consumer period the jitter policy plans for: the render period, or with Studio on at least one 10 ms Studio frame
+    /// (the worker pulls the jitter buffer in 480-sample blocks).
+    /// </summary>
+    private double PolicyPeriodMs => StudioActive ? Math.Max(_renderPeriodMs, StudioProcessor.Frame * 1000.0 / 48000) : _renderPeriodMs;
 
     public double JitterMs => _jitterMs;
     /// <summary>WASAPI engine period the jitter target was floored against. 0 until the renderer reports it.</summary>
@@ -175,12 +200,13 @@ public sealed class Receiver : IDisposable
         if (Math.Abs(periodMs - _renderPeriodMs) < 0.05 && _jb.BaseTarget == TargetPackets()) return;
         _renderPeriodMs = periodMs;
         ApplyTarget(force: false);
+        _studio?.SetRenderPeriodMs(periodMs);
     }
 
     private int TargetPackets()
     {
         double pktMs = Math.Max(1, FramesPerPacket) * 1000.0 / _sampleRate;
-        return JitterPolicy.EffectiveTargetPackets(_jitterMs, _renderPeriodMs, pktMs);
+        return JitterPolicy.EffectiveTargetPackets(_jitterMs, PolicyPeriodMs, pktMs);
     }
 
     private void ApplyTarget(bool force)
@@ -188,13 +214,13 @@ public sealed class Receiver : IDisposable
         int target = TargetPackets();
         double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
         if (!force && _jb.BaseTarget == target && _jb.FramesPerPacket == FramesPerPacket
-            && Math.Abs(_jb.RenderPeriodMs - _renderPeriodMs) < 0.05)
+            && Math.Abs(_jb.RenderPeriodMs - PolicyPeriodMs) < 0.05)
         {
             LogTarget(pktMs, target);
             return;
         }
         if (_jb.BaseTarget != target || _jb.FramesPerPacket != FramesPerPacket
-            || Math.Abs(_jb.RenderPeriodMs - _renderPeriodMs) >= 0.05 || force)
+            || Math.Abs(_jb.RenderPeriodMs - PolicyPeriodMs) >= 0.05 || force)
             _jb = MakeJb(FramesPerPacket);
         LogTarget(pktMs, target);
     }
@@ -203,6 +229,70 @@ public sealed class Receiver : IDisposable
     {
         string period = _renderPeriodMs > 0 ? $"{_renderPeriodMs:F1} ms" : "n/a";
         Log?.Invoke($"jitter target {target * pktMs:F1} ms = {target} pkt (preset {_jitterMs:F0} ms, render period {period})");
+    }
+
+    /// <summary>True while PC Studio noise reduction runs (configured, RNNoise loaded, not fallen back).</summary>
+    public bool StudioActive => _studio is not null && !_studioFailed;
+    public StudioPreset StudioPreset => _studioPreset;
+    /// <summary>Why Studio is not running although configured (RNNoise missing, mono only, CPU fallback), else null.</summary>
+    public string? StudioUnavailableReason { get; private set; }
+    /// <summary>Current Studio auto-volume gain (persisted by the app as the next session's start gain), NaN when off.</summary>
+    public double StudioAgcGainDb => _studio is { } st && _studioAutoVolume ? st.AgcGainDb : double.NaN;
+    /// <summary>Move-closer hint state (received speech-to-noise ratio below 15 dB for 10 s).</summary>
+    public bool MoveCloserHint => _hint.Visible;
+    public double SnrDb => _hint.SnrDb;
+
+    /// <summary>
+    /// Switch PC Studio noise reduction (0.6.0). Off restores the 0.5.7 path exactly (phone suppression). With a preset
+    /// the phone is asked (FlagStudio) to send raw capture, and RNNoise + WhisperGuard + B3 auto-volume run on a worker
+    /// thread. Returns false (and leaves Studio off) when RNNoise cannot load or the stream is not mono.
+    /// </summary>
+    public bool ConfigureStudio(StudioPreset preset, bool autoVolume, double startGainDb)
+    {
+        bool same = preset == _studioPreset && autoVolume == _studioAutoVolume && (_studio is not null || preset == StudioPreset.Off);
+        _studioPreset = preset; _studioAutoVolume = autoVolume; _studioStartGainDb = startGainDb;
+        if (same && !_studioFailed) return preset == StudioPreset.Off || _studio is not null;
+        var old = _studio;
+        _studio = null;
+        _studioFailed = false;
+        StudioUnavailableReason = null;
+        old?.Dispose();
+        if (preset != StudioPreset.Off)
+        {
+            if (_channels != 1) StudioUnavailableReason = "Studio needs a mono stream";
+            else if (!Rnnoise.IsAvailable) StudioUnavailableReason = "RNNoise library not found: " + Rnnoise.UnavailableReason;
+            else
+            {
+                try
+                {
+                    var st = new StudioProcessor(new StudioChain(preset, autoVolume, startGainDb), buf => _jb.Pull(buf), _renderPeriodMs, StudioThreadInit);
+                    st.FellBack += OnStudioFellBack;
+                    _studio = st;
+                }
+                catch (Exception e) { StudioUnavailableReason = e.Message; }
+            }
+            if (StudioUnavailableReason is { } why) Log?.Invoke($"studio unavailable: {why}");
+            else Log?.Invoke($"studio on: {preset}, auto volume {(autoVolume ? $"on (start {startGainDb:F1} dB)" : "off")}, +{StudioProcessor.AddedLatencyMs:F0} ms");
+        }
+        else if (old is not null) Log?.Invoke("studio off");
+        ApplyTarget(force: false);
+        NotifyLinkControlChanged();
+        return preset == StudioPreset.Off || _studio is not null;
+    }
+
+    private void OnStudioFellBack(string why)
+    {
+        _studioFailed = true;
+        StudioUnavailableReason = "CPU too slow for Studio (" + why + ")";
+        Log?.Invoke($"studio fell back to phone noise reduction for this session: {why}");
+        var st = _studio;
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            ApplyTarget(force: false);
+            NotifyLinkControlChanged();
+            if (st is not null && ReferenceEquals(_studio, st)) { _studio = null; st.Dispose(); }
+            StudioFellBack?.Invoke(why);
+        });
     }
 
     /// <summary>Endpoints (phone IP : port) that get a HELLO every second while no phone is connected.</summary>
@@ -248,7 +338,11 @@ public sealed class Receiver : IDisposable
         _pingSock?.Close(); _pingSock = null;
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        Stop();
+        var st = _studio; _studio = null; st?.Dispose();
+    }
 
     private void Send(byte[] data, EndPoint to)
     {
@@ -384,6 +478,7 @@ public sealed class Receiver : IDisposable
                 };
         }
         _jb.Push(h.Seq, payload);
+        if (_channels == 1) _hint.AddS16(payload);
     }
 
     private void PingLoop()
@@ -427,6 +522,7 @@ public sealed class Receiver : IDisposable
                 byte flags2 = SettingsSync.FlagPeerSync | SettingsSync.FlagWantDiag;
                 if (FrontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
                 if (VoiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
+                if (StudioActive) flags2 |= SettingsSync.FlagStudio;
                 SettingsSync.Write(payload.Slice(LinkControl.Size), flags2, Sync.Revs);
                 Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)
@@ -489,9 +585,27 @@ public sealed class Receiver : IDisposable
                 _rttMs, _rttMin, _jitterUs / 1000.0, pktMs, _levelDb,
                 _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(now - _lastAudioTicks),
                 jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops, js.SampleSlips,
-                _renderPeriodMs, jb.Target * pktMs, jb.Target, _underrunPerMin, _overflowPerMin, _phone);
+                _renderPeriodMs, jb.Target * pktMs, jb.Target, _underrunPerMin, _overflowPerMin, _phone,
+                jb.DriftPpm, js.UnderrunConcealed, StudioText(), StudioCpu(), StudioAgcGainDb, _hint.SnrDb);
         }
     }
 
-    public void Pull(Span<byte> dst) => _jb.Pull(dst);
+    private string StudioText()
+    {
+        if (_studioPreset == StudioPreset.Off) return "off";
+        string p = _studioPreset.ToString().ToLowerInvariant();
+        if (_studioFailed) return p + "-fallback";
+        if (_studio is null) return p + "-unavailable";
+        return _phone.StudioBypass ? p : p + "-nophoneack";
+    }
+
+    private double StudioCpu() => _studio is { } st ? st.TakeCpu().MeanMs : double.NaN;
+
+    /// <summary>Render thread: Studio output when Studio runs, else the jitter buffer directly (0.5.7 path).</summary>
+    public void Pull(Span<byte> dst)
+    {
+        var st = _studio;
+        if (st is not null && !_studioFailed) st.Pull(dst);
+        else _jb.Pull(dst);
+    }
 }

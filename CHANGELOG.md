@@ -2,6 +2,82 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-11
+
+Packet-loss concealment by pitch repetition, drift correction by resampling, and an optional PC Studio noise
+reduction based on RNNoise. Android `versionCode` is 16 / `versionName` 0.6.0. Wire version stays 1: the new PING
+bit and diagnostics flags are ignored by 0.5.x peers, so 0.6.0 works with 0.5.7, 0.5.6, 0.5.5 and 0.5.4 on the other
+side. With Studio off (the default) the phone-side voice processing is the same as in 0.5.7. The release APK is
+signed with the same key as 0.5.7. The Windows installer is not Authenticode-signed.
+
+### Added
+- **PC Studio noise reduction** (Windows, opt-in, off by default). Presets *Balanced*, *Whisper priority* and *Max*
+  in the main window next to Noise cancellation.
+  - RNNoise (BSD-3, native `rnnoise.dll`, pinned build) runs at 48 kHz in parallel with a PC copy of the 0.5.7
+    Strong suppressor aligned to RNNoise's 960-sample delay. WhisperGuard mixes the Strong output back in while
+    RNNoise removes a clearly present signal, so whispers and soft consonants survive. *Max* is RNNoise only.
+  - The PC asks the phone (PING bit 5) to send capture without its noise suppression, gate, Auto volume and pause
+    expander. Mic gain, Voice clarity and the limiter stay on. The phone's stored settings are unchanged and apply
+    again when Studio is off; the phone confirms the bypass in its diagnostics, and the PC shows a notice when an
+    older phone does not.
+  - Runs on a worker thread with a 10 ms frame, never in the WASAPI callback, with no per-frame allocation. If
+    3 deadlines are missed within 1 s, Studio turns off for the session, a notice appears and the phone's own noise
+    cancellation is used again.
+  - Added latency is about 30 ms (RNNoise 20 ms plus the 10 ms worker frame); the presets are labelled `+30 ms`.
+- **B3 loudness Auto volume** inside Studio (when Auto volume is on): K-weighted loudness toward −21 LUFS with the
+  gain frozen in pauses and a −1 dBFS limiter. The gain is saved and used as the starting point next session.
+- **Move-closer hint.** *Move the phone closer (about 15 cm) for a cleaner sound* appears when the estimated
+  speech-to-noise ratio stays below 15 dB for 10 s and hides above 18 dB for 10 s.
+- **Silenced-microphone warning.** The phone registers an Android recording callback before capture starts and
+  reports when Android silences its capture because another app took the microphone. Both apps show a warning.
+- **Privacy-sensitive capture** on Android 11+ (AudioRecord via `setPrivacySensitive(true)`, AAudio via
+  `AAudioStreamBuilder_setPrivacySensitive` looked up at run time). `VOICE_RECOGNITION` stays the default source.
+- **Hidden noise suppression check** (logged only): if the room tone falls more than 8 dB within 2 s of the start
+  with no speech, the phone flags `devns=1` in the PC log.
+- New PC log fields: `drift=`, `uplc=`, `studio=`, `studiocpu=`, `studiogain=`, `snr=`, `silenced=`, `devns=`.
+- `tools/harness/`: the regression harness (developer tool, not shipped). Evaluation data is downloaded at test time
+  into a git-ignored cache; EARS clips (CC-BY-NC) are for local evaluation only and are never committed.
+
+### Changed
+- **Packet-loss and underrun concealment.** Lost packets and buffer underruns repeat the last pitch period with a
+  2 ms crossfade, keep full level for 10 ms and then fade (silent after 30 ms of continuous loss). Unvoiced history
+  is attenuated faster so repeated noise does not buzz. This replaces the short decay of 0.5.x.
+- **Drift correction.** A cubic resampler driven by a PI controller on the buffer fill replaces the crossfaded
+  sample slips; `slip=` therefore stays 0 and `drift=` shows the corrected clock difference.
+- Android: the microphone-direction calls (`setPreferredMicrophoneDirection`, field dimension,
+  `getActiveMicrophones`) are fully guarded; an exception or an empty list counts as "unknown" and capture continues.
+
+### Release gates (measured on the build machine)
+- PLC: vectors match the reference within 2.9e-8 (PLC-1), 0 % loss is bit-identical, single-loss error 1.1e-14,
+  largest step 0.0131 vs the tone's own 0.0131, worst loss frame 0.12 ms.
+- Resampler: vectors within 2.8e-8 (controller 5e-12); closed loop at 0/±100/±300 ppm with 3 ms jitter: THD+N −87 to
+  −97 dB, 0 underruns, fill 1435–1443 samples (target 1440), ratio jitter 10–36 ppm; 8 kHz open loop −64.5 dB;
+  11 µs per frame.
+- Studio noise reduction on the held-out set (C# code, 7 EARS talkers × 6 DEMAND noises): whisper 20 dB Balanced
+  mid loss 3.09 dB, ESTOI 0.935× noisy; Whisper preset mid loss 1.29 dB (20 dB) and 1.79 dB (10 dB); regular speech
+  DNSMOS OVRL +0.38 over 0.5.7 Strong at 5 dB and +0.12 at 20 dB (PESQ 3.27 vs 2.97 noisy); Balanced vs Max −0.03;
+  OVRL win rate over Strong 91 % (whisper) / 92 % (regular). C# matches the Python reference within 0.01 OVRL.
+- Auto volume (B3), 14 room × distance cells: −21.1 to −20.5 LUFS, pause gain change ≤ 0.51 dB mean / 3.9 dB max,
+  re-onset −0.4 to +0.9 dB, breathing ≤ +4.4 dB, peaks −1.00 dBFS, PESQ within 0.02 of the reference.
+- CPU: Studio chain 0.50 ms mean, 1.23 ms p99.9 per 10 ms frame, 0 bytes allocated and 0 gen-0 collections over
+  70 s; Light 0.04 ms; watchdog falls back in 0.65 s when the worker stalls.
+- Not met: the plan's ≤ 12 ms latency budget for Studio (measured about 30 ms), so Studio stays opt-in. The
+  silenced-microphone and privacy-sensitive checks (AND-1, AND-2) need a phone and were not run for this release.
+
+### Known limitations
+- Whispers can end up 2–7 LU below the −21 LUFS target in Studio Auto volume.
+- With Balanced, bumps such as a bus or keyboard can still be heard in pauses; Max avoids it.
+- Not tested on real phones or on Windows hardware for this release; the Windows build was produced and tested
+  with the .NET SDK on Linux.
+
+### Tests
+- .NET (189): PLC and resampler vectors ported from the research reference, closed-loop drift through the jitter
+  buffer (s16 and float), lost-packet and underrun concealment, RNNoise delay, Studio CPU and allocations, worker
+  watchdog, WhisperGuard presets, B3 Auto volume, move-closer hint, Strong delay, diagnostics flags (golden bytes
+  shared with Kotlin), Studio PING bit. Timing tests run in a serial collection.
+- Kotlin (46): Studio bypass plan, diagnostics flags (same golden bytes as C#), PING Studio bit, guarded
+  mic-direction calls with throwing and empty fakes, hidden noise suppression detector.
+
 ## [0.5.7] - 2026-11-10
 
 Smoother Strong noise reduction and phone voice-chain diagnostics in the PC log. Android `versionCode` is

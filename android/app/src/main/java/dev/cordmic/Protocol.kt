@@ -34,6 +34,8 @@ object Protocol {
      * 0.5.7 diagnostics block, placed between the name separator and the sync block of a PONG, only when the
      * PING asked for it (FLAG_WANT_DIAG). Bytes: magic 0xC7, floor dBFS (int8), AGC gain in 0.5 dB (int8),
      * flags (bit0 gated, bit1 AGC on, bit2 floor measured), expander in 0.5 dB (int8), check = xor(0..4) ^ 0x5A.
+     * 0.6.0 adds flags bit3 (capture silenced by another app), bit4 (Studio bypass active) and bit5 (device noise
+     * suppression suspected). 0.5.7 PCs ignore them.
      */
     const val DIAG_MAGIC: Byte = 0xC7.toByte()
     const val DIAG_SIZE = 6
@@ -47,6 +49,9 @@ object Protocol {
         if (d.gated) f = f or 1
         if (d.agc) f = f or 2
         if (d.floorKnown) f = f or 4
+        if (d.silenced) f = f or 8
+        if (d.studioBypass) f = f or 16
+        if (d.nsSuspected) f = f or 32
         buf[off + 3] = f.toByte()
         buf[off + 4] = Math.round(d.expanderDb * 2).toInt().coerceIn(-127, 0).toByte()
         var x = 0
@@ -61,7 +66,8 @@ object Protocol {
         for (i in 0 until 5) x = x xor (buf[off + i].toInt() and 0xFF)
         if ((x xor 0x5A).toByte() != buf[off + 5]) return null
         val f = buf[off + 3].toInt()
-        return VoiceDiag(buf[off + 1].toDouble(), f and 1 != 0, f and 2 != 0, buf[off + 2] / 2.0, buf[off + 4] / 2.0, f and 4 != 0)
+        return VoiceDiag(buf[off + 1].toDouble(), f and 1 != 0, f and 2 != 0, buf[off + 2] / 2.0, buf[off + 4] / 2.0, f and 4 != 0,
+            silenced = f and 8 != 0, studioBypass = f and 16 != 0, nsSuspected = f and 32 != 0)
     }
 
     /** PC → phone. changeSeq 0 means "do not override the phone". */

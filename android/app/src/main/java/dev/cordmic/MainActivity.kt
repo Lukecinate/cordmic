@@ -332,6 +332,7 @@ class MainActivity : AppCompatActivity() {
             lastReplyMs = if (heard > 0) SystemClock.elapsedRealtime() - heard else null,
             usb = usb,
             stats = s.engineStats,
+            micSilenced = s.micSilenced,
         )
     }
 
@@ -349,7 +350,8 @@ class MainActivity : AppCompatActivity() {
 
         // Status card
         stateTitle.setText(UiCopy.title(ui.phase))
-        stateMessage.text = if (ui.phase == Phase.STREAMING)
+        stateMessage.text = if (ui.phase == Phase.STREAMING && ui.micSilenced) getString(R.string.state_mic_silenced_msg)
+        else if (ui.phase == Phase.STREAMING)
             getString(R.string.state_streaming_msg, ui.target ?: getString(R.string.value_none), ui.engine ?: getString(R.string.value_none))
         else getString(UiCopy.message(ui))
         stateIcon.setImageResource(UiCopy.icon(ui.phase))

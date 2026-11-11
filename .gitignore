@@ -19,3 +19,6 @@ dist/
 keystore.properties
 *signing*.properties
 *.zip
+
+# RNNoise Linux build is for local tests only (tools/rnnoise/build.sh); the Windows DLL is committed
+third_party/rnnoise/linux-x64/

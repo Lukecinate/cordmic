@@ -70,3 +70,56 @@ in the installer or releases):
 
 [VB-CABLE](https://vb-audio.com/Cable/) is a separate product by VB-Audio. CordMic does not include or redistribute
 it; the setup guide links to the official download page.
+
+## RNNoise
+
+**RNNoise** (noise suppression library and its trained model), used by the Windows app's opt-in Studio noise
+reduction (0.6.0 and later).
+- Shipped as `rnnoise.dll` next to `CordMic.exe`, with its licence as `RNNOISE-LICENSE.txt`, in the installer and the
+  portable zip. Built from
+  [xiph/rnnoise](https://gitlab.xiph.org/xiph/rnnoise) commit `70f1d256acd4b34a572f999a05c87bf00b67730d` with model
+  `rnnoise_data-0a8755f8…6b37` by [`tools/rnnoise/build.sh`](../tools/rnnoise/build.sh); unmodified source, called
+  through P/Invoke. Hashes in [`third_party/rnnoise/SHA256SUMS`](../third_party/rnnoise/SHA256SUMS).
+- License: BSD 3-Clause, full text in [`third_party/rnnoise/COPYING`](../third_party/rnnoise/COPYING), reproduced below.
+
+```
+Copyright (c) 2007-2017, 2024 Jean-Marc Valin
+Copyright (c) 2023 Amazon
+Copyright (c) 2017, Mozilla
+Copyright (c) 2005-2017, Xiph.Org Foundation
+Copyright (c) 2003-2004, Mark Borgerding
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## Evaluation data (not shipped)
+
+The developer regression harness in `tools/harness/` downloads evaluation data at test time; none of it is in the
+repository or in any release asset. EARS (CC-BY-NC 4.0) is used for local evaluation only; DEMAND and LibriSpeech
+are CC-BY 4.0; the DNSMOS model is MIT; the PESQ package is for research use only. See
+[`tools/harness/README.md`](../tools/harness/README.md).

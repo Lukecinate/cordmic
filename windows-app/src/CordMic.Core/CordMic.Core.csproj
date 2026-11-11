@@ -4,6 +4,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <!-- RNNoise native library (BSD-3-Clause), built by tools/rnnoise/build.sh. Kept loose next to the exe. -->
+  <ItemGroup>
+    <None Include="..\..\..\third_party\rnnoise\win-x64\rnnoise.dll" Link="rnnoise.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Condition="Exists('..\..\..\third_party\rnnoise\win-x64\rnnoise.dll') And '$(RuntimeIdentifier)' != 'linux-x64'" />
+    <None Include="..\..\..\third_party\rnnoise\COPYING" Link="RNNOISE-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\..\..\third_party\rnnoise\linux-x64\librnnoise.so" Link="librnnoise.so" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" Condition="Exists('..\..\..\third_party\rnnoise\linux-x64\librnnoise.so') And '$(RuntimeIdentifier)' != 'win-x64'" />
+  </ItemGroup>
 </Project>

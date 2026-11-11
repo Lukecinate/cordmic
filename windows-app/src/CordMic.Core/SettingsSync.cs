@@ -37,6 +37,9 @@ public static class SettingsSync
     public const byte FlagVoiceClarity = 1 << 3;
     /// <summary>PING only (0.5.7): ask the phone for the diagnostics block. Older phones ignore the bit.</summary>
     public const byte FlagWantDiag = 1 << 4;
+    /// <summary>PING only (0.6.0): the PC runs Studio noise reduction, so the phone should bypass its suppressor, platform
+    /// noise suppression, gate, AGC and pause expander (user gain, voice clarity and the limiter stay). Older phones ignore it.</summary>
+    public const byte FlagStudio = 1 << 5;
 
     public static byte NextSeq(byte local, byte remote)
     {

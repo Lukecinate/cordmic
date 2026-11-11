@@ -9,15 +9,17 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi saat ini: **0.5.7** ([changelog](CHANGELOG.md), [unduhan](https://github.com/Lukecinate/cordmic/releases/latest)).
+Versi saat ini: **0.6.0** ([changelog](CHANGELOG.md), [unduhan](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 - **Hanya kabel.** HP muncul sebagai adapter jaringan kabel (RNDIS/NCM). Audio tidak lewat Wi-Fi atau internet.
 - **Latensi rendah.** PCM 48 kHz mono dalam paket 5 ms, capture AAudio eksklusif bila diizinkan HP, jitter buffer
-  yang disesuaikan dengan periode render Windows yang sebenarnya, drift lock tingkat sampel, dan renderer WASAPI
-  milik CordMic sendiri (IAudioClient3 mode shared atau exclusive). Target rancangan sekitar **30–45 ms end-to-end**
+  yang disesuaikan dengan periode render Windows yang sebenarnya, kontrol drift dengan resampler, penyamaran packet
+  loss berbasis pitch, dan renderer WASAPI milik CordMic sendiri (IAudioClient3 mode shared atau exclusive). Target rancangan sekitar **30–45 ms end-to-end**
   (lihat [Latensi](#latensi)).
 - **Pemrosesan suara di HP.** EQ voice clarity, noise cancellation (Mati / Ringan / Kuat), Volume otomatis menuju
   −18 dBFS dengan gate yang mengikuti lantai noise terukur, expander jeda, dan limiter puncak −1 dBFS.
+- **Peredam bising Studio di PC (opsional)** (0.6.0, mati secara default). RNNoise di PC dengan perlindungan bisikan
+  dan Volume otomatis berbasis loudness; HP lalu mengirim suara tanpa olahan. Menambah sekitar 30 ms.
 - **Deteksi otomatis per HP.** HP memeriksa kemampuannya sendiri (engine capture, mikrofon, efek bawaan, API arah,
   level) lalu memilih jalur capture dan pengaturan awal. Yang keluar dari HP hanya ringkasan singkat ke PC lewat
   kabel. Tanpa telemetri.
@@ -162,6 +164,7 @@ error), baris status dengan model HP dan delay sisi PC, baris **Detected:** dari
 | Mode output | Auto | *Auto* memilih periode stabil terpendek dan mencoba Exclusive hanya bila lebih pendek. *Latensi rendah* (shared, sekitar satu periode antre), *Stabil* (buffer Windows selalu penuh; untuk PC sibuk) atau *Exclusive* (WASAPI exclusive; CordMic memegang "CABLE Input" dan kembali ke Latensi rendah bila ditolak). Pilihan eksplisit tidak pernah ditimpa |
 | Latensi (jitter buffer) | Normal 10 ms | Low 5 / Normal 10 / Safe 20 ms, dinaikkan otomatis sesuai kebutuhan periode render (lihat [Arsitektur](#arsitektur--protokol)) |
 | Noise cancellation | Ringan | Mati / Ringan / Kuat (diterapkan di HP) |
+| Peredam bising Studio di PC | Mati | Mati / Seimbang / Prioritas bisikan / Maksimal, dijalankan di PC (lihat [Peredam bising Studio di PC](#peredam-bising-studio-di-pc-opsional)) |
 | Voice clarity | Aktif | EQ high-pass, low-shelf, dan presence (di HP) |
 | Volume otomatis | Aktif | AGC dengan gate menuju −18 dBFS (di HP) |
 | Fokus depan | Aktif | Meminta mic yang menghadap pengguna bila jalur capture mendukung |
@@ -175,7 +178,10 @@ error), baris status dengan model HP dan delay sisi PC, baris **Detected:** dari
 
 Pengaturan suara yang diubah di sini langsung diterapkan ke HP, dan perubahan di HP muncul di sini. Kontrol yang
 sedang fokus, digeser, atau terbuka tidak ditimpa nilai yang masuk. Peringatan muncul bila suara tetap di bawah
-sekitar −40 dBFS setelah gain.
+sekitar −40 dBFS setelah gain. Sejak 0.6.0 dua pemberitahuan lain bisa muncul di bawah pengaturan noise: *Dekatkan HP
+(sekitar 15 cm) agar suara lebih bersih* bila perkiraan rasio suara-terhadap-noise tetap di bawah 15 dB selama 10 detik
+(hilang lagi di atas 18 dB selama 10 detik), dan peringatan bila Android melaporkan bahwa aplikasi lain membuat mic
+CordMic hening.
 
 Klik kanan ikon tray untuk **Perangkat output**, **Mode output**, **Jitter buffer**, **Mode mic (diatur di HP)**,
 **Buka CordMic**, **Perbaiki prioritas jaringan HP** (hanya muncul bila internet lewat HP; meminta UAC), **Buka log**,
@@ -196,13 +202,20 @@ Contoh baris statistik (arti kolom ada di [Receiver Python](#receiver-python-ala
 ```
 stats peer=… rx=… lost=0 (0.00%) late=0 plc=0 underrun=… ovf=… buf=…ms jitter=…ms rtt=…ms bufavg=…ms bufmin=…ms
       slip=… period=2.7ms jtarget=15.0ms/3pkt urate=…/min orate=…/min nc=light agc=on gain=+6dB phone=AAudio-excl dir=…
-      mics=… floor=-62dBFS gate=closed agcgain=+8.5dB exp=-6.0dB dev=…
+      mics=… floor=-62dBFS gate=closed agcgain=+8.5dB exp=-6.0dB drift=…ppm uplc=… studio=off studiocpu=-
+      studiogain=-dB snr=…dB silenced=0 devns=0 dev=…
 ```
 
 Sejak 0.5.7, HP versi 0.5.7 juga melaporkan rantai suaranya: `floor` = level noise latar yang diukur sebelum gain mic
 (`~` sampai jeda pertama terukur), `gate` = gate Volume otomatis (`open` saat bicara), `agcgain` = makeup Volume
 otomatis saat ini (`off` bila Volume otomatis mati), `exp` = gain expander jeda saat ini. Dengan HP versi lama
 kolom-kolom ini berisi `-`.
+
+Sejak 0.6.0: `drift` = selisih clock yang dikoreksi resampler, `uplc` = frame underrun yang diisi penyamaran,
+`studio` = status Studio (`off`, nama preset, `-fallback`, `-unavailable`, atau `-nophoneack` bila HP belum
+mengonfirmasi bypass), `studiocpu` = waktu proses Studio per frame 10 ms, `studiogain` = gain Volume otomatis Studio,
+`snr` = perkiraan rasio suara-terhadap-noise untuk pemberitahuan dekatkan HP, `silenced` = Android membuat capture HP
+hening, `devns` = HP menduga ada peredam noise tersembunyi dari perangkat (hanya dicatat).
 
 `jtarget` adalah target yang sedang dipakai, termasuk kenaikan adaptif (0.5.6). `urate` / `orate` adalah
 underrun dan overflow drop per menit.
@@ -285,6 +298,26 @@ implementasi referensi C# (`CordMic.Core/VoiceChain.cs`) yang memuat test.
 6. **Expander jeda**: sekitar −6 dB (Ringan) atau −12 dB (Kuat) saat gate tertutup.
 7. **Limiter puncak** di −1 dBFS.
 
+### Peredam bising Studio di PC (opsional)
+
+Mati secara default. Saat preset Studio dipilih di PC, PC meminta HP (flag PING, HP versi 0.6.0) melewati peredam
+noise, gate, Volume otomatis, dan expander jeda miliknya, sehingga peredaman tidak diterapkan dua kali. Gain mic, Voice
+clarity, dan limiter tetap di HP. Pengaturan yang tersimpan di HP tidak berubah dan berlaku lagi begitu Studio
+dimatikan. Di PC, sebuah worker thread (bukan callback audio) menjalankan:
+
+1. **RNNoise** (BSD-3, `rnnoise.dll` native) di 48 kHz, berdampingan dengan salinan peredam Kuat 0.5.7 di PC yang
+   diselaraskan dengan delay RNNoise 20 ms.
+2. **WhisperGuard** mencampur kembali ke keluaran Kuat saat RNNoise membuang sinyal yang jelas ada (bisikan atau
+   konsonan lembut). *Seimbang* (preset default), *Prioritas bisikan* (lebih banyak dicampur kembali, bisikan paling
+   terjaga) dan *Maksimal* (hanya RNNoise, pembersihan paling kuat, bisikan bisa menipis).
+3. **Volume otomatis (B3)**, bila Volume otomatis aktif: berbasis loudness (LUFS), menuju −21 LUFS, dibekukan saat
+   jeda, dengan limiter −1 dBFS. Gain-nya diingat antarsesi.
+
+Tambahan latensi sekitar 30 ms (RNNoise 20 ms ditambah satu frame worker 10 ms). Pemrosesan memakan sekitar 0,55 ms
+per frame 10 ms di mesin build tanpa alokasi per frame. Bila worker melewatkan 3 tenggat dalam 1 detik, Studio mati
+untuk sesi itu, pemberitahuan muncul, dan peredam noise HP dipakai lagi. Dengan HP versi lebih lama dari 0.6.0, PC
+menampilkan bahwa HP belum mengonfirmasi bypass.
+
 ## Pembaruan
 
 Kedua aplikasi punya **Periksa pembaruan**, dan sakelar opsional **Pembaruan otomatis** (default mati) memeriksa saat
@@ -303,6 +336,9 @@ UAC atau SmartScreen masih bisa muncul. Tidak ada data lain yang dikirim.
 | Merah, "Port dipakai" | Receiver lain (mis. `cordmic_receiver` Python) sedang jalan. Tutup; CordMic mencoba lagi tiap 5 detik |
 | Kuning tua, "Belum ada mic virtual" | Pakai **Pasang VB-CABLE** di Pengaturan; restart PC bila perangkat belum muncul |
 | Kresek atau putus sesaat | Periksa `underrun` / `ovf` / `urate` di log. Sejak 0.5.6 target naik sendiri setelah underrun berulang; bila masih terjadi, pilih *Latensi → Safe (20 ms)* lalu *Mode output → Stabil*. Hindari USB hub |
+| Studio mati sendiri | PC tidak sanggup mengikuti (3 tenggat terlewat dalam 1 detik). Tutup aplikasi latar yang berat, atau pakai peredam noise HP |
+| Suara terdengar jauh atau keruh | Ikuti pemberitahuan *Dekatkan HP*: sekitar 15 cm. Peredam noise tidak bisa menghapus gema ruangan |
+| Peringatan "mic dibuat hening" | Aplikasi lain (sering asisten suara atau perekam) mengambil mic. Tutup aplikasi itu |
 | Desis di antara kata | Biarkan noise cancellation di Ringan atau Kuat (keduanya menurunkan jeda), turunkan Gain mic dan biarkan Volume otomatis bekerja. Pakai ambang voice activation game yang sedang. Kolom `floor` di log menunjukkan level latar HP (di atas sekitar −50 dBFS berarti ruangan bising atau Gain mic terlalu tinggi) |
 | Suara terlalu pelan | Dekatkan HP, naikkan Gain mic beberapa dB, dan biarkan Volume otomatis aktif. Peringatan muncul di bawah sekitar −40 dBFS |
 | Fokus depan "unsupported" | Jalur AAudio HP tidak punya API arah. Nyalakan *Fokus depan (latensi lebih tinggi)* untuk memakai AudioRecord, atau biarkan mati untuk latensi terendah |
@@ -337,6 +373,11 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
   didistribusikan di luar Google Play. Versi 0.3.0 memakai kunci debug; uninstall dulu sebelum memasang versi berikutnya.
 - **Round-trip time hanya dari sisi PC.** HP menjawab PING dari PC tetapi tidak mengukurnya, jadi aplikasi HP
   menampilkan umur balasan PC terakhir.
+- **Latensi dan loudness Studio.** Peredam bising Studio di PC menambah sekitar 30 ms, lebih dari target 12 ms di
+  rencana 0.6.0, karena itu sifatnya opsional. Bisikan bisa tetap beberapa LU di bawah target −21 LUFS, dan bunyi
+  hentakan seperti bus atau keyboard masih bisa terdengar saat jeda dengan Seimbang (Maksimal menghindarinya).
+- **Pemeriksaan perangkat belum dilakukan di hardware.** Peringatan mic dibuat hening dan capture privacy-sensitive
+  mengikuti dokumentasi Android tetapi belum diuji di HP untuk rilis ini.
 - **Aturan mulai Android 14+.** Capture harus dimulai dari aplikasi yang terlihat; tidak mulai saat boot.
 
 ## Privasi dan keamanan
@@ -390,8 +431,12 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
   memasang bit permintaan di blok itu, lalu HP menambahkan blok diagnostik 6 byte (magic `0xC7`: lantai sebelum gain,
   gate, gain AGC, gain expander, byte cek) di antara nama dan blok sinkronisasi. Blok ini hanya dikirim bila diminta
   dan hanya ke PC yang terhubung; tidak ada data yang keluar dari link USB. Aplikasi lama mengabaikan byte tambahan;
-  versi wire tetap 1.
-- **Jitter buffer.** Mengurutkan paket berdasarkan nomor urut dan menyamarkan celah tunggal dengan peluruhan singkat.
+  versi wire tetap 1. 0.6.0 menambahkan bit Studio (bit 5) di flag PING dan tiga flag diagnostik (capture dibuat
+  hening, bypass Studio aktif, dugaan peredam noise perangkat); peer lama mengabaikannya.
+- **Jitter buffer.** Mengurutkan paket berdasarkan nomor urut. Sejak 0.6.0 paket hilang dan underrun disamarkan dengan
+  mengulang periode pitch terakhir dengan crossfade 2 ms, level penuh selama 10 ms lalu memudar (hening setelah 30 ms
+  kehilangan beruntun), dan clock drift dikoreksi oleh resampler kubik yang dikendalikan kontroler PI pada isi buffer,
+  bukan slip sampel (kolom `slip` tetap 0). Sebelum 0.6.0 celah tunggal disamarkan dengan peluruhan singkat.
   Preset (Low 5 / Normal 10 / Safe 20 ms) dinaikkan minimal dua kali pengambilan render, atau tiga paket (15 ms) bila
   satu pengambilan hanya memakai satu paket (periode 2,7 ms). Overflow dipangkas ke satu periode di atas target;
   batas kerasnya target ditambah tiga periode render (lima untuk pengambilan satu paket). Drift lock tingkat sampel
@@ -415,7 +460,10 @@ cordmic/
 │       └── res/values[-in]/      English and Indonesian strings (+ values-night for the dark theme)
 ├── docs/                         screenshots, logo (assets/), SECURITY.md, THIRD_PARTY_NOTICES.md
 ├── third_party/fonts/            Plus Jakarta Sans + OFL license
+├── third_party/rnnoise/          rnnoise.dll (win-x64) + COPYING BSD-3 + SHA256SUMS
 ├── tools/brand/                  logo generator
+├── tools/harness/                harness regresi (alat developer, tidak dikirim; data diunduh saat pengujian)
+├── tools/rnnoise/                skrip build RNNoise yang dipin (zig cc)
 ├── windows-app/                  Windows app, C# / .NET 8
 │   ├── src/CordMic.Core/         protocol, jitter buffer and policy, receiver, voice chain (reference),
 │   │                             settings and sync, device tuning, update logic, string tables
@@ -431,7 +479,7 @@ cordmic/
 
 Pipeline ini **dirancang untuk sekitar 30–45 ms end-to-end**. Ini anggaran rancangan, bukan hasil ukur: capture
 ~3–10 ms + paket 5 ms + link USB 1–2 ms + jitter buffer 10–15 ms + WASAPI/VB-CABLE ~3–20 ms, ditambah 2,7 ms bila
-noise cancellation Kuat aktif. Latensi sebenarnya bergantung pada HP, jalur capture, dan stack audio PC.
+noise cancellation Kuat aktif, atau sekitar 30 ms bila peredam bising Studio di PC aktif. Latensi sebenarnya bergantung pada HP, jalur capture, dan stack audio PC.
 *Fokus depan (latensi lebih tinggi)* dan *Voice communication* menambah delay capture.
 
 **Delay sisi PC yang ditampilkan aplikasi:** jaringan (½ round trip) + jitter buffer (rata-rata waktu) + output
@@ -472,8 +520,11 @@ lokal ditandatangani kunci debug, dan updater di aplikasi akan menolaknya sebaga
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, UDP loopback (bersih dan lossy) |
-| .NET (149 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi |
-| Kotlin (39 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+| .NET (189 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP |
+| Kotlin (46 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+
+Gerbang rilis untuk peredam noise dan Volume otomatis (DNSMOS, ESTOI, PESQ, LUFS) dijalankan pada kode C# yang dikirim
+melalui `tools/harness/` dengan data yang diunduh saat pengujian; lihat [tools/harness/README.md](tools/harness/README.md).
 
 ## Receiver Python (alat developer)
 
@@ -500,7 +551,8 @@ python -m cordmic_receiver --device "CABLE Input" --jitter-ms 10
 
 Kolom statistik (sama dengan log aplikasi Windows): `lost` = celah nomor urut, `plc` = slot yang disamarkan, `late` =
 paket yang datang setelah gilirannya, `underrun` = buffer kosong, `ovf` = paket dibuang karena buffer penuh, `jitter`
-= jitter kedatangan (RFC 3550), `rtt` = round trip PING/PONG lewat USB, `slip` = penyesuaian sampel oleh drift lock.
+= jitter kedatangan (RFC 3550), `rtt` = round trip PING/PONG lewat USB, `slip` = penyesuaian sampel oleh drift lock
+(aplikasi Windows memakai resampler sejak 0.6.0, jadi nilainya 0).
 
 Tanpa HP, `python sim_sender.py --host 127.0.0.1 --seconds 10` mengirim nada uji 440 Hz (`--loss` dan `--jitter-ms`
 mensimulasikan link buruk).
@@ -509,6 +561,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 0.6.0 | Penyamaran packet loss berbasis pitch, kontrol drift dengan resampler, peredam bising Studio di PC opsional (RNNoise + WhisperGuard + Volume otomatis LUFS), peringatan mic dibuat hening, capture privacy-sensitive, pemberitahuan dekatkan HP |
 | 0.5.7 | Peredam noise Kuat yang lebih halus (batas bawah spektral, penghalusan gain per pita, perlindungan bisikan dan konsonan); lantai noise, gate, gain Volume otomatis, dan expander HP tampil di log PC |
 | 0.5.6 | Gate sebelum gain dan lantai noise yang dilacak terus, makeup AGC dibatasi lantai, expander jeda, ramp gain; underrun jitter buffer memudar, sambungan overflow halus, dan target adaptif |
 | 0.5.5 | Fokus depan (latensi lebih tinggi) via AudioRecord, gate AGC relatif, pembaruan di aplikasi, pengaturan dua arah langsung, unduhan VB-CABLE resmi opsional |
@@ -540,8 +593,10 @@ CordMic sebelumnya bernama **UsbMic**. Protokol audio tidak berubah (header `UM`
    di Windows 11. Driver kernel harus ditandatangani lewat Microsoft (sertifikat EV + attestation signing), karena itu
    menjadi milestone terpisah.
 3. **Code signing** (Authenticode) untuk installer dan aplikasi agar SmartScreen tidak memperingatkan.
-4. Penyamaran packet loss yang lebih baik.
-5. ~~Kompensasi clock drift~~ — dirilis di 0.5.2 dan disempurnakan di 0.5.3–0.5.4.
+4. ~~Penyamaran packet loss yang lebih baik~~ — dirilis di 0.6.0 (pengulangan pitch).
+5. ~~Kompensasi clock drift~~ — dirilis di 0.5.2, berbasis resampler sejak 0.6.0.
+6. Loudness yang sadar bisikan untuk Volume otomatis Studio, dan pemicu WhisperGuard yang lebih ketat untuk noise
+   hentakan saat jeda.
 
 ## Lisensi
 

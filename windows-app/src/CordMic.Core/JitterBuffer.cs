@@ -1,3 +1,5 @@
+using CordMic.Core.Dsp;
+
 namespace CordMic.Core;
 
 public sealed class JitterStats
@@ -7,6 +9,10 @@ public sealed class JitterStats
     public long CatchUpDrops;
     /// <summary>Single-sample skip/insert adjustments from the drift lock.</summary>
     public long SampleSlips;
+    /// <summary>Packets synthesised by pitch-repeat concealment during an underrun (0.6.0).</summary>
+    public long UnderrunConcealed;
+    /// <summary>Hard resyncs of the drift resampler (fill more than 20 ms above target; packets dropped once).</summary>
+    public long ResampleResyncs;
 }
 
 /// <summary>
@@ -22,9 +28,19 @@ public sealed class JitterStats
 ///   catch-up (<see cref="CatchUp"/>) remains available but is off in production.
 /// The target itself is at least two render pulls; see <see cref="JitterPolicy"/>.
 /// </summary>
-public sealed class JitterBuffer
+public sealed class JitterBuffer : IFloatSource
 {
     private readonly object _lock = new();
+    // 0.6.0: pitch-repeat concealment and the cubic drift resampler (mono only; off by default for the old tests).
+    private PitchPlc? _plc;
+    private float[] _plcF = Array.Empty<float>();
+    private bool _plcPlayed;
+    private readonly CubicResampler _rs = new();
+    private readonly DriftController _dc = new(0, DriftController.KpTuned);
+    private float[] _rsIn = Array.Empty<float>();
+    private byte[] _rsRaw = Array.Empty<byte>();
+    private float[] _rsOut = Array.Empty<float>();
+    private int _rsPos, _rsLen;
     private byte[] _pool = Array.Empty<byte>();
     private uint[] _seq = Array.Empty<uint>();
     private byte[] _occ = Array.Empty<byte>();
@@ -91,6 +107,18 @@ public sealed class JitterBuffer
     public bool CatchUp { get; set; }
     /// <summary>Apply a slow, crossfaded sample-level correction when mean depth drifts outside a deadband.</summary>
     public bool DriftLock { get; set; }
+    /// <summary>
+    /// 0.6.0: conceal lost packets and underruns by pitch repetition (<see cref="PitchPlc"/>) instead of a 3 ms decay
+    /// and a fade to silence. Mono only; ignored for stereo.
+    /// </summary>
+    public bool PitchConcealment { get; set; }
+    /// <summary>
+    /// 0.6.0: correct clock drift with the cubic resampler and <see cref="DriftController"/> instead of sample slips.
+    /// Mono only. When on, <see cref="DriftLock"/> should be off.
+    /// </summary>
+    public bool Resample { get; set; }
+    private bool PlcOn => PitchConcealment && Channels == 1;
+    private bool RsOn => Resample && Channels == 1;
     /// <summary>WASAPI period used for hysteresis; 0 if unknown.</summary>
     public double RenderPeriodMs { get; set; }
     /// <summary>Length of one catch-up decision window, in packets of playout.</summary>
@@ -129,6 +157,15 @@ public sealed class JitterBuffer
         _tailPos = UnderrunFadeFrames;
         _extra = new byte[2 * Channels];
         _count = 0;
+        int fpp = bytes / (2 * Channels);
+        _plc = Channels == 1 && fpp > 0 && fpp <= PitchPlc.H ? new PitchPlc(fpp) : null;
+        _plcF = new float[Math.Max(1, fpp)];
+        _plcPlayed = false;
+        _rsIn = new float[Math.Max(1, fpp)];
+        _rsRaw = new byte[bytes];
+        _rsPos = _rsLen = 0;
+        _rs.Reset();
+        _dc.Reset();
     }
 
     private static int NextPow2(int n)
@@ -189,6 +226,9 @@ public sealed class JitterBuffer
         _fadeIn = false;
         Array.Clear(_lastFrame);
         _tailPos = UnderrunFadeFrames;
+        _plc?.Reset();
+        _plcPlayed = false;
+        _rs.Reset(); _dc.Reset(); _rsPos = _rsLen = 0;
         ResetWindowLocked();
         Stats.Resets++;
     }
@@ -276,7 +316,16 @@ public sealed class JitterBuffer
             _pool.AsSpan(off, BytesPerPacket).CopyTo(dst);
             ClearSlot(cur);
             _next = nxt;
-            FadeInPacket(dst);
+            if (PlcOn && _plc is { } plc)
+            {
+                if (plc.Run > 0) _fadeIn = false; // the concealment crossfades into this packet itself
+                FadeInPacket(dst);
+                ToFloat(dst, _plcF);
+                plc.Good(_plcF);
+                FromFloat(_plcF, dst);
+                _plcPlayed = true;
+            }
+            else FadeInPacket(dst);
             RememberLast(dst);
             Stats.Played++;
             return true;
@@ -285,7 +334,14 @@ public sealed class JitterBuffer
         {
             _next = unchecked(cur + 1);
             Stats.Concealed++;
-            WriteConcealment(dst);
+            if (PlcOn && _plc is { } plc)
+            {
+                plc.Lost(_plcF);
+                FromFloat(_plcF, dst);
+                _fadeIn = false;
+                RememberLast(dst);
+            }
+            else WriteConcealment(dst);
             return true;
         }
         Stats.Underruns++;
@@ -318,11 +374,85 @@ public sealed class JitterBuffer
     private long QueuedFramesLocked() =>
         (long)_count * FramesPerPacket + (_keepLen > _keepOff ? (_keepLen - _keepOff) / (2 * Channels) : 0);
 
-    /// <summary>Fills dst completely with PCM (silence-padded). Does not allocate.</summary>
+    /// <summary>Fills dst completely with PCM (silence-padded). Does not allocate (after the first pull of a given size).</summary>
     public void Pull(Span<byte> dst)
     {
-        int pos = 0;
         lock (_lock)
+        {
+            if (RsOn) PullResampledLocked(dst);
+            else PullCoreLocked(dst);
+        }
+    }
+
+    /// <summary>Resampler input: the next sample of the jitter-buffer stream (always available: concealment or silence fills gaps).</summary>
+    float? IFloatSource.Next()
+    {
+        if (_rsPos >= _rsLen)
+        {
+            PullCoreLocked(_rsRaw);
+            ToFloat(_rsRaw, _rsIn);
+            _rsLen = _rsIn.Length; _rsPos = 0;
+        }
+        return _rsIn[_rsPos++];
+    }
+
+    private double FillFramesLocked() => QueuedFramesLocked() + (_rsLen - _rsPos) + _rs.HeldSamples;
+
+    private void PullResampledLocked(Span<byte> dst)
+    {
+        int frames = dst.Length / 2;
+        if (frames == 0) return;
+        if (_rsOut.Length < frames) _rsOut = new float[frames];
+        double before = FillFramesLocked();
+        double target = Target * (double)FramesPerPacket;
+        if (ResyncIfFarAboveLocked(before, target)) before = FillFramesLocked();
+        _rs.Process(_rsOut.AsSpan(0, frames), _dc.Ratio, this);
+        FromFloat(_rsOut.AsSpan(0, frames), dst);
+        double after = FillFramesLocked();
+        if (ResyncIfFarAboveLocked(after, target)) { after = FillFramesLocked(); before = after + frames; }
+        _dc.Target = target;
+        if (_next is not null) _dc.Update((before + after) / 2, frames / (double)SampleRate);
+    }
+
+    /// <summary>
+    /// Hard resync (start-up backlog or a burst after a stall): when the fill is more than 20 ms above target, drop
+    /// whole packets down to the target once; the next packet fades in from the last output sample.
+    /// </summary>
+    private bool ResyncIfFarAboveLocked(double fill, double target)
+    {
+        if (_next is null || _buffering || fill - target <= DriftController.ResyncSamples) return false;
+        int drop = (int)Math.Round((fill - target) / FramesPerPacket);
+        for (int i = 0; i < drop && SpanLocked() > 0; i++)
+        {
+            ClearSlot(_next!.Value);
+            Stats.OverflowDrops++;
+            _next = unchecked(_next.Value + 1);
+            _fadeIn = true;
+        }
+        Stats.ResampleResyncs++;
+        return true;
+    }
+
+    private static void ToFloat(ReadOnlySpan<byte> pcm, Span<float> f)
+    {
+        int n = Math.Min(f.Length, pcm.Length / 2);
+        for (int i = 0; i < n; i++) f[i] = (short)(pcm[2 * i] | (pcm[2 * i + 1] << 8)) / 32768f;
+    }
+
+    private static void FromFloat(ReadOnlySpan<float> f, Span<byte> pcm)
+    {
+        int n = Math.Min(f.Length, pcm.Length / 2);
+        for (int i = 0; i < n; i++)
+        {
+            int v = (int)Math.Round(f[i] * 32768.0);
+            if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+            pcm[2 * i] = (byte)v; pcm[2 * i + 1] = (byte)(v >> 8);
+        }
+    }
+
+    private void PullCoreLocked(Span<byte> dst)
+    {
+        int pos = 0;
         {
             long before = QueuedFramesLocked();
             if (_keepLen > _keepOff)
@@ -336,7 +466,15 @@ public sealed class JitterBuffer
             {
                 int need = dst.Length - pos;
                 int neededPackets = (need + BytesPerPacket - 1) / BytesPerPacket;
-                if (!CopyPacketLocked(_out, neededPackets)) break;
+                if (!CopyPacketLocked(_out, neededPackets))
+                {
+                    // 0.6.0: keep concealing through an underrun / rebuffer instead of fading to silence.
+                    if (!(PlcOn && _plcPlayed && _plc is { } plc)) break;
+                    plc.Lost(_plcF);
+                    FromFloat(_plcF, _out);
+                    Stats.UnderrunConcealed++;
+                    _tailPos = UnderrunFadeFrames;
+                }
                 int take = Math.Min(need, BytesPerPacket);
                 _out.AsSpan(0, take).CopyTo(dst[pos..]);
                 pos += take;
@@ -669,6 +807,10 @@ public sealed class JitterBuffer
 
     public int PendingCatchUp { get { lock (_lock) return _pendingDrop; } }
 
-    /// <summary>Current drift-lock correction in parts-per-million (positive = drop samples).</summary>
-    public double DriftPpm { get { lock (_lock) return _ppm; } }
+    /// <summary>Current drift correction in parts-per-million (positive = consume faster): the resampler's when <see cref="Resample"/> is on, else the drift lock's.</summary>
+    /// <summary>Frames queued for playback including the resampler's staged input (the drift controller's fill).</summary>
+    public double FillFrames { get { lock (_lock) return FillFramesLocked(); } }
+    /// <summary>Times the drift controller hit its hard-resync threshold (fill more than 20 ms off target).</summary>
+    public long ResampleResyncs { get { lock (_lock) return _dc.Resyncs; } }
+    public double DriftPpm { get { lock (_lock) return RsOn ? (_dc.Ratio - 1) * 1e6 : _ppm; } }
 }

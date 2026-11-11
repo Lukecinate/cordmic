@@ -9,14 +9,16 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 cleans up the voice, streams it to a Windows tray app, and the tray app plays it into a virtual audio cable that
 Discord, Zoom, OBS and games can select as a microphone.
 
-Current version: **0.5.7** ([changelog](CHANGELOG.md), [downloads](https://github.com/Lukecinate/cordmic/releases/latest)).
+Current version: **0.6.0** ([changelog](CHANGELOG.md), [downloads](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 - **Cable only.** The phone appears as a wired network adapter (RNDIS/NCM). Audio never uses Wi-Fi or the internet.
 - **Low latency.** 48 kHz mono PCM in 5 ms packets, AAudio exclusive capture where the phone grants it, a
-  jitter buffer sized to the real Windows render period, a sample-level drift lock, and CordMic's own WASAPI
-  renderer (IAudioClient3 shared or exclusive mode). Designed for roughly **30–45 ms end-to-end** (see [Latency](#latency)).
+  jitter buffer sized to the real Windows render period, a resampling drift controller, pitch-based packet-loss
+  concealment, and CordMic's own WASAPI renderer (IAudioClient3 shared or exclusive mode). Designed for roughly **30–45 ms end-to-end** (see [Latency](#latency)).
 - **Voice processing on the phone.** Voice clarity EQ, noise cancellation (Off / Light / Strong), Auto volume
   toward −18 dBFS with a gate that follows the measured noise floor, a pause expander, and a −1 dBFS peak limiter.
+- **Optional PC Studio noise reduction** (0.6.0, off by default). RNNoise on the PC with whisper protection and
+  loudness-based Auto volume; the phone then sends unprocessed voice. Adds about 30 ms.
 - **Per-phone auto-detection.** The phone probes its own capabilities (capture engines, microphones, platform
   effects, direction API, levels) and picks a capture path and starting settings. Nothing leaves the phone except
   a short summary sent to the PC over the cable. No telemetry.
@@ -162,6 +164,7 @@ by the phone (for example `Detected: SM-S721B · AAudio exclusive, 3 mics, front
 | Output mode | Auto | *Auto* picks the shortest stable period and tries Exclusive only when that is shorter. *Low latency* (shared, about one period queued), *Stable* (keeps the whole Windows buffer full; for busy PCs) or *Exclusive* (WASAPI exclusive; CordMic then owns "CABLE Input" and falls back to Low latency if refused). An explicit choice is never overwritten |
 | Latency (jitter buffer) | Normal 10 ms | Low 5 / Normal 10 / Safe 20 ms, raised automatically to what the render period needs (see [Architecture](#architecture--protocol)) |
 | Noise cancellation | Light | Off / Light / Strong (applied on the phone) |
+| PC Studio noise reduction | Off | Off / Balanced / Whisper priority / Max, run on the PC (see [PC Studio noise reduction](#pc-studio-noise-reduction-optional)) |
 | Voice clarity | On | High-pass, low-shelf and presence EQ (on the phone) |
 | Auto volume | On | Gated AGC toward −18 dBFS (on the phone) |
 | Front focus | On | Asks the phone for the mic facing the user where the capture path supports it |
@@ -175,7 +178,9 @@ by the phone (for example `Detected: SM-S721B · AAudio exclusive, 3 mics, front
 
 Voice settings changed here are applied to the phone live, and changes made on the phone show up here. A control
 that is focused, being dragged or open is not overwritten by an incoming value. A warning appears when speech stays
-below about −40 dBFS after gain.
+below about −40 dBFS after gain. Since 0.6.0 two more notices can appear under the noise settings: *Move the phone
+closer (about 15 cm) for a cleaner sound* when the estimated speech-to-noise ratio stays below 15 dB for 10 s (hidden
+again above 18 dB for 10 s), and a warning when Android reports that another app has silenced CordMic's microphone.
 
 Right-click the tray icon for **Output device**, **Output mode**, **Jitter buffer**, **Mic mode (set on the
 phone)**, **Open CordMic**, **Fix phone network priority** (shown only when internet goes through the phone; asks
@@ -196,13 +201,20 @@ A stats line looks like this (fields explained under [Python receiver](#python-r
 ```
 stats peer=… rx=… lost=0 (0.00%) late=0 plc=0 underrun=… ovf=… buf=…ms jitter=…ms rtt=…ms bufavg=…ms bufmin=…ms
       slip=… period=2.7ms jtarget=15.0ms/3pkt urate=…/min orate=…/min nc=light agc=on gain=+6dB phone=AAudio-excl dir=…
-      mics=… floor=-62dBFS gate=closed agcgain=+8.5dB exp=-6.0dB dev=…
+      mics=… floor=-62dBFS gate=closed agcgain=+8.5dB exp=-6.0dB drift=…ppm uplc=… studio=off studiocpu=-
+      studiogain=-dB snr=…dB silenced=0 devns=0 dev=…
 ```
 
 From 0.5.7 the phone also reports its voice chain: `floor` = background noise level measured before the mic gain
 (`~` until the first pause has been measured), `gate` = Auto volume gate (`open` while speaking), `agcgain` = current
 Auto volume makeup (`off` when Auto volume is off), `exp` = current pause expander gain. They show `-` with an older
 phone.
+
+From 0.6.0: `drift` = clock difference corrected by the resampler, `uplc` = underrun frames filled by concealment,
+`studio` = Studio state (`off`, a preset, `-fallback`, `-unavailable`, or `-nophoneack` when the phone has not confirmed
+the bypass), `studiocpu` = Studio processing time per 10 ms frame, `studiogain` = Studio Auto volume gain, `snr` =
+estimated speech-to-noise ratio behind the move-closer notice, `silenced` = Android silenced the phone's capture,
+`devns` = the phone suspects hidden device noise suppression (logged only).
 
 `jtarget` is the target in use, including any adaptive raise (0.5.6). `urate` / `orate` are underruns and
 overflow drops per minute.
@@ -284,6 +296,26 @@ All voice processing runs on the phone, before the packet is sent. The chain is 
 6. **Pause expander**: about −6 dB (Light) or −12 dB (Strong) while the gate is closed.
 7. **Peak limiter** at −1 dBFS.
 
+### PC Studio noise reduction (optional)
+
+Off by default. When a Studio preset is selected on the PC, the PC asks the phone (PING flag, 0.6.0 phones) to skip
+its noise suppression, gate, Auto volume and pause expander, so noise reduction is not applied twice. Mic gain, Voice
+clarity and the limiter stay on the phone. The phone's stored settings do not change and apply again as soon as Studio
+is off. On the PC, a worker thread (not the audio callback) runs:
+
+1. **RNNoise** (BSD-3, native `rnnoise.dll`) at 48 kHz, in parallel with a PC copy of the 0.5.7 Strong suppressor,
+   time-aligned to RNNoise's 20 ms delay.
+2. **WhisperGuard** mixes back toward the Strong output while RNNoise is removing a clearly present signal (a whisper
+   or a soft consonant). *Balanced* (default preset), *Whisper priority* (mixes back more, keeps whispers best) and
+   *Max* (RNNoise only, strongest cleaning, may thin whispers).
+3. **Auto volume (B3)**, when Auto volume is on: loudness (LUFS) based, toward −21 LUFS, frozen in pauses, with a
+   −1 dBFS limiter. Its gain is remembered between sessions.
+
+Added latency is about 30 ms (RNNoise 20 ms plus one 10 ms worker frame). Processing takes about 0.55 ms per 10 ms
+frame on the build machine with no per-frame allocation. If the worker misses 3 deadlines within 1 s, Studio turns off
+for the session, a notice appears and the phone's own noise cancellation is used again. With a phone older than
+0.6.0 the PC shows that the phone has not confirmed the bypass.
+
 ## Updates
 
 Both apps can **Check for updates**, and an optional **Auto update** toggle (off by default) checks at launch and
@@ -302,6 +334,9 @@ installer (Install is tapped once; "install unknown apps" may be requested). Win
 | Red, "Port busy" | Another receiver (e.g. the Python `cordmic_receiver`) is running. Close it; CordMic retries every 5 seconds |
 | Amber, "No virtual mic yet" | Use **Install VB-CABLE** in Settings; restart the PC if the device does not appear |
 | Crackle or short dropouts | Check `underrun` / `ovf` / `urate` in the log. Since 0.5.6 the target rises by itself after repeated underruns; if they continue, choose *Latency → Safe (20 ms)* and then *Output mode → Stable*. Avoid USB hubs |
+| Studio switched itself off | The PC could not keep up (3 missed deadlines in 1 s). Close heavy background apps, or use the phone's noise cancellation |
+| Voice sounds distant or muddy | Follow the *Move the phone closer* notice: about 15 cm. Noise reduction cannot remove room echo |
+| "Microphone silenced" warning | Another app (often a voice assistant or recorder) took the microphone. Close it |
 | Hiss between words | Keep Noise cancellation on Light or Strong (both lower pauses), lower Mic gain and let Auto volume do the rest. Keep the game's voice-activation threshold moderate. The log's `floor` shows the phone's background level (above about −50 dBFS is a noisy room or a high Mic gain) |
 | Voice too quiet | Move closer, raise Mic gain a few dB, and leave Auto volume on. A warning appears below about −40 dBFS |
 | Front focus shows "unsupported" | The phone's AAudio path has no direction API. Turn on *Front focus (higher latency)* to use AudioRecord, or leave it off for the lowest latency |
@@ -336,6 +371,11 @@ settings in use. Do not attach voice recordings to public issues.
   distributed outside Google Play. Version 0.3.0 used a debug key; uninstall it before installing a later version.
 - **Round-trip time is PC-side only.** The phone answers the PC's PING but does not time it, so the phone app
   shows the age of the last PC reply instead.
+- **Studio latency and loudness.** PC Studio noise reduction adds about 30 ms, more than the 12 ms target in the
+  0.6.0 plan, which is why it is opt-in. Whispers can stay a few LU below the −21 LUFS target, and bumps such as a
+  bus or keyboard can still be heard in pauses with Balanced (Max avoids that).
+- **Device checks not done on hardware.** The silenced-microphone warning and privacy-sensitive capture follow the
+  Android documentation but were not tested on a phone for this release.
 - **Android 14+ start rule.** Capture must be started from the visible app; it does not start on boot.
 
 ## Privacy and security
@@ -390,8 +430,13 @@ settings in use. Do not attach voice recordings to public issues.
   From 0.5.7 the PC sets a request bit in that block and the phone then adds a 6-byte diagnostics block (magic
   `0xC7`: pre-gain floor, gate, AGC gain, expander gain, check byte) between the name and the sync block. It is sent
   only when asked and only to the connected PC; nothing leaves the USB link. Older apps ignore the extra bytes; the
-  wire version is still 1.
-- **Jitter buffer.** Reorders packets by sequence number and conceals single gaps with a short decay. The preset
+  wire version is still 1. 0.6.0 adds a Studio bit (bit 5) to the PING flags and three diagnostics flags (capture
+  silenced, Studio bypass active, device noise suppression suspected); older peers ignore them.
+- **Jitter buffer.** Reorders packets by sequence number. Since 0.6.0 lost packets and underruns are concealed by
+  repeating the last pitch period with a 2 ms crossfade, full level for 10 ms and then a fade (silent after 30 ms of
+  continuous loss),
+  and clock drift is corrected by a cubic resampler driven by a PI controller on the buffer fill instead of sample
+  slips (the `slip` field stays 0). Before 0.6.0 single gaps were concealed with a short decay. The preset
   (Low 5 / Normal 10 / Safe 20 ms) is raised to at least two render pulls, or three packets (15 ms) when one pull
   consumes a single packet (a 2.7 ms period). Overflow trims to one period above the target; the hard cap is the
   target plus three render periods (five for a single-packet pull). A sample-level drift lock (slow PI controller,
@@ -414,7 +459,10 @@ cordmic/
 │       └── res/values[-in]/      English and Indonesian strings (+ values-night for the dark theme)
 ├── docs/                         screenshots, logo (assets/), SECURITY.md, THIRD_PARTY_NOTICES.md
 ├── third_party/fonts/            Plus Jakarta Sans + OFL license
+├── third_party/rnnoise/          rnnoise.dll (win-x64) + BSD-3 COPYING + SHA256SUMS
 ├── tools/brand/                  logo generator
+├── tools/harness/                regression harness (developer tool, not shipped; data downloaded at test time)
+├── tools/rnnoise/                pinned RNNoise build script (zig cc)
 ├── windows-app/                  Windows app, C# / .NET 8
 │   ├── src/CordMic.Core/         protocol, jitter buffer and policy, receiver, voice chain (reference),
 │   │                             settings and sync, device tuning, update logic, string tables
@@ -430,7 +478,7 @@ cordmic/
 
 The pipeline is **designed for roughly 30–45 ms end-to-end**. This is a design budget, not a measurement:
 capture ~3–10 ms + 5 ms packet + USB link 1–2 ms + 10–15 ms jitter buffer + WASAPI/VB-CABLE ~3–20 ms, plus 2.7 ms
-when Strong noise cancellation is on. Actual latency depends on the phone, the capture path and the PC audio stack.
+when Strong noise cancellation is on, or about 30 ms when PC Studio noise reduction is on. Actual latency depends on the phone, the capture path and the PC audio stack.
 *Front focus (higher latency)* and *Voice communication* add capture delay.
 
 **PC-side delay shown by the app:** network (½ round trip) + jitter buffer (time-averaged) + Windows output (the
@@ -473,8 +521,11 @@ official install.
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (149 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables |
-| Kotlin (39 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+| .NET (189 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint |
+| Kotlin (46 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+
+The release gates for noise reduction and Auto volume (DNSMOS, ESTOI, PESQ, LUFS) run on the shipping C# code through
+`tools/harness/` with data downloaded at test time; see [tools/harness/README.md](tools/harness/README.md).
 
 ## Python receiver (developer tool)
 
@@ -501,7 +552,8 @@ python -m cordmic_receiver --device "CABLE Input" --jitter-ms 10
 
 Stats fields (shared with the Windows app log): `lost` = sequence gaps, `plc` = concealed slots, `late` = packets
 that arrived after their turn, `underrun` = buffer empty, `ovf` = packets dropped because the buffer was full,
-`jitter` = arrival jitter (RFC 3550), `rtt` = PING/PONG round trip over USB, `slip` = drift-lock sample adjustments.
+`jitter` = arrival jitter (RFC 3550), `rtt` = PING/PONG round trip over USB, `slip` = drift-lock sample adjustments
+(the Windows app uses the resampler since 0.6.0, so it reports 0).
 
 Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 440 Hz test tone (`--loss` and
 `--jitter-ms` simulate a bad link).
@@ -510,6 +562,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 0.6.0 | Pitch-based packet-loss concealment, resampling drift control, optional PC Studio noise reduction (RNNoise + WhisperGuard + LUFS Auto volume), silenced-mic warning, privacy-sensitive capture, move-closer hint |
 | 0.5.7 | Smoother Strong noise reduction (spectral floor, per-band gain smoothing, whisper and consonant protection); phone noise floor, gate, Auto volume gain and expander in the PC log |
 | 0.5.6 | Pre-gain gate and continuously tracked noise floor, floor-limited AGC makeup, pause expander, gain ramp; jitter-buffer underrun fades, overflow splices and an adaptive target |
 | 0.5.5 | Front focus (higher latency) via AudioRecord, relative AGC gate, in-app updates, live two-way settings, optional official VB-CABLE download |
@@ -541,8 +594,9 @@ CordMic was previously called **UsbMic**. The audio protocol is unchanged (`UM` 
    ACX on Windows 11. Kernel drivers must be signed through Microsoft (EV certificate + attestation signing), which
    is why this is a separate milestone.
 3. **Code signing** (Authenticode) for the installer and app so SmartScreen does not warn.
-4. Better packet-loss concealment.
-5. ~~Clock-drift compensation~~ — shipped in 0.5.2 and refined in 0.5.3–0.5.4.
+4. ~~Better packet-loss concealment~~ — shipped in 0.6.0 (pitch repetition).
+5. ~~Clock-drift compensation~~ — shipped in 0.5.2, resampler-based since 0.6.0.
+6. Whisper-aware loudness for Studio Auto volume, and a stricter WhisperGuard trigger for transient noise in pauses.
 
 ## License
 

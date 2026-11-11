@@ -2,7 +2,7 @@
 
 CordMic is a local USB-tethering audio app. This page describes the privileged
 helper introduced in 0.5.2 and how to undo what it changes, and the network
-access the apps perform (current as of 0.5.7).
+access the apps perform (current as of 0.6.0).
 
 ## What the app changes
 
@@ -93,7 +93,11 @@ There is no telemetry or analytics. The phone's device probe runs locally; only
 a short capability summary and the model name are sent to the PC over the
 tethering link. From 0.5.7 the phone also reports four voice-chain levels (noise
 floor, gate state, Auto volume gain, pause expander gain) to the connected PC
-when the PC asks for them; they are written only to the local PC log. No audio
+when the PC asks for them; they are written only to the local PC log. From 0.6.0
+three more flags travel the same way (capture silenced by another app, Studio
+bypass active, device noise suppression suspected). The phone reads Android's
+recording configurations only for its own capture. PC Studio noise reduction
+runs locally (`rnnoise.dll`) and sends nothing. No audio
 or level data is sent anywhere else. The elevated `--configure-cable` / `--restore-cable` helper
 performs no network access.
 

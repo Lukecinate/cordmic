@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using CordMic.Core;
+using CordMic.Core.Dsp;
 
 namespace CordMic.App;
 
@@ -24,6 +25,8 @@ internal sealed class MainForm : Form
     private Label _periodHint = null!;
     private Label _detected = null!;
     private Label _speechLow = null!;
+    private ComboBox _studio = null!;
+    private Label _studioNote = null!;
     private Label _updateStatus = null!;
     private Button _optimize = null!;
     private Button _installCable = null!;
@@ -171,6 +174,22 @@ internal sealed class MainForm : Form
         {
             if (!_suppress && ncBox.SelectedItem is NcModeItem it) _app.SetNoiseMode(it.Mode);
         };
+
+        _studio = Combo(p, x, ref y, w, L.T("ui.studio"));
+        _studio.Items.Add(new StudioItem(StudioPreset.Off, L.T("ui.studio.off")));
+        _studio.Items.Add(new StudioItem(StudioPreset.Balanced, L.T("ui.studio.balanced")));
+        _studio.Items.Add(new StudioItem(StudioPreset.Whisper, L.T("ui.studio.whisper")));
+        _studio.Items.Add(new StudioItem(StudioPreset.Max, L.T("ui.studio.max")));
+        _studio.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_suppress && _studio.SelectedItem is StudioItem it) { _app.SetStudioPreset(it.Preset); RefreshFromApp(); }
+        };
+        _studioNote = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = false,
+            Location = new Point(x, y - Sx(6)), Width = w, Height = Sx(48), BackColor = Theme.Surface, Visible = false,
+        };
+        y += Sx(44);
 
         clarity = new CheckBox
         {
@@ -356,6 +375,8 @@ internal sealed class MainForm : Form
         p.Controls.Add(latency);
         p.Controls.Add(outMode);
         p.Controls.Add(ncMode);
+        p.Controls.Add(_studio);
+        p.Controls.Add(_studioNote);
         p.Controls.Add(clarity);
         p.Controls.Add(autoVol);
         p.Controls.Add(frontFocus);
@@ -475,6 +496,14 @@ internal sealed class MainForm : Form
             if (CanWrite(_autoVol) && _autoVol.Checked != _app.DisplayedAutoVolume) _autoVol.Checked = _app.DisplayedAutoVolume;
             if (CanWrite(_frontFocus) && _frontFocus.Checked != _app.DisplayedFrontFocus) _frontFocus.Checked = _app.DisplayedFrontFocus;
             if (CanWrite(_frontFocusAr) && _frontFocusAr.Checked != _app.DisplayedFrontFocusAr) _frontFocusAr.Checked = _app.DisplayedFrontFocusAr;
+            SelectCombo(_studio, i => _studio.Items[i] is StudioItem it && it.Preset == _app.DisplayedStudio);
+            var notes = new List<string>();
+            if (_app.MicSilenced) notes.Add(L.T("ui.mic.silenced"));
+            if (!string.IsNullOrEmpty(_app.StudioNotice)) notes.Add(_app.StudioNotice);
+            if (_app.MoveCloserHint) notes.Add(L.T("ui.hint.closer"));
+            _studioNote.Text = string.Join("\n", notes);
+            _studioNote.Visible = notes.Count > 0;
+            _studioNote.ForeColor = _app.MicSilenced || _app.MoveCloserHint || _app.StudioNotice != L.T("ui.studio.on") ? Theme.Amber : Theme.Muted;
             _speechLow.Visible = _app.SpeechLow;
             _speechLow.Text = L.T("ui.speechLow");
             if (_speechLow.Visible) _speechLow.Height = Sx(36);
@@ -574,6 +603,7 @@ internal sealed class MainForm : Form
     private sealed record PresetItem(JitterPreset Preset, string Label) { public override string ToString() => Label; }
     private sealed record OutModeItem(OutputMode Mode, string Label) { public override string ToString() => Label; }
     private sealed record NcModeItem(NoiseMode Mode, string Label) { public override string ToString() => Label; }
+    private sealed record StudioItem(StudioPreset Preset, string Label) { public override string ToString() => Label; }
     private sealed record DeviceItem(RenderDevice? Device, string Label) { public override string ToString() => Label; }
 }
 

@@ -26,6 +26,11 @@ public sealed class AppSettings
     public bool VoiceClarity { get; set; } = true;
     /// <summary>Automatic makeup gain toward −18 dBFS, with a noise gate so silence is not boosted.</summary>
     public bool AutoVolume { get; set; } = true;
+    /// <summary>0.6.0: PC Studio noise reduction preset. Off keeps the 0.5.7 phone-side processing.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public CordMic.Core.Dsp.StudioPreset StudioPreset { get; set; } = CordMic.Core.Dsp.StudioPreset.Off;
+    /// <summary>0.6.0: Studio auto-volume gain at the end of the last session (next session's start gain), dB.</summary>
+    public double StudioAgcGainDb { get; set; } = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
     /// <summary>Ask the phone to prefer the user-facing microphone. Default on; unsupported phones no-op.</summary>
     public bool FrontFocus { get; set; } = true;
     /// <summary>Use the AudioRecord path so front focus can actually be applied (AAudio has no direction API).</summary>
@@ -65,6 +70,9 @@ public sealed class AppSettings
         if (!NoiseCancellation) NoiseMode = NoiseMode.Off;
         else if (NoiseMode == NoiseMode.Off) NoiseMode = NoiseMode.Light;
         NoiseCancellation = NoiseMode != NoiseMode.Off;
+        if (!Enum.IsDefined(StudioPreset)) StudioPreset = CordMic.Core.Dsp.StudioPreset.Off;
+        if (double.IsNaN(StudioAgcGainDb) || double.IsInfinity(StudioAgcGainDb)) StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
+        StudioAgcGainDb = Math.Clamp(StudioAgcGainDb, CordMic.Core.Dsp.AgcB3.GMin, CordMic.Core.Dsp.AgcB3.GMax);
     }
 
     public void ResetAudioDefaults()
@@ -76,6 +84,8 @@ public sealed class AppSettings
         FrontFocus = true;
         FrontFocusAudioRecord = false;
         MicGainDb = VoiceChain.DefaultGainDb;
+        StudioPreset = CordMic.Core.Dsp.StudioPreset.Off;
+        StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
     }
 
     public void Save(string path)

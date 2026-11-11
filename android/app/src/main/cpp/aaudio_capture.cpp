@@ -4,12 +4,21 @@
 #include <aaudio/AAudio.h>
 #include <android/log.h>
 #include <vector>
+#include <dlfcn.h>
 
 #define TAG "CordMicNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 static AAudioStream *gStream = nullptr;
+
+// AAudioStreamBuilder_setPrivacySensitive is API 30; minSdk is 29, so look it up at run time (0.6.0).
+// A privacy-sensitive capture cannot be silenced or taken over by the Assistant hotword or another app.
+using SetPrivacyFn = void (*)(AAudioStreamBuilder *, bool);
+static void setPrivacySensitive(AAudioStreamBuilder *b) {
+    static SetPrivacyFn fn = reinterpret_cast<SetPrivacyFn>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setPrivacySensitive"));
+    if (fn) fn(b, true);
+}
 static std::vector<int16_t> gTmp;
 
 extern "C" JNIEXPORT jint JNICALL
@@ -28,6 +37,7 @@ Java_dev_cordmic_AAudioCapture_nativeOpen(JNIEnv *, jclass, jint sampleRate, jin
         AAudioStreamBuilder_setSampleRate(b, sampleRate);
         AAudioStreamBuilder_setChannelCount(b, channels);
         AAudioStreamBuilder_setInputPreset(b, inputPreset);  // API 28+
+        setPrivacySensitive(b);                              // API 30+, no-op before
         if (capCapacity) AAudioStreamBuilder_setBufferCapacityInFrames(b, sampleRate / 50); // 20 ms ceiling
         hr = AAudioStreamBuilder_openStream(b, &gStream);
         AAudioStreamBuilder_delete(b);

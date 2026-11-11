@@ -76,6 +76,13 @@ class Streamer(context: Context, private val cfg: Config) {
     val sync = SyncClock()
     val detectedSummary: String get() = DeviceProbe.summary
     private val platformNs = PlatformNs()
+    /** 0.6.0: the PC runs Studio noise reduction (FLAG_STUDIO on the last PING); cleared when the PC goes quiet. */
+    @Volatile var pcStudio: Boolean = false; private set
+    private val silenceWatch = SilenceWatch(ctx)
+    /** 0.6.0: Android silenced this capture because another app uses the microphone. */
+    val micSilenced: Boolean get() = silenceWatch.silenced
+    private val nsCheck = NsSuspectDetector(blockMs = maxOf(1, cfg.frames * 1000 / cfg.sampleRate))
+    @Volatile private var nsSuspected = false
     val noiseLatencyMs: Double get() = voice.noiseLatencyMs
     @Volatile var sent = 0L; private set
     @Volatile var sendErrors = 0L; private set
@@ -88,6 +95,7 @@ class Streamer(context: Context, private val cfg: Config) {
         DeviceProbe.ensureStarted(ctx)
         DeviceProbe.refresh(ctx, tryOpen = false, reason = "session")
         DeviceProbe.markCaptureActive(true)
+        silenceWatch.start() // before the capture thread calls startRecording()
         cfg.manualHost?.takeIf { it.isNotBlank() }?.let {
             target = InetSocketAddress(InetAddress.getByName(it.trim()), cfg.port) // numeric IP: no DNS
         }
@@ -107,6 +115,7 @@ class Streamer(context: Context, private val cfg: Config) {
         sock?.close(); sock = null
         ctlThread?.join(1000)
         state = State.STOPPED; targetAddress = null
+        silenceWatch.stop()
         DeviceProbe.markCaptureActive(false)
     }
 
@@ -267,18 +276,21 @@ class Streamer(context: Context, private val cfg: Config) {
                     }
                 }
             }
+            if (!nsCheck.done) {
+                val (sumSq, pk) = DeviceProbe.measureBlock(buf, Protocol.HEADER_SIZE, n)
+                nsCheck.feed(DeviceProbe.rmsDbfs(sumSq, n), speech = pk > 1000)
+                if (nsCheck.suspected && !nsSuspected) { nsSuspected = true; Log.i(TAG, "device NS suspected (room tone fell > 8 dB after start)") }
+            }
             // Light uses the platform suppressor when it is available (no extra delay).
             // Strong uses only our STFT so the two modes stay audibly different.
-            val wantNs = noiseMode == NoiseMode.LIGHT
-            platformNs.apply(engine.sessionId(), wantNs)
-            voice.mode = when {
-                noiseMode == NoiseMode.STRONG -> NoiseMode.STRONG
-                noiseMode == NoiseMode.LIGHT && platformNs.active -> NoiseMode.OFF
-                else -> noiseMode
-            }
-            voice.expander = noiseMode // pause expander follows the user's choice, even with the platform suppressor
+            // With PC Studio (0.6.0) everything but gain, clarity EQ and the limiter is bypassed (voicePlan).
+            val studio = pcStudio && SystemClock.elapsedRealtime() - lastHeard < 3000
+            platformNs.apply(engine.sessionId(), voicePlan(noiseMode, agc, studio, false).platformNs)
+            val plan = voicePlan(noiseMode, agc, studio, platformNs.active)
+            voice.mode = plan.mode
+            voice.expander = plan.expander // pause expander follows the user's choice, even with the platform suppressor
             voice.voiceClarity = voiceClarity
-            voice.agc = agc
+            voice.agc = plan.agc
             voice.gainDb = gainDb
             voice.process(buf, Protocol.HEADER_SIZE, n)
             // Level meter after gain, so the bar matches what the PC receives.
@@ -319,6 +331,8 @@ class Streamer(context: Context, private val cfg: Config) {
         if (payload != null) {
             peerSync = true
             wantDiag = payload.wantDiag
+            if (pcStudio != payload.studio) Log.i(TAG, if (payload.studio) "PC Studio on: sending raw capture" else "PC Studio off")
+            pcStudio = payload.studio
             fun take(field: SyncField, apply: () -> Unit) {
                 val remote = payload.revs[field.ordinal]
                 if (SettingsSync.shouldApply(sync[field], remote)) {
@@ -394,7 +408,8 @@ class Streamer(context: Context, private val cfg: Config) {
                             speechLow = speechLow,
                             sync = if (peerSync) sync else null,
                             voiceClarity = voiceClarity,
-                            diag = if (peerSync && wantDiag) voice.diagnostics else null,
+                            diag = if (peerSync && wantDiag) voice.diagnostics.copy(
+                                silenced = micSilenced, studioBypass = pcStudio, nsSuspected = nsSuspected) else null,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

@@ -120,7 +120,7 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
     override fun open(): Boolean {
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (min <= 0) return false
-        val r = AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min * 2)
+        val r = build(min * 2) ?: return false
         if (r.state != AudioRecord.STATE_INITIALIZED) { r.release(); return false }
         r.startRecording()
         dirCode = applyFrontFocus(r, frontFocus)
@@ -129,6 +129,22 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
         } catch (_: Throwable) { 0 }
         rec = r
         return true
+    }
+
+    /** API 30+: privacy-sensitive capture (the Assistant hotword or another app cannot silence or take it). */
+    @SuppressLint("MissingPermission")
+    private fun build(bytes: Int): AudioRecord? = try {
+        if (Build.VERSION.SDK_INT >= 30) {
+            AudioRecord.Builder()
+                .setAudioSource(source)
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(rate)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                .setBufferSizeInBytes(bytes)
+                .setPrivacySensitive(true)
+                .build()
+        } else AudioRecord(source, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bytes)
+    } catch (t: Throwable) {
+        Log.w("CordMic", "AudioRecord: $t"); null
     }
 
     override fun read(dst: ByteArray, off: Int, frames: Int): Int {
@@ -146,25 +162,9 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
 
 
 /** Apply the Android 10+ front-facing mic preference. Never throws; returns the dir code (0 off, 1 front, 2 unsupported). */
-internal fun applyFrontFocus(rec: AudioRecord, want: Boolean): Int {
-    if (!want) return 0
-    if (Build.VERSION.SDK_INT < 29) return 2
-    return try {
-        val ok = rec.setPreferredMicrophoneDirection(MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
-        try { rec.setPreferredMicrophoneFieldDimension(1.0f) } catch (t: Throwable) {
-            Log.w("CordMic", "mic field: $t")
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= 28) {
-                val active = rec.activeMicrophones
-                Log.i("CordMic", "activeMicrophones=${active.size}")
-            }
-        } catch (t: Throwable) {
-            Log.w("CordMic", "activeMicrophones: $t")
-        }
-        if (ok) 1 else 2
-    } catch (t: Throwable) {
-        Log.w("CordMic", "front focus: $t")
-        2
-    }
-}
+internal fun applyFrontFocus(rec: AudioRecord, want: Boolean): Int =
+    applyFrontFocusOps(Build.VERSION.SDK_INT, want, object : MicDirectionOps {
+        override fun setDirectionTowardsUser() = rec.setPreferredMicrophoneDirection(MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
+        override fun setFieldDimensionNarrow() { rec.setPreferredMicrophoneFieldDimension(1.0f) }
+        override fun activeMicrophoneCount() = rec.activeMicrophones.size
+    }) { Log.i("CordMic", it) }

@@ -480,4 +480,10 @@ data class VoiceDiag(
     val agcGainDb: Double,
     val expanderDb: Double,
     val floorKnown: Boolean,
+    /** 0.6.0: Android reports this capture as silenced by another app (isClientSilenced). */
+    val silenced: Boolean = false,
+    /** 0.6.0: suppression, gate, AGC and expander are bypassed because the PC runs Studio noise reduction. */
+    val studioBypass: Boolean = false,
+    /** 0.6.0: room tone fell sharply right after start with no speech: the device may apply hidden noise suppression. */
+    val nsSuspected: Boolean = false,
 )

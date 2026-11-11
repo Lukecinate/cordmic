@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using CordMic.Core;
+using CordMic.Core.Dsp;
 
 namespace CordMic.App;
 
@@ -77,6 +78,23 @@ internal sealed class AppController : ApplicationContext
         }
     }
     public int DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
+    public StudioPreset DisplayedStudio => _settings.StudioPreset;
+    /// <summary>One-line Studio state for the settings panel, or "" when Studio is off.</summary>
+    public string StudioNotice
+    {
+        get
+        {
+            if (_settings.StudioPreset == StudioPreset.Off || _rx is not { } rx) return "";
+            if (_studioFellBack) return L.T("ui.studio.fallback");
+            if (!rx.StudioActive) return L.T("ui.studio.unavailable", rx.StudioUnavailableReason ?? "-");
+            if (rx.Peer is not null && rx.Phone.Known && !rx.Phone.StudioBypass) return L.T("ui.studio.noAck");
+            return L.T("ui.studio.on");
+        }
+    }
+    public bool MoveCloserHint => _rx is { } rx && rx.Peer is not null && rx.MoveCloserHint;
+    public bool MicSilenced => _rx is { } rx && rx.Peer is not null && rx.Phone.Silenced;
+    private bool _studioFellBack;
+    private DateTime _nextStudioGainSave = DateTime.MinValue;
     public string DetectedSummary => _rx?.Phone.Known == true ? _rx.Phone.DetectedSummary : "";
 
     /// <summary>Name of the output the controller would open right now, for the connect window.</summary>
@@ -155,6 +173,10 @@ internal sealed class AppController : ApplicationContext
             _rx = rx;
             _rxError = null;
             rx.PeerChanged += p => _ui.Post(_ => OnPeerChanged(p), null);
+            rx.StudioThreadInit = Native.BoostAudioThread;
+            rx.StudioFellBack += why => _ui.Post(_ => OnStudioFellBack(why), null);
+            if (_settings.StudioPreset != StudioPreset.Off && !_studioFellBack)
+                rx.ConfigureStudio(_settings.StudioPreset, _settings.AutoVolume, _settings.StudioAgcGainDb);
             UpdateProbes();
             if (_audio.ActiveId is null) _nextAudioTry = DateTime.MinValue;
         }
@@ -246,19 +268,39 @@ internal sealed class AppController : ApplicationContext
                 ToolTipIcon.Warning);
     }
 
+    private void OnStudioFellBack(string why)
+    {
+        _studioFellBack = true;
+        Log("studio: switched to phone noise cancellation for this session (" + why + ")");
+        _tray.ShowBalloonTip(5000, "CordMic", L.T("balloon.studio.fallback"), ToolTipIcon.Warning);
+    }
+
+    /// <summary>Persist the Studio auto-volume gain (the next session starts from it, spec §4).</summary>
+    private void SaveStudioGain(bool force)
+    {
+        if (_rx is not { } rx || !rx.StudioActive || !_settings.AutoVolume) return;
+        double g = rx.StudioAgcGainDb;
+        if (double.IsNaN(g)) return;
+        if (!force && (DateTime.UtcNow < _nextStudioGainSave || Math.Abs(g - _settings.StudioAgcGainDb) < 0.5)) return;
+        _nextStudioGainSave = DateTime.UtcNow.AddSeconds(30);
+        _settings.StudioAgcGainDb = Math.Round(g, 1);
+        Save();
+    }
+
     private void UpdateStats()
     {
         if (_rx is null) { Stats = null; return; }
         var s = _rx.Snapshot();
         Stats = s;
         AbsorbPhoneEcho(s.Phone);
+        SaveStudioGain(force: false);
         var now = DateTime.UtcNow;
         _lossWin.Enqueue((now, s.Expected, s.Lost));
         while (_lossWin.Count > 1 && now - _lossWin.Peek().t > TimeSpan.FromSeconds(10)) _lossWin.Dequeue();
         var first = _lossWin.Peek();
         long de = s.Expected - first.exp, dl = s.Lost - first.lost;
         RecentLossPct = de > 0 && dl >= 0 ? 100.0 * dl / de : 0;
-        _parts = s.Peer is null ? null : new LatencyParts((s.RttMs ?? 1) / 2, s.BufferMs, _audio.OutputMs());
+        _parts = s.Peer is null ? null : new LatencyParts((s.RttMs ?? 1) / 2, s.BufferMs + (_rx.StudioActive ? StudioProcessor.AddedLatencyMs : 0), _audio.OutputMs());
         if (s.Peer is not null && now >= _nextStatsLog)
         {
             _nextStatsLog = now.AddSeconds(10);
@@ -637,6 +679,18 @@ internal sealed class AppController : ApplicationContext
         Log("noise cancellation -> " + mode.ToString().ToLowerInvariant());
     }
 
+    /// <summary>0.6.0: PC Studio noise reduction (Off = 0.5.7 behaviour, phone-side processing).</summary>
+    public void SetStudioPreset(StudioPreset preset)
+    {
+        if (_settings.StudioPreset == preset) return;
+        SaveStudioGain(force: true);
+        _settings.StudioPreset = preset;
+        _studioFellBack = false;
+        Save();
+        _rx?.ConfigureStudio(preset, _settings.AutoVolume, _settings.StudioAgcGainDb);
+        Log("studio -> " + preset.ToString().ToLowerInvariant());
+    }
+
     public void SetVoiceClarity(bool on)
     {
         if (_settings.VoiceClarity == on) return;
@@ -653,7 +707,11 @@ internal sealed class AppController : ApplicationContext
         _settings.AutoVolume = on;
         NoteLocalSettingsChanged();
         Save();
-        if (_rx is { } rx) { rx.Agc = on; rx.NotifyLinkControlChanged(SyncField.Agc); }
+        if (_rx is { } rx)
+        {
+            rx.Agc = on; rx.NotifyLinkControlChanged(SyncField.Agc);
+            if (_settings.StudioPreset != StudioPreset.Off && !_studioFellBack) rx.ConfigureStudio(_settings.StudioPreset, on, _settings.StudioAgcGainDb);
+        }
         Log("auto volume -> " + (on ? "on" : "off"));
     }
 
@@ -704,10 +762,12 @@ internal sealed class AppController : ApplicationContext
     public void ResetAudioSettings()
     {
         _settings.ResetAudioDefaults();
+        _studioFellBack = false;
         NoteLocalSettingsChanged();
         Save();
         if (_rx is { } rx)
         {
+            rx.ConfigureStudio(StudioPreset.Off, _settings.AutoVolume, _settings.StudioAgcGainDb);
             rx.NoiseMode = _settings.NoiseMode;
             rx.VoiceClarity = _settings.VoiceClarity;
             rx.FrontFocus = _settings.FrontFocus;
@@ -747,6 +807,7 @@ internal sealed class AppController : ApplicationContext
     public void Quit()
     {
         _timer.Stop();
+        SaveStudioGain(force: true);
         _tray.Visible = false;
         _window?.Close();
         _audio.Dispose();
@@ -831,6 +892,9 @@ internal sealed class AppController : ApplicationContext
         }
 
         if (!SettingsPresentation.ShouldAcceptPhoneEcho(_lastLocalSettingsUtc, DateTime.UtcNow)) return;
+        // With Studio on the phone bypasses its own suppression and AGC for the session; a pre-0.6.0-style echo of
+        // that state must not overwrite the user's phone settings (0.6.0 phones keep reporting the stored values).
+        if (_rx?.StudioActive == true) return;
 
         bool staleChanged = false;
         var ncLegacy = SettingsPresentation.NoiseModeFromPhone(phone.NoiseCancellation, phone.NoiseBits, _settings.NoiseMode);
