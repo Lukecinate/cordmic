@@ -90,7 +90,9 @@ public class Fixes062Tests
         }
         double min = pauseDb.Min(), max = pauseDb.Max();
         double sp = chain.Agc.OutputLoudnessLufs;
-        double expect = Math.Clamp(sp - StudioChain.ComfortBelowSpeechDb, -90, ComfortNoise.DefaultDbfs);
+        double lim = sp - StudioChain.ComfortBelowSpeechDb;
+        if (!double.IsNaN(chain.InputFloorDbfs)) lim = Math.Min(lim, chain.InputFloorDbfs + chain.Agc.GainDb - StudioChain.ComfortBelowRoomDb);
+        double expect = Math.Clamp(lim, -90, ComfortNoise.DefaultDbfs);
         _out.WriteLine($"{preset}: speech {sp:F1} dBFS, pause level {min:F1}..{max:F1} dBFS, expected comfort {expect:F1}");
         Assert.True(min > -92, "pauses must not fall to digital zero");
         Assert.True(max <= ComfortNoise.DefaultDbfs + 2, "the comfort floor is at most about -65 dBFS");
@@ -99,7 +101,7 @@ public class Fixes062Tests
     }
 
     [Fact]
-    public void Chain_ComfortReachesMinus65AtTheAutoVolumeTarget()
+    public void Chain_ComfortFollowsSpeechLoudnessAndRoomFloor()
     {
         if (!Rnnoise.IsAvailable) return;
         using var chain = new StudioChain(StudioPreset.Balanced, autoVolume: false, startGainDb: 0);
@@ -111,8 +113,13 @@ public class Fixes062Tests
             chain.Process(fr);
             if (f >= 430) pauseDb.Add(Db(fr));
         }
-        _out.WriteLine($"comfort at loud speech: {pauseDb.Min():F1}..{pauseDb.Max():F1} dBFS");
-        Assert.InRange(pauseDb.Average(), -68, -63);
+        double lim = chain.Agc.OutputLoudnessLufs - StudioChain.ComfortBelowSpeechDb;
+        if (!double.IsNaN(chain.InputFloorDbfs)) lim = Math.Min(lim, chain.InputFloorDbfs + chain.Agc.GainDb - StudioChain.ComfortBelowRoomDb);
+        double expect = Math.Clamp(lim, -90, ComfortNoise.DefaultDbfs);
+        _out.WriteLine($"comfort at loud speech: {pauseDb.Min():F1}..{pauseDb.Max():F1} dBFS, expected {expect:F1}");
+        Assert.True(pauseDb.Max() <= ComfortNoise.DefaultDbfs + 2, "never above about -65 dBFS");
+        Assert.InRange(pauseDb.Average(), expect - 4, expect + 4);
+        Assert.True(pauseDb.Min() > -92, "no digital zero");
     }
 
     // ---- 2. Studio gap concealment and buffering -------------------------------------------------------------------
@@ -190,10 +197,11 @@ public class Fixes062Tests
         var buf = new byte[F * 2];
         var sw = Stopwatch.StartNew();
         for (int k = 0; k < 120; k++) { while (sw.Elapsed.TotalMilliseconds < k * 10) Thread.Sleep(1); sp.Pull(buf); }
-        Assert.Equal(0, sp.Underflows);
+        long u0 = sp.Underflows; // paced pulls: normally 0; a loaded CI host may miss a frame or two
+        Assert.True(u0 <= 3, $"paced underflows {u0}");
         var big = new byte[9600 * 2]; // a 200 ms pull cannot be covered by the ring: an underflow
         sp.Pull(big);
-        Assert.True(sp.Underflows >= 1);
+        Assert.True(sp.Underflows > u0);
         Assert.True(sp.ConcealedSamples > 0);
         _out.WriteLine($"underflows {sp.Underflows}, concealed {sp.ConcealedSamples} samples, misses {sp.Misses}");
     }

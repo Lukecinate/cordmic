@@ -316,7 +316,7 @@ dimatikan. Di PC, sebuah worker thread (bukan callback audio) menjalankan:
 3. **Volume otomatis (B3)**, bila Volume otomatis aktif: berbasis loudness (LUFS), menuju −21 LUFS, dibekukan saat
    jeda, dengan limiter −1 dBFS. Gain dibatasi agar latar yang dikuatkan tetap di −60 dBFS atau lebih rendah. Gain-nya
    diingat antarsesi, paling tinggi +15 dB.
-4. **Lantai nyaman** (0.6.2): lapisan noise sangat pelan, 45 dB di bawah loudness ucapan keluaran, paling tinggi −65 dBFS, sehingga jeda tidak pernah
+4. **Lantai nyaman** (0.6.2): lapisan noise sangat pelan, 55 dB di bawah loudness ucapan keluaran (paling tinggi −65 dBFS dan di bawah noise ruangan), sehingga jeda tidak pernah
    jatuh ke sunyi digital dan lompatan antara ucapan dan jeda tetap kecil.
 
 Tambahan latensi sekitar 40 ms (RNNoise 20 ms ditambah dua frame worker 10 ms; satu frame sebelum 0.6.2). Pemrosesan memakan sekitar 0,55 ms

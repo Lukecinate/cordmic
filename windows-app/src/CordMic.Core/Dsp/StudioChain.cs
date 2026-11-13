@@ -3,7 +3,7 @@ namespace CordMic.Core.Dsp;
 /// <summary>
 /// PC-side Studio noise reduction for one 48 kHz mono stream, 480-sample frames (0.6.0 spec §3–4):
 /// RNNoise in parallel with a PC instance of the 0.5.7 Strong suppressor, WhisperGuard mix (Balanced / Whisper)
-/// or the Max blend, then the B3 loudness AGC and the −1 dBFS limiter, then (0.6.2) a −65 dBFS comfort-noise floor. The input and the Strong output are delayed
+/// or the Max blend, then the B3 loudness AGC and the −1 dBFS limiter, then (0.6.2) a comfort-noise floor (at most −65 dBFS). The input and the Strong output are delayed
 /// to line up with RNNoise. Allocation-free after construction; not thread-safe (one worker thread owns it).
 /// </summary>
 public sealed class StudioChain : IDisposable
@@ -32,7 +32,21 @@ public sealed class StudioChain : IDisposable
     /// <summary>Comfort floor on (default; settable for evaluation).</summary>
     public bool ComfortEnabled { get; set; } = true;
     /// <summary>Comfort level relative to the running output speech level, in dB.</summary>
-    public const double ComfortBelowSpeechDb = 45, ComfortInitialDbfs = -75;
+    public const double ComfortBelowSpeechDb = 55, ComfortInitialDbfs = -75, ComfortBelowRoomDb = 10;
+    private double _inFloorDb = double.NaN, _inMin = double.MaxValue;
+    private int _inFrames;
+    /// <summary>Minimum-statistics floor of the raw input (non-silent frames), dBFS; NaN until measured.</summary>
+    public double InputFloorDbfs => _inFloorDb;
+
+    private void TrackInputFloor(ReadOnlySpan<float> x)
+    {
+        double p = 0;
+        for (int i = 0; i < x.Length; i++) p += x[i] * (double)x[i];
+        double l = 10 * Math.Log10(p / x.Length + 1e-20);
+        if (l < -100) return; // digital silence is not a room floor
+        if (_inFrames < 30) { _inFrames++; _inMin = Math.Min(_inMin, l); _inFloorDb = _inMin; return; }
+        _inFloorDb = l < _inFloorDb ? l : _inFloorDb + 0.03; // falls at once, rises 3 dB/s
+    }
     /// <summary>Comfort offset in use (default <see cref="ComfortBelowSpeechDb"/>; settable for evaluation).</summary>
     public double ComfortBelowDbUsed { get; set; } = ComfortBelowSpeechDb;
     public WhisperGuard? Guard => _guard;
@@ -60,6 +74,7 @@ public sealed class StudioChain : IDisposable
     public void Process(Span<float> x)
     {
         if (x.Length != Frame) throw new ArgumentException("frame length", nameof(x));
+        TrackInputFloor(x);
         LastVad = _rn.Process(x, _r);
         if (_guard is not null)
         {
@@ -76,10 +91,13 @@ public sealed class StudioChain : IDisposable
         _agc.Process(_y, LastVad);
         if (ComfortEnabled)
         {
-            // Comfort level follows the output speech loudness: 45 dB below it, at most −65 dBFS (Auto volume at −21 LUFS
-            // gives about −66), at least −90 dBFS. It never depends on the pause itself, so it cannot pump.
+            // Comfort level: 55 dB below the output speech loudness, at most −65 dBFS (about −76 at the −21 LUFS Auto
+            // volume target; 45 dB cost about 0.2 PESQ in quiet rooms), and never more than the room's own noise floor (input floor + gain) minus 10 dB, so a quiet
+            // room is not made noisier. At least −90 dBFS. It never follows the pause itself, so it cannot pump.
             double sp = _agc.OutputLoudnessLufs;
-            double lvl = double.IsNaN(sp) ? ComfortInitialDbfs : Math.Clamp(sp - ComfortBelowDbUsed, -90, ComfortNoise.DefaultDbfs);
+            double lvl = double.IsNaN(sp) ? ComfortInitialDbfs : sp - ComfortBelowDbUsed;
+            if (!double.IsNaN(_inFloorDb)) lvl = Math.Min(lvl, _inFloorDb + _agc.GainDb - ComfortBelowRoomDb);
+            lvl = Math.Clamp(lvl, -90, ComfortNoise.DefaultDbfs);
             _cn.SetLevel(lvl);
             _cn.AddTo(_y);
         }

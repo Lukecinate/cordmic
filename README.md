@@ -314,7 +314,7 @@ is off. On the PC, a worker thread (not the audio callback) runs:
 3. **Auto volume (B3)**, when Auto volume is on: loudness (LUFS) based, toward −21 LUFS, frozen in pauses, with a
    −1 dBFS limiter. The gain is capped so the boosted background stays at or below −60 dBFS. Its gain is remembered
    between sessions, at most +15 dB.
-4. **Comfort floor** (0.6.2): a very low noise bed 45 dB below the output speech loudness, at most −65 dBFS, so pauses never drop to digital silence
+4. **Comfort floor** (0.6.2): a very low noise bed 55 dB below the output speech loudness (at most −65 dBFS, and below the room's own noise), so pauses never drop to digital silence
    and the step between speech and pauses stays small.
 
 Added latency is about 40 ms (RNNoise 20 ms plus two 10 ms worker frames; one frame before 0.6.2). Processing takes about 0.55 ms per 10 ms

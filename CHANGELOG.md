@@ -11,8 +11,8 @@ release APK is signed with the same key as 0.6.1. The Windows installer is not A
 ### Fixed
 - **Studio Balanced no longer "breathes" in pauses.** WhisperGuard opens only after the signal has been present for
   300 ms (or RNNoise reports voice) and its mix releases over about 200 ms instead of 100 ms. A comfort floor is
-  added after Auto volume, 45 dB below the output speech loudness and at most −65 dBFS (about −66 dBFS at the
-  −21 LUFS Auto volume target), so pauses never fall to digital silence and the level step between words and
+  added after Auto volume, 55 dB below the output speech loudness, at most −65 dBFS and never above the room's own
+  noise floor minus 10 dB (about −76 dBFS at the −21 LUFS Auto volume target), so pauses never fall to digital silence and the level step between words and
   pauses stays small (all Studio presets).
 - **Short holes in Studio output.** The worker now keeps two 10 ms frames ready instead of one (Studio adds about
   40 ms instead of 30 ms; the preset labels say so). A render pull that still finds the buffer short repeats the last
