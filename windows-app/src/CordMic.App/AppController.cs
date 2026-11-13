@@ -19,7 +19,8 @@ internal sealed record LatencyParts(double NetworkMs, double BufferMs, double Ou
 }
 
 /// <summary>
-/// Tray-resident controller. Owns the UDP receiver (bound once on 0.0.0.0 so adapters can come and go),
+/// Tray-resident controller. Owns the UDP receiver (bound once on 0.0.0.0 so adapters can come and go; since 0.6.1
+/// it accepts packets only from the USB tethering subnet and loopback, see <see cref="SourcePolicy"/>),
 /// the WASAPI output, the tether-adapter watcher and the tray menu. Everything mutable runs on the UI thread;
 /// background events are marshalled with SynchronizationContext.Post.
 /// </summary>
@@ -111,12 +112,14 @@ internal sealed class AppController : ApplicationContext
         Directory.CreateDirectory(Paths.LogDir);
         _log = new FileLog(Paths.Log);
         var migrated = Migration.Run();
-        _settings = AppSettings.Load(Paths.Settings);
+        _settings = AppSettings.Load(Paths.Settings, out var settingsProblem);
         ApplyLanguage();
         Log($"CordMic {Application.ProductVersion} start, exe={Paths.ExePath}");
         foreach (var m in migrated) Log(m);
+        if (settingsProblem is not null) Log(settingsProblem);
+        RebuildPairingKey();
 
-        _audio = new AudioEngine();
+        _audio = new AudioEngine { Log = Log };
         _audio.Failed += why => _ui.Post(_ => OnAudioFailed(why), null);
         _net.Changed += OnAdapterChanged;
 
@@ -124,6 +127,7 @@ internal sealed class AppController : ApplicationContext
         _tray = new NotifyIcon { ContextMenuStrip = _menu, Text = "CordMic", Visible = true };
         _tray.Icon = IconFor(Health.Waiting);
         _tray.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowWizard(); };
+        _tray.BalloonTipClicked += (_, _) => { if (_staged is not null) _ = InstallStagedUpdateAsync(); };
 
         _timer = new System.Windows.Forms.Timer { Interval = 500 };
         _timer.Tick += (_, _) => Tick();
@@ -166,6 +170,7 @@ internal sealed class AppController : ApplicationContext
             FrontFocusAudioRecord = _settings.FrontFocusAudioRecord,
             Agc = _settings.AutoVolume,
             MicGainDb = Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb),
+            Policy = CurrentPolicy(),
         };
         try
         {
@@ -254,6 +259,54 @@ internal sealed class AppController : ApplicationContext
     {
         var a = _net.Current;
         _rx?.SetProbeTargets(a?.PhoneIp is { } ip ? new[] { new IPEndPoint(ip, _settings.Port) } : Array.Empty<IPEndPoint>());
+        if (_rx is { } rx) rx.Policy = CurrentPolicy();
+    }
+
+    // ---------------------------------------------------------------- trust boundary and pairing (0.6.1, audit H1)
+
+    private byte[]? _pairingKey;
+
+    /// <summary>Tether subnet (when an adapter is up) plus loopback, and the pairing key when the user enabled a code.</summary>
+    private SourcePolicy CurrentPolicy()
+    {
+        var subnets = _net.Current?.Subnet is { } sn ? new[] { sn } : Array.Empty<Ipv4Subnet>();
+        return new SourcePolicy(subnets, _pairingKey);
+    }
+
+    private void RebuildPairingKey()
+    {
+        var code = _settings.PairingCode;
+        _pairingKey = Pairing.IsValidCode(code) ? Pairing.DeriveKey(code!) : null;
+    }
+
+    public bool PairingEnabled => Pairing.IsValidCode(_settings.PairingCode);
+    public string? PairingCode => PairingEnabled ? _settings.PairingCode : null;
+
+    /// <summary>Phone waiting for the pairing code, for the status line; null otherwise.</summary>
+    public string? PairingWaitingFor => _rx?.PendingPairing?.Address.ToString();
+
+    public void SetPairing(bool on)
+    {
+        if (on == PairingEnabled) return;
+        _settings.PairingCode = on ? Pairing.NewCode() : null;
+        ApplyPairingChange(on ? "pairing code on" : "pairing code off");
+    }
+
+    public void NewPairingCode()
+    {
+        if (!PairingEnabled) return;
+        _settings.PairingCode = Pairing.NewCode();
+        ApplyPairingChange("pairing code changed");
+    }
+
+    private void ApplyPairingChange(string what)
+    {
+        Save();
+        RebuildPairingKey();
+        // A new policy forgets earlier pairings; disconnect so the phone has to present the new code.
+        if (_rx is { } rx) { rx.Policy = CurrentPolicy(); }
+        Log(what);
+        UpdateStatus();
     }
 
     private void OnPeerChanged(IPEndPoint? p)
@@ -332,6 +385,10 @@ internal sealed class AppController : ApplicationContext
         }
         else if (!_audio.Playing)
             st = new(Health.Error, L.T("status.audioError.title"), _audio.LastError ?? L.T("status.audioError.fallback"), L.T("status.audioError.tip"));
+        else if (s?.Peer is null && _rx.PendingPairing is { } pend)
+            st = new(Health.Warn, L.T("status.pairing.title"), L.T("status.pairing.detail", pend.Address), L.T("status.pairing.title"));
+        else if (s?.Peer is null && _rx.RecentUntrustedSource is { } stranger)
+            st = new(Health.Warn, L.T("status.untrusted.title"), L.T("status.untrusted.detail", stranger), L.T("status.untrusted.title"));
         else if (s?.Peer is null)
         {
             st = a is null
@@ -540,8 +597,23 @@ internal sealed class AppController : ApplicationContext
         }
     }
 
-    public void RequestOptimizeCable()
+    private CancellationTokenSource? _optimizeCts;
+    private bool _optimizeCancelledByUser;
+
+    /// <summary>True while the elevated VB-CABLE helper runs (the button turns into "Stop waiting").</summary>
+    public bool OptimizeRunning => _optimizeCts is not null;
+
+    /// <summary>
+    /// 0.6.1 (audit M2): starts the elevated helper and waits for it asynchronously (at most 2 minutes), so the UI,
+    /// the tray and the 500 ms timer keep running while the UAC prompt is open.
+    /// </summary>
+    public async Task RequestOptimizeCableAsync()
     {
+        if (_optimizeCts is not null) return;
+        var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        _optimizeCts = cts;
+        _optimizeCancelledByUser = false;
+        OptimizeHint = L.T("ui.cable.optimizing");
         var psi = new ProcessStartInfo
         {
             FileName = Paths.ExePath,
@@ -552,16 +624,26 @@ internal sealed class AppController : ApplicationContext
         };
         try
         {
-            using var p = Process.Start(psi);
+            using var p = await Task.Run(() => Process.Start(psi)).ConfigureAwait(true);
             if (p is null)
             {
                 OptimizeHint = L.T("ui.cable.launchFailed");
                 Log("VB-CABLE optimize: failed to start helper");
                 return;
             }
-            p.WaitForExit(120_000);
-            int code = p.HasExited ? p.ExitCode : -1;
-            if (code == CableHelperArgs.ExitOk)
+            int? code = null;
+            try
+            {
+                await p.WaitForExitAsync(cts.Token).ConfigureAwait(true);
+                code = p.ExitCode;
+            }
+            catch (OperationCanceledException) { }
+            if (code is null)
+            {
+                OptimizeHint = _optimizeCancelledByUser ? L.T("ui.cable.optimizeCancelled") : L.T("ui.cable.optimizeTimeout");
+                Log(_optimizeCancelledByUser ? "VB-CABLE optimize: stopped waiting (user)" : "VB-CABLE optimize: helper did not finish within 2 minutes");
+            }
+            else if (code == CableHelperArgs.ExitOk)
             {
                 OptimizeHint = L.T("ui.cable.optimized");
                 Log("VB-CABLE optimize: ok");
@@ -591,7 +673,20 @@ internal sealed class AppController : ApplicationContext
             OptimizeHint = L.T("ui.cable.launchFailed");
             Log("VB-CABLE optimize failed to launch: " + ex.Message);
         }
-        UpdateStatus();
+        finally
+        {
+            _optimizeCts = null;
+            cts.Dispose();
+            UpdateStatus();
+        }
+    }
+
+    /// <summary>Stops waiting for the helper. An elevated helper cannot be killed from here; it finishes on its own.</summary>
+    public void CancelOptimizeCable()
+    {
+        if (_optimizeCts is not { } cts) return;
+        _optimizeCancelledByUser = true;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { }
     }
 
     private void ShowMicModeInfo() => MessageBox.Show(
@@ -813,7 +908,11 @@ internal sealed class AppController : ApplicationContext
         _audio.Dispose();
         _rx?.Dispose();
         _net.Dispose();
+        _staged?.Dispose();
+        _staged = null;
+        CancelOptimizeCable();
         Log("quit");
+        _log.Dispose();
         ExitThread();
     }
 
@@ -923,10 +1022,24 @@ internal sealed class AppController : ApplicationContext
         if (staleChanged) Save();
     }
 
+    private StagedSetup? _staged;
+    private bool _installing;
+
+    /// <summary>
+    /// Checks GitHub Releases. Interactive (the button): downloads, verifies and installs. Automatic (0.6.1, audit L10):
+    /// downloads and verifies in the background, then only asks with a notification; nothing elevates until the user
+    /// clicks it or the button.
+    /// </summary>
     public async Task CheckForUpdatesAsync(bool interactive)
     {
+        if (_installing) return;
         try
         {
+            if (interactive && _staged is { } ready && AppUpdate.IsNewer(ready.Tag, CurrentVersion))
+            {
+                await InstallStagedUpdateAsync().ConfigureAwait(true);
+                return;
+            }
             UpdateCheckStatus = L.T("ui.update.checking");
             var info = await UpdateClient.FetchLatestAsync().ConfigureAwait(true);
             _settings.LastUpdateCheckUtcTicks = DateTime.UtcNow.Ticks;
@@ -938,16 +1051,50 @@ internal sealed class AppController : ApplicationContext
             }
             UpdateCheckStatus = L.T("ui.update.available", info.Tag);
             if (!interactive && !_settings.AutoUpdate) return;
-            var setup = await UpdateClient.DownloadVerifiedSetupAsync(info, CurrentVersion).ConfigureAwait(true);
-            UpdateCheckStatus = L.T("ui.update.installing");
-            UpdateClient.LaunchSilentAndExit(setup);
-            Quit();
+            if (_staged is not null && _staged.Tag != info.Tag) { _staged.Dispose(); _staged = null; }
+            if (_staged is null)
+            {
+                _staged = await UpdateClient.DownloadVerifiedSetupAsync(info, CurrentVersion).ConfigureAwait(true);
+                Log($"update {info.Tag}: downloaded and verified");
+            }
+            if (interactive)
+            {
+                await InstallStagedUpdateAsync().ConfigureAwait(true);
+                return;
+            }
+            UpdateCheckStatus = L.T("ui.update.ready", info.Tag);
+            _tray.ShowBalloonTip(10000, "CordMic", L.T("balloon.update.ready", info.Tag), ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
             UpdateCheckStatus = L.T("ui.update.failed", ex.Message);
             Log("update: " + ex.Message);
         }
+    }
+
+    /// <summary>Launches the verified installer (UAC prompt) and quits; the installer starts CordMic again when done.</summary>
+    private async Task InstallStagedUpdateAsync()
+    {
+        if (_staged is not { } setup || _installing) return;
+        _installing = true;
+        try
+        {
+            UpdateCheckStatus = L.T("ui.update.installing");
+            await UpdateClient.LaunchSilentAsync(setup).ConfigureAwait(true);
+            _staged = null;
+            Quit();
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            UpdateCheckStatus = L.T("ui.update.ready", setup.Tag);
+            Log("update: UAC declined; the update stays ready");
+        }
+        catch (Exception ex)
+        {
+            UpdateCheckStatus = L.T("ui.update.failed", ex.Message);
+            Log("update: " + ex.Message);
+        }
+        finally { _installing = false; }
     }
 
     public async Task InstallVbCableAsync()
@@ -960,10 +1107,15 @@ internal sealed class AppController : ApplicationContext
                 return;
             }
             UpdateCheckStatus = L.T("ui.cable.downloading");
-            var setup = await CableInstaller.DownloadAndVerifyAsync().ConfigureAwait(true);
-            CableInstaller.LaunchSetup(setup);
+            var staged = await CableInstaller.DownloadAndVerifyAsync().ConfigureAwait(true);
             UpdateCheckStatus = L.T("ui.cable.launched");
             Log("VB-CABLE official setup launched; a reboot may be required");
+            await CableInstaller.RunSetupAsync(staged).ConfigureAwait(true);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            UpdateCheckStatus = L.T("ui.cable.uacDeclined");
+            Log("VB-CABLE install: UAC declined");
         }
         catch (Exception ex)
         {

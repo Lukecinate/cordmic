@@ -29,6 +29,10 @@ public sealed class StudioChain : IDisposable
     public AgcB3 Agc => _agc;
     public WhisperGuard? Guard => _guard;
     public double LastVad { get; private set; }
+    /// <summary>Native RNNoise frames run so far (one per <see cref="Process"/> call; used by the CPU-budget test).</summary>
+    public long RnnoiseFrames => _rn.NativeFrames;
+    /// <summary>0.5.7 Strong suppressor frames run so far (Balanced/Whisper: one per call; Max: none).</summary>
+    public long StrongFrames { get; private set; }
 
     /// <summary>Added latency of the chain itself (RNNoise look-ahead), in ms. The worker adds one more frame.</summary>
     public static double LatencyMs => RnnoiseDelay / 48.0;
@@ -53,6 +57,7 @@ public sealed class StudioChain : IDisposable
         {
             for (int i = 0; i < Frame; i++) _ks[i] = (short)Math.Clamp((int)Math.Round(x[i] * 32768.0), short.MinValue, short.MaxValue);
             _strong.Process(_ks);
+            StrongFrames++;
             for (int i = 0; i < Frame; i++) _kd[i] = _ks[i] / 32768f;
             _dk.Process(_kd);
         }

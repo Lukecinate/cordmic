@@ -14,7 +14,24 @@ public static class Protocol
     public const byte Version = 1;
     public const int DefaultPort = 50005;
     public const byte TAudio = 1, TDiscover = 2, THello = 3, TPing = 4, TPong = 5, TBye = 6;
+    /// <summary>0.6.1 pairing (see <see cref="Pairing"/>): PC → phone challenge, phone → PC proof. Older peers ignore both.</summary>
+    public const byte TPairChallenge = 7, TPairProof = 8;
     public const int CodecPcm16 = 0;
+    /// <summary>Largest AUDIO packet accepted: 40 ms at 48 kHz. Senders use 2.5–20 ms.</summary>
+    public const int MaxFramesPerPacket = 1920;
+
+    /// <summary>
+    /// 0.6.1: checks an AUDIO header before it may connect a peer or reconfigure the jitter buffer: PCM16 only,
+    /// 1–<see cref="MaxFramesPerPacket"/> frames, and the receiver's rate and channel count.
+    /// </summary>
+    public static bool IsAcceptableAudio(in PacketHeader h, int sampleRate, int channels, out string? why)
+    {
+        why = null;
+        if (h.Codec != CodecPcm16) why = $"codec {h.Codec} is not PCM16";
+        else if (h.Frames == 0 || h.Frames > MaxFramesPerPacket) why = $"frame count {h.Frames} out of range";
+        else if (h.SampleRate != sampleRate || h.Channels != channels) why = $"format mismatch: got {h.SampleRate} Hz/{h.Channels} ch";
+        return why is null;
+    }
 
     public static int RateFromCode(int code) => code switch { 0 => 48000, 1 => 44100, 2 => 16000, _ => 48000 };
 

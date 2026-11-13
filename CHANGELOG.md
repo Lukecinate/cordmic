@@ -2,6 +2,66 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-11-13
+
+Security and robustness release from a concurrency and security audit of 0.6.0. Android `versionCode` is 17 /
+`versionName` 0.6.1. Wire version stays 1. With the new pairing code off (the default), 0.6.1 works with 0.6.0 and
+0.5.4–0.5.7 on the other side; a phone older than 0.6.1 cannot answer a pairing code, so leave the option off when
+one is in use. The release APK is signed with the same key as 0.6.0. The Windows installer is not
+Authenticode-signed.
+
+### Security
+- **PC accepts only the USB tethering phone.** The receiver handles packets only from `127.0.0.1` and the subnet
+  of the detected USB tethering adapter, and locks to the first phone that streams: audio, PONG and BYE from other
+  addresses are ignored until that phone stops or says goodbye. Untrusted senders get no reply and are reported
+  once in the status line and the log (rate-limited).
+- **Narrower firewall rule.** *CordMic (UDP 50005)* is now created for the *Private* profile and `127.0.0.1` only.
+  The SYSTEM task marks the tethering network as *Private* and limits the rule to its subnet on every network
+  change and on install or upgrade (before: local subnet, all profiles).
+- **Optional pairing code** (*Require a pairing code on the phone*, off by default). The PC shows a 6-digit code;
+  the phone enters it once under Settings and answers a single-use challenge with an HMAC-SHA256 proof (PBKDF2 key,
+  the code never travels). Five wrong answers pause pairing from that address for 60 s.
+- **Downloaded installers cannot be swapped before launch.** Update and VB-CABLE setups are verified in memory,
+  written to a per-run folder with a random name and a user/SYSTEM/Administrators-only ACL, and kept open with
+  write and delete sharing denied, hash checked on the same handle, until the started process has opened them.
+  The VB-CABLE setup must also carry a valid Authenticode signature from VB-Audio. The PowerShell VB-CABLE path
+  stages in the Administrators-only `%ProgramData%\CordMic` instead of `%TEMP%`.
+- **Elevated helper paths.** The cable helper uses `%ProgramData%\CordMic` only when it is a real folder owned by
+  Administrators, creates its backup with `CreateNew`, and writes its log there (`cable-helper.log`).
+- **Android.** With a manual PC address the phone accepts control packets only from that address; in automatic
+  mode settings (PING) are taken only from the PC it streams to.
+
+### Fixed
+- **Optimize VB-CABLE no longer freezes the window.** The elevated helper is awaited off the UI thread; the button
+  shows progress and turns into *Stop waiting* (the helper itself finishes on its own; it cannot be killed from the
+  non-elevated app). Waiting ends after 2 minutes.
+- **Auto update asks first.** Automatic checks only download and verify the update and then show *Update ready*;
+  installing starts from that notice or the button. Declining UAC keeps the update ready. If a silent install
+  fails, the installer starts CordMic again.
+- **Android wakelock.** The stream wakelock is renewed every 30 minutes (1 h timeout) while streaming instead of
+  lapsing after 12 hours.
+- **Android Stop→Start.** A new session waits for the previous capture thread to release the microphone instead of
+  briefly reporting *Microphone failed*.
+- **Android update flow.** The install-status receiver lives on the application context, so rotating or leaving the
+  screen during an update no longer loses the install prompt; a second download cannot start while one runs; the
+  APK is staged under a fixed name via a temporary file.
+- Studio noise reduction: no native access after dispose (the chain is freed only when the worker has exited);
+  jitter-buffer reconfiguration is serialised; audio headers are fully validated (codec, frame count 1–1920,
+  format) before use; the receive thread survives unexpected exceptions and logs them.
+- Logging from the audio threads goes through a bounded queue (4096 lines, drops counted) written by a background
+  thread; repeated per-packet messages are rate-limited.
+- Settings are saved through a unique temporary file, flushed and swapped with a `.bak` copy; a corrupt file is kept
+  as `.bad-<time>` and the backup is loaded.
+- Receiver and renderer stop: sockets are closed before joining threads, and a thread that does not exit in time is
+  logged and its native resources are left alone instead of freed under it.
+
+### Tests
+- 15 new Windows regression tests (sources, peer lock, pairing vector and replay, malformed audio, concurrent
+  reconfiguration, dispose, bounded log, settings recovery, private folders, zip-slip). The two wall-clock CPU tests
+  now assert deterministic work counts and zero allocations; timings are printed only. Test packages updated
+  (no vulnerable transitive packages remain).
+- 7 new Android unit tests (pairing vector shared with the PC, control-packet filter, wakelock schedule, staging name).
+
 ## [0.6.0] - 2026-11-11
 
 Packet-loss concealment by pitch repetition, drift correction by resampling, and an optional PC Studio noise

@@ -6,9 +6,12 @@ using CordMic.Core;
 namespace CordMic.App;
 
 internal sealed record TetherAdapter(string Id, string Name, string Description, int IfIndex,
-                                     IPAddress? LocalIp, IPAddress? PhoneIp, bool CarriesInternet)
+                                     IPAddress? LocalIp, IPAddress? PhoneIp, bool CarriesInternet, int PrefixLength = 24)
 {
-    public string Key => $"{Id}|{LocalIp}|{PhoneIp}|{CarriesInternet}";
+    public string Key => $"{Id}|{LocalIp}/{PrefixLength}|{PhoneIp}|{CarriesInternet}";
+
+    /// <summary>The tether link's IPv4 subnet (0.6.1: the receiver accepts phones only from here and loopback).</summary>
+    public Ipv4Subnet? Subnet => LocalIp is { } ip ? Ipv4Subnet.From(ip, PrefixLength is > 0 and <= 32 ? PrefixLength : 24) : null;
 }
 
 /// <summary>
@@ -46,7 +49,7 @@ internal sealed class NetWatcher : IDisposable
         Current = found;
         log(found is null
             ? "tether adapter: none"
-            : $"tether adapter: {found.Description} ({found.Name}) local={found.LocalIp} phone={found.PhoneIp} internetViaPhone={found.CarriesInternet}");
+            : $"tether adapter: {found.Description} ({found.Name}) local={found.LocalIp}/{found.PrefixLength} phone={found.PhoneIp} internetViaPhone={found.CarriesInternet}");
         Changed?.Invoke(found);
     }
 
@@ -62,12 +65,15 @@ internal sealed class NetWatcher : IDisposable
             var ip = ni.GetIPProperties();
             int idx = -1;
             try { idx = ip.GetIPv4Properties()?.Index ?? -1; } catch (NetworkInformationException) { }
-            var local = ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork)?.Address;
+            var uni = ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork);
+            var local = uni?.Address;
             if (local is null) continue; // no IPv4 yet (DHCP still running) -> try again next tick
+            int prefix = 24;
+            try { if (uni!.PrefixLength is > 0 and <= 32) prefix = uni.PrefixLength; } catch (Exception) { }
             var phone = ip.GatewayAddresses.Select(g => g.Address).FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !a.Equals(IPAddress.Any))
                         ?? ip.DhcpServerAddresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
             return new TetherAdapter(ni.Id, ni.Name, ni.Description, idx, local, phone,
-                                     haveBest && idx >= 0 && best == (uint)idx);
+                                     haveBest && idx >= 0 && best == (uint)idx, prefix);
         }
         return null;
     }

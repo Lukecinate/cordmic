@@ -28,6 +28,7 @@ public sealed class StudioProcessor : IDisposable
     private readonly AutoResetEvent _wake = new(false);
     private readonly Thread _thread;
     private volatile bool _stop;
+    private volatile bool _disposed;
     private volatile int _targetFill;
     private short _last;
     private long _framesDone;
@@ -82,6 +83,12 @@ public sealed class StudioProcessor : IDisposable
         int frames = dst.Length / 2, got = 0;
         lock (_ringLock)
         {
+            if (_disposed)
+            {
+                // 0.6.1: a pull that races Dispose gets silence instead of touching a disposed event.
+                dst.Clear();
+                return;
+            }
             int take = Math.Min(frames, _rCount);
             for (int i = 0; i < take; i++)
             {
@@ -106,8 +113,18 @@ public sealed class StudioProcessor : IDisposable
             _last = 0;
             if (Interlocked.Read(ref _framesDone) > WarmupFrames) NoteMiss("render pull found the Studio buffer empty");
         }
-        _wake.Set();
+        Wake();
     }
+
+    /// <summary>Wakes the worker. Tolerates a Dispose that happens between the ring check and the signal.</summary>
+    private void Wake()
+    {
+        try { _wake.Set(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>True when the worker thread exited and the native RNNoise state was freed by <see cref="Dispose"/>.</summary>
+    public bool NativeReleased { get; private set; }
 
     private void NoteMiss(string why)
     {
@@ -157,12 +174,27 @@ public sealed class StudioProcessor : IDisposable
         }
     }
 
-    public void Dispose()
+    /// <summary>
+    /// Stops the worker. The native chain is freed only when the worker has exited; if it is still inside
+    /// <see cref="StudioChain.Process"/> after the timeout, the chain is deliberately leaked (no use-after-free) and
+    /// <see cref="NativeReleased"/> stays false. The wake event is left to the finalizer so a late render pull cannot
+    /// hit a disposed handle.
+    /// </summary>
+    public void Dispose() => Dispose(TimeSpan.FromSeconds(1));
+
+    public void Dispose(TimeSpan join)
     {
+        lock (_ringLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
         _stop = true;
-        _wake.Set();
-        _thread.Join(1000);
-        _chain.Dispose();
-        _wake.Dispose();
+        Wake();
+        if (_thread.Join(join))
+        {
+            _chain.Dispose();
+            NativeReleased = true;
+        }
     }
 }

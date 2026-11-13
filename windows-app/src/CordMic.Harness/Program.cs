@@ -1,6 +1,7 @@
 // Console harness: runs the C# receiver core with a fake 5 ms audio clock (no sound card).
 // Used to test the C# receiver against windows-receiver/sim_sender.py (or the real phone) on any OS.
-//   dotnet run -- --port 50005 --seconds 6 --jitter-ms 10 [--probe 127.0.0.1:50006]
+//   dotnet run -- --port 50005 --seconds 6 --jitter-ms 10 [--probe 127.0.0.1:50006] [--any-source] [--pairing-code 123456]
+// Since 0.6.1 the receiver accepts loopback only unless --any-source is given (a real phone on another host).
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
@@ -14,6 +15,7 @@ if (args.Length > 0 && args[0] == "studio") return StudioHost.Run(args);
 
 int port = Protocol.DefaultPort; double seconds = 10, jitter = 10; string bind = "0.0.0.0";
 var probes = new List<IPEndPoint>();
+bool anySource = false; string? pairingCode = null;
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -23,9 +25,15 @@ for (int i = 0; i < args.Length; i++)
         case "--jitter-ms": jitter = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--bind": bind = args[++i]; break;
         case "--probe": probes.Add(IPEndPoint.Parse(args[++i])); break;
+        case "--any-source": anySource = true; break;
+        case "--pairing-code": pairingCode = args[++i]; break;
     }
 }
-using var rx = new Receiver(port, bind, jitter, pingInterval: 0.1) { Log = m => Console.Error.WriteLine("[rx] " + m) };
+using var rx = new Receiver(port, bind, jitter, pingInterval: 0.1)
+{
+    Log = m => Console.Error.WriteLine("[rx] " + m),
+    Policy = new SourcePolicy(null, pairingCode is null ? null : Pairing.DeriveKey(pairingCode), anySource),
+};
 rx.SetProbeTargets(probes);
 rx.Start();
 Console.Error.WriteLine($"READY port={rx.Port}");

@@ -322,11 +322,24 @@ internal sealed class LowLatencyRenderer : IDisposable
         if (err is not null && !_stop) Failed?.Invoke(err.Message);
     }
 
+    /// <summary>
+    /// True when the render thread was still inside a WASAPI call after the join timeout. The COM objects are then
+    /// left alive on purpose (no release while in use); the GC finalizes them once the thread returns.
+    /// </summary>
+    public bool LeakedOnDispose { get; private set; }
+
     public void Dispose()
     {
         _stop = true;
         try { _evt?.Set(); } catch (Exception) { }
-        _thread?.Join(1000);
+        bool joined = _thread is null || _thread.Join(1000);
+        if (!joined)
+        {
+            // 0.6.1: never release the client while the render thread may still be using it.
+            LeakedOnDispose = true;
+            _render = null; _client = null;
+            return;
+        }
         TryRelease(_render);
         TryRelease(_client);
         _render = null; _client = null;
@@ -524,8 +537,15 @@ internal sealed class AudioEngine : IDisposable
         ActiveId = null;
         ActiveName = null;
         ActiveMode = null;
-        if (ll is not null) try { ll.Dispose(); } catch (Exception) { }
+        if (ll is not null)
+        {
+            try { ll.Dispose(); } catch (Exception) { }
+            if (ll.LeakedOnDispose) Log?.Invoke("render thread did not stop within 1 s; its audio client is left to the finalizer");
+        }
     }
+
+    /// <summary>Diagnostic log sink (set by the app).</summary>
+    public Action<string>? Log { get; set; }
 
     public void Dispose()
     {

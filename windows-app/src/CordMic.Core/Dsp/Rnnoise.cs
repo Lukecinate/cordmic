@@ -9,6 +9,8 @@ namespace CordMic.Core.Dsp;
 public sealed class Rnnoise : IDisposable
 {
     public const int FrameSize = 480;
+    /// <summary>Native frames processed (deterministic work accounting for tests).</summary>
+    public long NativeFrames { get; private set; }
     private const string Lib = "rnnoise";
     private IntPtr _st;
     private readonly float[] _in = new float[FrameSize];
@@ -44,6 +46,7 @@ public sealed class Rnnoise : IDisposable
         for (int i = 0; i < FrameSize; i++) _in[i] = input[i] * 32768f;
         float vad;
         fixed (float* pi = _in) fixed (float* po = _out) vad = rnnoise_process_frame(_st, po, pi);
+        NativeFrames++;
         for (int i = 0; i < FrameSize; i++) output[i] = _out[i] * (1f / 32768f);
         return vad;
     }

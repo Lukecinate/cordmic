@@ -13,7 +13,15 @@ $ruleName = 'CordMic (UDP 50005)'
 $taskPath = '\CordMic\'
 $taskName = 'SetTetherMetric'
 $logDir   = Join-Path $env:ProgramData 'CordMic'
+# 0.6.1 (audit L6): never reuse a junction/symlink; Administrators own the folder, only Administrators and SYSTEM
+# can write, Users can read (logs). The elevated VB-CABLE helper and the SYSTEM task write here.
+$existing = Get-Item -LiteralPath $logDir -Force -ErrorAction SilentlyContinue
+if ($existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Remove-Item -LiteralPath $logDir -Force -ErrorAction SilentlyContinue
+}
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+& "$env:SystemRoot\System32\icacls.exe" $logDir /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+& "$env:SystemRoot\System32\icacls.exe" $logDir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /T /C /Q | Out-Null
 Start-Transcript -Path (Join-Path $logDir 'setup.log') -Append | Out-Null
 
 # Pre-0.3.0 product name: its rule/task are removed too, so upgrades leave nothing behind.
@@ -40,15 +48,17 @@ Remove-All
 $exe = Join-Path (Split-Path $InstallDir -Parent) 'CordMic.exe'
 if (-not (Test-Path $exe)) { $exe = Join-Path $InstallDir 'CordMic.exe' }
 
-# Inbound UDP from the phone only (local subnet), any profile: Windows usually classifies the tether network as Public.
-New-NetFirewallRule -DisplayName $ruleName -Description 'CordMic: audio dari HP lewat USB tethering' `
+# 0.6.1 (audit H1): inbound UDP from the phone only. The rule starts scoped to 127.0.0.1 (nothing from the network);
+# the SYSTEM task below sets the tether network to Private and scopes the rule to the tether subnet whenever the
+# phone connects. Upgrades remove the old LocalSubnet/Any rule above and create this one.
+New-NetFirewallRule -DisplayName $ruleName -Description 'CordMic: audio from the phone over USB tethering (tether subnet only)' `
     -Direction Inbound -Action Allow -Protocol UDP -LocalPort $Port -Program $exe `
-    -RemoteAddress LocalSubnet -Profile Any | Out-Null
+    -RemoteAddress 127.0.0.1 -Profile Private | Out-Null
 Write-Output "firewall rule added for $exe"
 
 $script = Join-Path $InstallDir 'set-tether-metric.ps1'
 $taskArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""
-$sub = '&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"&gt;&lt;Select Path="Microsoft-Windows-NetworkProfile/Operational"&gt;*[System[(EventID=10000)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;'
+$sub = '&lt;QueryList&gt;&lt;Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"&gt;&lt;Select Path="Microsoft-Windows-NetworkProfile/Operational"&gt;*[System[(EventID=10000 or EventID=10001)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;'
 $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">

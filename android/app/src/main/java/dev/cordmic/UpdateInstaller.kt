@@ -23,6 +23,8 @@ object UpdateInstaller {
     private const val TAG = "CordMicUpdate"
     private const val ACTION = "dev.cordmic.UPDATE_SESSION"
 
+    const val LOCAL_APK = "update.apk"
+
     data class Offer(val tag: String, val apkName: String, val apkUrl: String, val expectedSha256: String)
 
     fun canInstallPackages(ctx: Context): Boolean =
@@ -50,8 +52,14 @@ object UpdateInstaller {
 
     fun downloadAndVerify(ctx: Context, offer: Offer): File {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs() }
-        val dest = File(dir, offer.apkName)
-        httpDownload(offer.apkUrl, dest)
+        // 0.6.1 (audit L9): a fixed local name; the release asset name is never used as a path. Download to a
+        // temporary file first so a half-written APK is never verified or installed.
+        val dest = File(dir, LOCAL_APK)
+        val part = File(dir, "$LOCAL_APK.part")
+        part.delete()
+        try { httpDownload(offer.apkUrl, part) } catch (e: Exception) { part.delete(); throw e }
+        dest.delete()
+        if (!part.renameTo(dest)) { part.delete(); error("could not stage the update") }
         if (!AppUpdate.hashMatchesFile(dest, offer.expectedSha256)) {
             dest.delete()
             error("APK SHA-256 mismatch; aborting")
@@ -87,7 +95,16 @@ object UpdateInstaller {
         }
     }
 
-    fun register(ctx: Context): BroadcastReceiver {
+    private var registered: BroadcastReceiver? = null
+
+    /**
+     * Registers the install-status receiver once per process on the application context (0.6.1, audit L9), so an
+     * Activity that is recreated or destroyed during an install neither leaks a receiver nor misses the result.
+     */
+    @Synchronized
+    fun ensureRegistered(ctx: Context): BroadcastReceiver = registered ?: register(ctx.applicationContext).also { registered = it }
+
+    private fun register(ctx: Context): BroadcastReceiver {
         val r = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)

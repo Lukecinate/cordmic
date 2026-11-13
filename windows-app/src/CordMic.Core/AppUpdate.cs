@@ -119,6 +119,18 @@ public static class AppUpdate
         return new ReleaseInfo(tag, apk, Url(apk), setup, Url(setup), Url(sums), urls);
     }
 
+    /// <summary>
+    /// File name for a downloaded asset: the release name if it is a plain file name (letters, digits, '.', '-', '_',
+    /// not starting with '.', at most 100 characters), else <paramref name="fallback"/>.
+    /// </summary>
+    public static string SafeAssetFileName(string? name, string fallback)
+    {
+        if (string.IsNullOrEmpty(name) || name.Length > 100 || name[0] == '.') return fallback;
+        foreach (char c in name)
+            if (!(char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_')) return fallback;
+        return name;
+    }
+
     public static string? HashForAsset(IReadOnlyDictionary<string, string> sums, string assetName)
     {
         if (sums.TryGetValue(assetName, out var h)) return h;

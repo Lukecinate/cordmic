@@ -125,8 +125,9 @@ Discord agar suara tidak diproses dua kali.
 
 Yang dilakukan installer:
 - memasang ke `C:\Program Files\CordMic` dengan shortcut Start menu (opsional: jalan saat Windows mulai, shortcut desktop);
-- menambah aturan firewall masuk **CordMic (UDP 50005)**, terbatas pada subnet lokal, untuk semua profil (jaringan
-  tethering biasanya dianggap "Public");
+- menambah aturan firewall masuk **CordMic (UDP 50005)** untuk profil *Private*. Scheduled task di bawah menandai
+  jaringan tethering HP sebagai *Private* dan membatasi aturan ke subnet jaringan itu saja (mulai 0.6.1; sebelumnya
+  aturan mengizinkan seluruh subnet lokal di semua profil). Tanpa HP tersambung, aturan hanya mengizinkan `127.0.0.1`;
 - menambah scheduled task `\CordMic\SetTetherMetric` (jalan sebagai SYSTEM saat boot, logon, dan saat jaringan
   berubah) yang mengatur **metric interface adapter HP menjadi 9999**, sehingga internet tetap lewat LAN/Wi-Fi dan
   link HP hanya membawa audio;

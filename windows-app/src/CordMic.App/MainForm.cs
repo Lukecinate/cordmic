@@ -31,6 +31,9 @@ internal sealed class MainForm : Form
     private Button _optimize = null!;
     private Button _installCable = null!;
     private Button _checkUpdate = null!;
+    private CheckBox _pairing = null!;
+    private Label _pairCode = null!;
+    private LinkLabel _pairNew = null!;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 32 };
     private readonly System.Windows.Forms.Timer _gainDebounce = new() { Interval = 180 };
     private bool _settingsOpen, _suppress;
@@ -280,6 +283,28 @@ internal sealed class MainForm : Form
         startupBox.CheckedChanged += (_, _) => { if (!_suppress) _app.SetStartup(startupBox.Checked); };
         y += Sx(32);
 
+        // 0.6.1: optional pairing code. Off = any phone on the USB tethering cable is accepted (auto-pair over USB).
+        _pairing = new CheckBox
+        {
+            Text = L.T("ui.pair.require"), Font = Theme.Body, ForeColor = Theme.Ink, AutoSize = true,
+            Location = new Point(x, y), BackColor = Theme.Surface,
+        };
+        _pairing.CheckedChanged += (_, _) => { if (!_suppress) { _app.SetPairing(_pairing.Checked); RefreshFromApp(); } };
+        y += Sx(28);
+        _pairCode = new Label
+        {
+            Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = false,
+            Location = new Point(x, y), Width = w - Sx(90), Height = Sx(36),
+            BackColor = Theme.Surface,
+        };
+        _pairNew = new LinkLabel
+        {
+            Text = L.T("ui.pair.new"), Font = Theme.Body, LinkColor = Theme.Accent, ActiveLinkColor = Theme.AccentHover,
+            AutoSize = true, Location = new Point(x + w - Sx(84), y), BackColor = Theme.Surface,
+        };
+        _pairNew.LinkClicked += (_, _) => { _app.NewPairingCode(); RefreshFromApp(); };
+        y += Sx(40);
+
         var reset = new LinkLabel
         {
             Text = L.T("ui.resetAudio"), Font = Theme.Body, LinkColor = Theme.Accent, ActiveLinkColor = Theme.AccentHover,
@@ -347,7 +372,14 @@ internal sealed class MainForm : Form
             BackColor = Theme.Surface, ForeColor = Theme.Ink, Cursor = Cursors.Hand,
         };
         _optimize.FlatAppearance.BorderColor = Theme.Line;
-        _optimize.Click += (_, _) => _app.RequestOptimizeCable();
+        _optimize.Click += async (_, _) =>
+        {
+            if (_app.OptimizeRunning) { _app.CancelOptimizeCable(); return; }
+            var run = _app.RequestOptimizeCableAsync();
+            RefreshFromApp();
+            await run;
+            RefreshFromApp();
+        };
         p.Controls.Add(_optimize);
         y += Sx(38);
 
@@ -391,6 +423,9 @@ internal sealed class MainForm : Form
         p.Controls.Add(gainValue);
         p.Controls.Add(gain);
         p.Controls.Add(startup);
+        p.Controls.Add(_pairing);
+        p.Controls.Add(_pairCode);
+        p.Controls.Add(_pairNew);
         p.Controls.Add(logs);
         p.Controls.Add(get);
         p.Height = y;
@@ -481,8 +516,9 @@ internal sealed class MainForm : Form
         else _detail.Text = st.Detail;
 
         _noCable.Visible = _app.CableName is null && _app.OutputDeviceId is null;
-        _optimize.Visible = _app.CableFound || _app.CableNeedsOptimize;
+        _optimize.Visible = _app.CableFound || _app.CableNeedsOptimize || _app.OptimizeRunning;
         _optimize.Enabled = true;
+        _optimize.Text = _app.OptimizeRunning ? L.T("ui.cable.optimizeCancel") : L.T("ui.cable.optimize");
         _cableHint.Text = _app.OptimizeHint ?? "";
         _cableHint.ForeColor = _app.CableNeedsOptimize ? Theme.Amber : Theme.Muted;
         _periodHint.Text = _app.PeriodHint ?? "";
@@ -510,6 +546,12 @@ internal sealed class MainForm : Form
             _detected.Text = string.IsNullOrEmpty(_app.DetectedSummary) ? "" : _app.DetectedSummary;
             if (CanWrite(_autoUpdate) && _autoUpdate.Checked != _app.DisplayedAutoUpdate) _autoUpdate.Checked = _app.DisplayedAutoUpdate;
             _updateStatus.Text = _app.UpdateCheckStatus ?? "";
+            if (CanWrite(_pairing) && _pairing.Checked != _app.PairingEnabled) _pairing.Checked = _app.PairingEnabled;
+            _pairCode.Text = _app.PairingCode is { } pc
+                ? L.T("ui.pair.code", pc[..3] + " " + pc[3..]) + (_app.PairingWaitingFor is { } wf ? "\n" + L.T("ui.pair.waiting", wf) : "")
+                : L.T("ui.pair.off");
+            _pairCode.ForeColor = _app.PairingWaitingFor is not null ? Theme.Amber : Theme.Muted;
+            _pairNew.Visible = _app.PairingEnabled;
             _installCable.Visible = _app.CableName is null && _app.OutputDeviceId is null;
             int g = Math.Clamp(_app.DisplayedGain, 0, VoiceChain.MaxGainDb);
             if (CanWrite(_gain) && _gain.Value != g) _gain.Value = g;

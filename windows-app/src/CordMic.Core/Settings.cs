@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -46,22 +47,71 @@ public sealed class AppSettings
     public OutputMode OutputMode { get; set; } = OutputMode.Auto;
     /// <summary>UI language: "auto" (follow Windows), "en" or "id".</summary>
     public string Language { get; set; } = L.Auto;
+    /// <summary>
+    /// 0.6.1: optional 6-digit pairing code. Null or empty (the default) means a phone on the USB tethering link is
+    /// accepted without a code.
+    /// </summary>
+    public string? PairingCode { get; set; }
 
     private static readonly JsonSerializerOptions Opts = new() { WriteIndented = true };
 
-    public static AppSettings Load(string path)
+    public static AppSettings Load(string path) => Load(path, out _);
+
+    /// <summary>
+    /// Loads settings. A file that cannot be parsed is kept as <c>settings.json.bad-&lt;timestamp&gt;</c> (never
+    /// overwritten) and the last good copy (<c>settings.json.bak</c>, written by <see cref="Save"/>) is used instead,
+    /// else defaults. <paramref name="problem"/> describes what happened, for the log.
+    /// </summary>
+    public static AppSettings Load(string path, out string? problem)
     {
+        problem = null;
+        if (!File.Exists(path))
+        {
+            if (TryParse(path + ".bak", out var fromBak, out _))
+            {
+                problem = "settings.json missing; restored the backup copy";
+                return fromBak!;
+            }
+            return new AppSettings();
+        }
+        if (TryParse(path, out var s, out var why)) return s!;
+        string kept = KeepBadCopy(path);
+        if (TryParse(path + ".bak", out var bak, out _))
+        {
+            problem = $"settings.json could not be read ({why}); kept it as {Path.GetFileName(kept)} and restored the backup copy";
+            return bak!;
+        }
+        problem = $"settings.json could not be read ({why}); kept it as {Path.GetFileName(kept)} and started with defaults";
+        return new AppSettings();
+    }
+
+    private static bool TryParse(string path, out AppSettings? s, out string? why)
+    {
+        s = null; why = null;
         try
         {
-            if (File.Exists(path))
-            {
-                var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Opts) ?? new AppSettings();
-                s.NormalizeAudio();
-                return s;
-            }
+            if (!File.Exists(path)) { why = "missing"; return false; }
+            s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Opts);
+            if (s is null) { why = "empty"; return false; }
+            s.NormalizeAudio();
+            if (!string.IsNullOrEmpty(s.PairingCode) && !Pairing.IsValidCode(s.PairingCode)) s.PairingCode = null;
+            return true;
         }
-        catch (Exception) { /* corrupted file: fall back to defaults */ }
-        return new AppSettings();
+        catch (Exception e) { why = e.GetType().Name; s = null; return false; }
+    }
+
+    private static string KeepBadCopy(string path)
+    {
+        string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        for (int i = 0; i < 100; i++)
+        {
+            string dst = path + ".bad-" + stamp + (i == 0 ? "" : "-" + i);
+            if (File.Exists(dst)) continue;
+            try { File.Copy(path, dst, overwrite: false); return dst; }
+            catch (IOException) when (File.Exists(dst)) { }
+            catch (Exception) { break; }
+        }
+        return path;
     }
 
     /// <summary>Reconcile the older <see cref="NoiseCancellation"/> bool with <see cref="NoiseMode"/>.</summary>
@@ -88,12 +138,30 @@ public sealed class AppSettings
         StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
     }
 
+    /// <summary>
+    /// Durable save: a uniquely named temp file is written and flushed to disk, then swapped in with
+    /// <see cref="File.Replace(string, string, string?)"/>, which keeps the previous file as <c>settings.json.bak</c>.
+    /// </summary>
     public void Save(string path)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(this, Opts));
-        File.Move(tmp, path, overwrite: true);
+        var dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        Directory.CreateDirectory(dir);
+        var tmp = Path.Combine(dir, $"{Path.GetFileName(path)}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(JsonSerializer.SerializeToUtf8Bytes(this, Opts));
+                fs.Flush(flushToDisk: true);
+            }
+            if (File.Exists(path)) File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
+            else File.Move(tmp, path);
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch (Exception) { }
+            throw;
+        }
     }
 }
 
@@ -111,30 +179,90 @@ public static class LegacySettings
     }
 }
 
-/// <summary>Tiny thread-safe file logger with one rollover (no dependency).</summary>
-public sealed class FileLog
+/// <summary>
+/// Thread-safe file logger with one rollover (no dependency). Since 0.6.1 <see cref="Write"/> only queues the line
+/// (bounded; excess lines are counted and reported), and a background thread does the file I/O, so the audio RX
+/// thread never waits on the disk (audit L4).
+/// </summary>
+public sealed class FileLog : IDisposable
 {
-    private readonly object _l = new();
+    public const int MaxQueued = 4096;
+    private readonly object _io = new();
+    private readonly ConcurrentQueue<string> _q = new();
+    private readonly AutoResetEvent _signal = new(false);
+    private readonly Thread? _writer;
+    private volatile bool _stop;
+    private int _queued;
+    private long _dropped;
     public string FilePath { get; }
     private readonly long _max;
 
-    public FileLog(string path, long maxBytes = 2_000_000)
+    /// <param name="backgroundWriter">False only in tests: lines are written by explicit <see cref="Flush"/> calls.</param>
+    public FileLog(string path, long maxBytes = 2_000_000, bool backgroundWriter = true)
     {
         FilePath = path; _max = maxBytes;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        if (!backgroundWriter) return;
+        _writer = new Thread(WriterLoop) { Name = "cordmic-log", IsBackground = true, Priority = ThreadPriority.BelowNormal };
+        _writer.Start();
     }
+
+    /// <summary>Lines dropped because the queue was full (diagnostics and tests).</summary>
+    public long Dropped => Interlocked.Read(ref _dropped);
 
     public void Write(string msg)
     {
-        lock (_l)
+        if (Interlocked.Increment(ref _queued) > MaxQueued)
         {
+            Interlocked.Decrement(ref _queued);
+            Interlocked.Increment(ref _dropped);
+            return;
+        }
+        _q.Enqueue($"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {msg}");
+        try { _signal.Set(); } catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>Writes everything queued so far (called by the writer thread, tests and <see cref="Dispose"/>).</summary>
+    public void Flush()
+    {
+        lock (_io)
+        {
+            if (_q.IsEmpty && Interlocked.Read(ref _dropped) == 0) return;
             try
             {
                 var fi = new FileInfo(FilePath);
                 if (fi.Exists && fi.Length > _max) File.Move(FilePath, FilePath + ".1", overwrite: true);
-                File.AppendAllText(FilePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                using var w = new StreamWriter(FilePath, append: true);
+                while (_q.TryDequeue(out var line))
+                {
+                    Interlocked.Decrement(ref _queued);
+                    w.WriteLine(line);
+                }
+                long dropped = Interlocked.Exchange(ref _dropped, 0);
+                if (dropped > 0) w.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} ({dropped} log lines dropped: queue full)");
             }
-            catch (Exception) { }
+            catch (Exception)
+            {
+                // Disk full or file locked: drop what is queued rather than grow without bound.
+                while (_q.TryDequeue(out _)) Interlocked.Decrement(ref _queued);
+            }
         }
+    }
+
+    private void WriterLoop()
+    {
+        while (!_stop)
+        {
+            _signal.WaitOne(500);
+            Flush();
+        }
+    }
+
+    public void Dispose()
+    {
+        _stop = true;
+        try { _signal.Set(); } catch (ObjectDisposedException) { }
+        _writer?.Join(2000);
+        Flush();
     }
 }

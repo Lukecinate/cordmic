@@ -1,7 +1,6 @@
 package dev.cordmic
 
 import android.Manifest
-import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -45,6 +44,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ipLayout: TextInputLayout
     private lateinit var port: TextInputEditText
     private lateinit var portLayout: TextInputLayout
+    private lateinit var pairCode: TextInputEditText
+    private lateinit var pairCodeLayout: TextInputLayout
+    private var pairHintShown = false
     private lateinit var preset: MaterialAutoCompleteTextView
     private lateinit var presetLayout: TextInputLayout
     private lateinit var aaudio: MaterialSwitch
@@ -80,7 +82,7 @@ class MainActivity : AppCompatActivity() {
     private var lastRunning: Boolean? = null
     private var usbCache: String? = null
     private var usbCheckedAt = 0L
-    private var updateReceiver: BroadcastReceiver? = null
+    private var installBusy = false
     private var updateBusy = false
 
     /** Screenshot tests render fixed states; the live loop then leaves the screen alone. */
@@ -98,6 +100,7 @@ class MainActivity : AppCompatActivity() {
     private val refresh = object : Runnable {
         override fun run() {
             if (previewState == null) render(liveState(), immediate = false)
+            showPairingHint()
             handler.postDelayed(this, 100)
         }
     }
@@ -118,6 +121,7 @@ class MainActivity : AppCompatActivity() {
 
         ip = findViewById(R.id.ip); ipLayout = findViewById(R.id.ipLayout)
         port = findViewById(R.id.port); portLayout = findViewById(R.id.portLayout)
+        pairCode = findViewById(R.id.pairCode); pairCodeLayout = findViewById(R.id.pairCodeLayout)
         preset = findViewById(R.id.preset); presetLayout = findViewById(R.id.presetLayout)
         aaudio = findViewById(R.id.aaudio)
         frontFocus = findViewById(R.id.frontFocus)
@@ -146,6 +150,7 @@ class MainActivity : AppCompatActivity() {
         migrateUserLocks(p)
         ip.setText(p.getString("ip", ""))
         port.setText(p.getInt("port", Protocol.DEFAULT_PORT).toString())
+        pairCode.setText(p.getString("pairCode", ""))
         presetIndex = p.getInt("preset", 0).coerceIn(0, presets.lastIndex)
         aaudio.isChecked = p.getBoolean("aaudio", true)
         frontFocus.isChecked = p.getBoolean("frontFocus", true)
@@ -182,6 +187,7 @@ class MainActivity : AppCompatActivity() {
 
         ip.doOnTextChange { ipLayout.error = null; updateSummary() }
         port.doOnTextChange { portLayout.error = null; updateSummary() }
+        pairCode.doOnTextChange { pairCodeLayout.error = null; pairHintShown = false }
         findViewById<View>(R.id.aaudioRow).setOnClickListener { if (aaudio.isEnabled) aaudio.toggle() }
         findViewById<View>(R.id.frontFocusRow).setOnClickListener { frontFocus.toggle() }
         findViewById<View>(R.id.frontFocusArRow).setOnClickListener { frontFocusAr.toggle() }
@@ -290,19 +296,34 @@ class MainActivity : AppCompatActivity() {
         if (autoOptimize.isChecked) applyAdvice()
         showDetected()
         render(liveState(), immediate = true)
-        updateReceiver = UpdateInstaller.register(this)
+        UpdateInstaller.ensureRegistered(this)
         maybeAutoCheckUpdates()
     }
 
     override fun onResume() { super.onResume(); handler.post(refresh) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(refresh) }
     override fun onDestroy() {
-        val receiver = updateReceiver
-        if (receiver != null) {
-            try { unregisterReceiver(receiver) } catch (e: Exception) { }
-        }
-        updateReceiver = null
+        handler.removeCallbacksAndMessages(null)
         super.onDestroy()
+    }
+
+    /** Posts [block] to the UI only while this Activity is alive (update worker threads outlive it). */
+    private fun postIfAlive(block: () -> Unit) {
+        handler.post { if (!isFinishing && !isDestroyed) block() }
+    }
+
+    /** The PC asks for a pairing code (0.6.1): open Settings once and point at the field. */
+    private fun showPairingHint() {
+        val needed = MicService.current?.pairingNeeded == true
+        if (needed && !pairHintShown) {
+            pairHintShown = true
+            pairCodeLayout.error = getString(R.string.pairing_needed)
+            settingsOverride = true
+            render(currentState(), immediate = true)
+        } else if (!needed && pairHintShown) {
+            pairHintShown = false
+            pairCodeLayout.error = null
+        }
     }
 
     private fun currentState(): UiState = previewState ?: liveState()
@@ -406,7 +427,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.settingsBody).isVisible = expanded
         findViewById<View>(R.id.settingsSummary).isVisible = !expanded || ui.running
         findViewById<View>(R.id.settingsLocked).isVisible = ui.running
-        for (v in listOf(ipLayout, portLayout, presetLayout, aaudio, findViewById(R.id.aaudioRow))) v.isEnabled = !ui.running
+        for (v in listOf(ipLayout, portLayout, pairCodeLayout, presetLayout, aaudio, findViewById(R.id.aaudioRow))) v.isEnabled = !ui.running
         setChevron(R.id.settingsChevron, R.id.settingsHeader, expanded, R.string.settings_title)
         updateSummary()
         showDetected()
@@ -645,8 +666,8 @@ class MainActivity : AppCompatActivity() {
         updateStatus.text = getString(R.string.update_checking)
         Thread({
             val result = UpdateInstaller.fetchOffer(BuildConfig.VERSION_NAME)
-            handler.post {
-                updateBusy = false
+            handler.post { updateBusy = false }
+            postIfAlive {
                 result.fold(
                     onSuccess = { offer ->
                         getPreferences(MODE_PRIVATE).edit().putLong("lastUpdateCheck", System.currentTimeMillis()).apply()
@@ -668,13 +689,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyUpdate(offer: UpdateInstaller.Offer) {
+        if (updateBusy || installBusy) return
+        installBusy = true
         updateStatus.text = getString(R.string.update_installing)
+        val app = applicationContext
         Thread({
             val r = runCatching {
-                val apk = UpdateInstaller.downloadAndVerify(this, offer)
-                UpdateInstaller.startInstall(this, apk)
+                val apk = UpdateInstaller.downloadAndVerify(app, offer)
+                UpdateInstaller.startInstall(app, apk)
             }
-            handler.post {
+            handler.post { installBusy = false }
+            postIfAlive {
                 r.onFailure { updateStatus.text = getString(R.string.update_failed, it.message ?: it.toString()) }
             }
         }, "cordmic-update-dl").start()
@@ -694,10 +719,14 @@ class MainActivity : AppCompatActivity() {
         var ok = true
         if (portNum == null) { portLayout.error = getString(R.string.err_port); ok = false }
         if (host.isNotEmpty() && !isIpv4(host)) { ipLayout.error = getString(R.string.err_ip); ok = false }
+        val codeText = pairCode.text?.toString().orEmpty()
+        val code = Pairing.normalize(codeText)
+        if (codeText.isNotBlank() && code == null) { pairCodeLayout.error = getString(R.string.err_pair_code); ok = false }
         if (!ok || portNum == null) { settingsOverride = true; render(currentState(), immediate = true); return }
         permissionDenied = false
         val gainDb = gain.value.toInt()
         getPreferences(MODE_PRIVATE).edit().putString("ip", host).putInt("port", portNum)
+            .putString("pairCode", code.orEmpty())
             .putInt("preset", presetIndex).putBoolean("aaudio", aaudio.isChecked)
             .putBoolean("nc", ncModes[ncModeIndex].first != NoiseMode.OFF)
             .putString("ncMode", listOf("off", "light", "strong")[ncModeIndex])
@@ -711,6 +740,7 @@ class MainActivity : AppCompatActivity() {
         val i = Intent(this, MicService::class.java)
             .putExtra(MicService.EXTRA_HOST, host)
             .putExtra(MicService.EXTRA_PORT, portNum)
+            .putExtra(MicService.EXTRA_PAIR_CODE, code)
             .putExtra(MicService.EXTRA_PRESET, presets[presetIndex].source)
             .putExtra(MicService.EXTRA_AAUDIO, aaudio.isChecked)
             .putExtra(MicService.EXTRA_NC, ncModes[ncModeIndex].first != NoiseMode.OFF)

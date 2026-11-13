@@ -26,6 +26,10 @@ public sealed class PitchPlc
     public int Run => _run;
     /// <summary>Pitch searches performed (for tests / CPU accounting).</summary>
     public long PitchSearches { get; private set; }
+    /// <summary>Multiply-accumulate taps spent in pitch searches (deterministic CPU accounting for tests).</summary>
+    public long SearchTaps { get; private set; }
+    /// <summary>Upper bound of <see cref="SearchTaps"/> for one search: energy, the coarse lag grid, two refinements.</summary>
+    public const long MaxTapsPerSearch = Seg + ((LMax - LMin) / 2 + 1 + 2) * (long)Seg;
 
     public PitchPlc(int packetFrames = 240)
     {
@@ -51,6 +55,7 @@ public sealed class PitchPlc
     private double Corr(int l, double ee)
     {
         int seg0 = H - Seg, r0 = seg0 - l;
+        SearchTaps += Seg;
         double xy = 0, yy = 0;
         for (int k = 0; k < Seg; k++) { double a = _hist[r0 + k]; xy += _hist[seg0 + k] * a; yy += a * a; }
         return xy / Math.Sqrt(ee * yy + 1e-12);
@@ -60,6 +65,7 @@ public sealed class PitchPlc
     private (int L, double C) Pitch()
     {
         PitchSearches++;
+        SearchTaps += Seg;
         int seg0 = H - Seg;
         double ee = 0;
         for (int k = 0; k < Seg; k++) ee += _hist[seg0 + k] * _hist[seg0 + k];

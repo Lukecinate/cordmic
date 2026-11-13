@@ -133,6 +133,11 @@ internal static class CableHelper
             Log("no backup at " + BackupPath + "; nothing to restore");
             return CableHelperArgs.ExitOk;
         }
+        if (!IsAdminOwned(BackupPath))
+        {
+            Log("backup rejected: not a regular file owned by Administrators/SYSTEM");
+            return CableHelperArgs.ExitIo;
+        }
         string json;
         try { json = File.ReadAllText(BackupPath); }
         catch (Exception ex)
@@ -204,8 +209,15 @@ internal static class CableHelper
     {
         if (File.Exists(BackupPath))
         {
-            Log("keeping existing backup " + BackupPath);
-            return true;
+            if (IsAdminOwned(BackupPath))
+            {
+                Log("keeping existing backup " + BackupPath);
+                return true;
+            }
+            // 0.6.1 (audit L6): a backup a standard user could have planted is not trusted; replace it.
+            Log("existing backup is not owned by Administrators/SYSTEM; writing a fresh one");
+            try { File.Delete(BackupPath); }
+            catch (Exception ex) { Log("could not remove untrusted backup (no changes made): " + ex.Message); return false; }
         }
         var file = new CableBackupFile
         {
@@ -229,10 +241,10 @@ internal static class CableHelper
         }
         try
         {
-            string dir = Path.GetDirectoryName(BackupPath)!;
-            Directory.CreateDirectory(dir);
-            RestrictAcl(dir);
-            File.WriteAllText(BackupPath, CableBackup.Serialize(file));
+            if (TrustedDataDir() is null) { Log("backup folder is not safe (no changes made)"); return false; }
+            using (var fs = new FileStream(BackupPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var w = new StreamWriter(fs))
+                w.Write(CableBackup.Serialize(file));
             RestrictFileAcl(BackupPath);
             Log("wrote backup " + BackupPath);
             return true;
@@ -440,6 +452,38 @@ internal static class CableHelper
         finally { Release(store); }
     }
 
+    /// <summary>
+    /// 0.6.1 (audit L6): %ProgramData%\CordMic for elevated writes. Refuses a junction or symlink, then sets
+    /// Administrators as owner and an Administrators/SYSTEM-write, Users-read ACL (the installer does the same).
+    /// Returns null when the folder cannot be made safe.
+    /// </summary>
+    static string? TrustedDataDir()
+    {
+        try
+        {
+            string dir = Path.GetDirectoryName(BackupPath)!;
+            Directory.CreateDirectory(dir);
+            if (new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.ReparsePoint)) return null;
+            RestrictAcl(dir);
+            return dir;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>True for a regular file (not a reparse point) owned by Administrators or SYSTEM.</summary>
+    static bool IsAdminOwned(string path)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists || fi.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+            if (fi.Directory is { } d && d.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+            var owner = fi.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            return owner is not null && (owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid) || owner.IsWellKnown(WellKnownSidType.LocalSystemSid));
+        }
+        catch (Exception) { return false; }
+    }
+
     static void RestrictAcl(string dir)
     {
         var info = new DirectoryInfo(dir);
@@ -455,6 +499,7 @@ internal static class CableHelper
         Allow(WellKnownSidType.BuiltinAdministratorsSid, FileSystemRights.FullControl);
         Allow(WellKnownSidType.LocalSystemSid, FileSystemRights.FullControl);
         Allow(WellKnownSidType.BuiltinUsersSid, FileSystemRights.ReadAndExecute);
+        try { sec.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null)); } catch (Exception) { }
         info.SetAccessControl(sec);
     }
 
@@ -493,9 +538,11 @@ internal static class CableHelper
         try { Console.Error.WriteLine(line); } catch (Exception) { }
         try
         {
-            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CordMic", "logs");
-            Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "cable-helper.log"), line + Environment.NewLine);
+            // 0.6.1 (audit L6): the elevated helper logs to the protected %ProgramData%\CordMic, not the user profile.
+            if (TrustedDataDir() is not { } dir) return;
+            string path = Path.Combine(dir, "cable-helper.log");
+            if (File.Exists(path) && new FileInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint)) return;
+            File.AppendAllText(path, line + Environment.NewLine);
         }
         catch (Exception) { }
     }

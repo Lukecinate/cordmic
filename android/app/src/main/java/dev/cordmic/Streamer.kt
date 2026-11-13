@@ -10,6 +10,8 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Captures 5 ms frames and sends them over UDP to the PC on the USB-tethering link. */
@@ -34,6 +36,8 @@ class Streamer(context: Context, private val cfg: Config) {
         val autoOptimize: Boolean = true,
         val userSetGain: Boolean = false,
         val upgradeGainNudge: Boolean = false,
+        /** 0.6.1: 6-digit pairing code, only needed when the PC asks for one. */
+        val pairingCode: String? = null,
     )
 
     @Volatile private var running = false
@@ -88,6 +92,15 @@ class Streamer(context: Context, private val cfg: Config) {
     @Volatile var sendErrors = 0L; private set
     private var audioThread: Thread? = null
     private var ctlThread: Thread? = null
+    @Volatile private var manualAddr: InetAddress? = null
+    // 0.6.1 pairing state (control thread only, except the volatile UI flags).
+    private var pairKey: ByteArray? = null
+    private var challengesSinceHello = 0
+    @Volatile private var pairingAskedAt = 0L
+    @Volatile private var pairingStuck = false
+    /** The PC asked for a pairing code in the last 5 s and none is set, or the one set is not accepted. */
+    val pairingNeeded: Boolean
+        get() = pairingStuck && SystemClock.elapsedRealtime() - pairingAskedAt < 5000
 
     fun start() {
         if (running) return
@@ -97,7 +110,9 @@ class Streamer(context: Context, private val cfg: Config) {
         DeviceProbe.markCaptureActive(true)
         silenceWatch.start() // before the capture thread calls startRecording()
         cfg.manualHost?.takeIf { it.isNotBlank() }?.let {
-            target = InetSocketAddress(InetAddress.getByName(it.trim()), cfg.port) // numeric IP: no DNS
+            val addr = InetAddress.getByName(it.trim()) // numeric IP: no DNS
+            manualAddr = addr
+            target = InetSocketAddress(addr, cfg.port)
         }
         audioThread = Thread(::audioLoop, "cordmic-audio").apply { start() }
         ctlThread = Thread(::controlLoop, "cordmic-ctl").apply { isDaemon = true; start() }
@@ -106,6 +121,9 @@ class Streamer(context: Context, private val cfg: Config) {
     fun stop() {
         running = false
         audioThread?.join(1000)
+        // A capture read blocked in the driver can outlive the join. The next session then waits for this thread to
+        // release the microphone (captureLock) instead of failing to open it (0.6.1, audit L8).
+        if (audioThread?.isAlive == true) Log.w(TAG, "capture thread still in a read after 1 s; next session will wait for it")
         val s = sock; val t = target
         if (s != null && t != null) try {
             val b = ByteArray(Protocol.HEADER_SIZE)
@@ -219,6 +237,16 @@ class Streamer(context: Context, private val cfg: Config) {
 
     private fun audioLoop() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+        var holding = false
+        while (running && !holding) {
+            holding = try { captureLock.tryAcquire(200, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { false }
+            if (!holding) state = State.STARTING
+        }
+        if (!holding) return
+        try { captureLoop() } finally { captureLock.release() }
+    }
+
+    private fun captureLoop() {
         val buf = ByteArray(Protocol.HEADER_SIZE + cfg.frames * 2)
         val pkt = DatagramPacket(buf, buf.size)
         var flags = Protocol.flags(1, 0)
@@ -379,9 +407,12 @@ class Streamer(context: Context, private val cfg: Config) {
                 rp.setData(rb, 0, rb.size)
                 s.receive(rp)
                 val h = Protocol.parse(rb, rp.length) ?: continue
+                if (!ControlFilter.accept(h.type, rp.address, manualAddr, target?.address)) continue
                 when (h.type) {
+                    Protocol.T_PAIR_CHALLENGE -> onPairChallenge(s, rb, rp.length, rp.socketAddress)
                     Protocol.T_HELLO -> {
                         lastHeard = SystemClock.elapsedRealtime()
+                        challengesSinceHello = 0; pairingStuck = false
                         if (cfg.manualHost.isNullOrBlank()) {
                             val from = InetSocketAddress(rp.address, cfg.port)
                             if (target != from) Log.i(TAG, "PC found at $from")
@@ -422,7 +453,48 @@ class Streamer(context: Context, private val cfg: Config) {
         }
     }
 
+    /** Answers a PC pairing challenge with the configured code; flags the UI when no code is set or it is refused. */
+    private fun onPairChallenge(s: DatagramSocket, rb: ByteArray, len: Int, from: java.net.SocketAddress) {
+        if (len < Protocol.HEADER_SIZE + Pairing.NONCE_SIZE) return
+        pairingAskedAt = SystemClock.elapsedRealtime()
+        challengesSinceHello++
+        val code = Pairing.normalize(cfg.pairingCode)
+        if (code == null) {
+            if (!pairingStuck) Log.i(TAG, "PC asks for a pairing code; none is set")
+            pairingStuck = true
+            return
+        }
+        val key = pairKey ?: Pairing.deriveKey(code).also { pairKey = it }
+        val nonce = rb.copyOfRange(Protocol.HEADER_SIZE, Protocol.HEADER_SIZE + Pairing.NONCE_SIZE)
+        val proof = Pairing.proof(key, nonce)
+        val out = ByteArray(Protocol.HEADER_SIZE + proof.size)
+        Protocol.writeHeader(out, Protocol.T_PAIR_PROOF, 0, nowUs(), 0, 0)
+        proof.copyInto(out, Protocol.HEADER_SIZE)
+        s.send(DatagramPacket(out, out.size, from))
+        // The PC answers a correct proof with HELLO; more challenges mean the code is wrong.
+        if (challengesSinceHello >= 3 && !pairingStuck) { pairingStuck = true; Log.i(TAG, "pairing code not accepted by the PC") }
+    }
+
     private fun nowUs() = SystemClock.elapsedRealtimeNanos() / 1000
 
-    companion object { const val TAG = "CordMic" }
+    companion object {
+        const val TAG = "CordMic"
+        /** One capture at a time across sessions: a new session waits until an old capture thread has let go. */
+        private val captureLock = Semaphore(1)
+    }
+}
+
+/**
+ * Which control packets the phone accepts (0.6.1, audit L12). With a manual PC address only that address is
+ * accepted. In auto mode the socket is bound to the USB tethering interface: HELLO from the link announces the PC,
+ * and PING / pairing challenges are taken only from the PC the phone is streaming to (or any, before that).
+ */
+object ControlFilter {
+    fun accept(type: Byte, from: InetAddress?, manualHost: InetAddress?, target: InetAddress?): Boolean = when {
+        from == null -> false
+        manualHost != null -> from == manualHost
+        type == Protocol.T_HELLO -> true
+        target != null -> from == target
+        else -> true
+}
 }

@@ -88,6 +88,20 @@ public sealed class Receiver : IDisposable
     private double _studioStartGainDb = AgcB3.DefaultStartGainDb;
     private volatile bool _studioFailed;
     private readonly SnrHint _hint = new();
+    // 0.6.1 trust boundary (audit H1): source filter, pairing and the peer lock. The pairing tables are touched only
+    // by the RX thread.
+    private volatile SourcePolicy _policy = SourcePolicy.LoopbackOnly;
+    private SourcePolicy? _policySeen;
+    private readonly Dictionary<IPAddress, (byte[] Nonce, long Issued, long LastSent)> _challenges = new();
+    private readonly HashSet<IPAddress> _paired = new();
+    private readonly Dictionary<IPAddress, (int Failures, long Until)> _pairFailures = new();
+    private readonly LogLimiter _logLimit = new(TimeSpan.FromSeconds(10));
+    private readonly object _jbSwap = new();
+    private volatile IPEndPoint? _pendingPairing;
+    private volatile IPAddress? _lastUntrusted;
+    private long _lastUntrustedTicks;
+    private long _pendingPairingTicks;
+    private const int MaxPairFailures = 5;
 
     public int Port { get; private set; }
     public int FramesPerPacket { get; private set; }
@@ -95,6 +109,27 @@ public sealed class Receiver : IDisposable
     public JitterBuffer Jitter => _jb;
     public event Action<IPEndPoint?>? PeerChanged;
     public Action<string>? Log { get; set; }
+
+    /// <summary>
+    /// Which sources may connect (0.6.1). Defaults to loopback only; the app sets the USB tethering subnet and, when
+    /// the user enabled it, the pairing key. Changing the policy forgets earlier pairings.
+    /// </summary>
+    public SourcePolicy Policy
+    {
+        get => _policy;
+        set => _policy = value ?? SourcePolicy.LoopbackOnly;
+    }
+
+    /// <summary>Phone that sent audio but has not answered the pairing challenge (seen within the last 3 s), else null.</summary>
+    public IPEndPoint? PendingPairing =>
+        _pendingPairing is { } p && Seconds(Stopwatch.GetTimestamp() - Interlocked.Read(ref _pendingPairingTicks)) < 3 ? p : null;
+
+    /// <summary>Source outside the tether subnet that sent CordMic packets within the last 5 s (shown in the UI), else null.</summary>
+    public IPAddress? RecentUntrustedSource =>
+        _lastUntrusted is { } a && Seconds(Stopwatch.GetTimestamp() - Interlocked.Read(ref _lastUntrustedTicks)) < 5 ? a : null;
+
+    /// <summary>True when the RX and ping threads exited on the last <see cref="Stop"/>.</summary>
+    public bool StoppedCleanly { get; private set; } = true;
     /// <summary>Called once on the receive thread (the Windows app raises it to MMCSS "Pro Audio").</summary>
     public Action? RxThreadInit { get; set; }
     /// <summary>Called once on the Studio worker thread (the Windows app raises it to MMCSS "Pro Audio").</summary>
@@ -210,6 +245,13 @@ public sealed class Receiver : IDisposable
     }
 
     private void ApplyTarget(bool force)
+    {
+        // 0.6.1 (audit L3): the UI thread, the ThreadPool (Studio fallback) and the RX thread (packet size change)
+        // all rebuild the buffer; one lock keeps a swap from being lost.
+        lock (_jbSwap) ApplyTargetLocked(force);
+    }
+
+    private void ApplyTargetLocked(bool force)
     {
         int target = TargetPackets();
         double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
@@ -333,9 +375,15 @@ public sealed class Receiver : IDisposable
     public void Stop()
     {
         _stop = true;
-        _rx?.Join(1000); _ping?.Join(1000);
-        _sock?.Close(); _sock = null;
-        _pingSock?.Close(); _pingSock = null;
+        // 0.6.1 (audit L2): close the sockets first so blocked receives return at once; then the joins are short.
+        var s = _sock; var ps = _pingSock;
+        try { s?.Close(); } catch (Exception) { }
+        try { ps?.Close(); } catch (Exception) { }
+        bool rxDone = _rx?.Join(1000) ?? true;
+        bool pingDone = _ping?.Join(1000) ?? true;
+        StoppedCleanly = rxDone && pingDone;
+        if (!StoppedCleanly) Log?.Invoke($"receiver threads did not stop within 1 s (rx={(rxDone ? "done" : "running")}, ping={(pingDone ? "done" : "running")})");
+        _sock = null; _pingSock = null;
     }
 
     public void Dispose()
@@ -346,14 +394,14 @@ public sealed class Receiver : IDisposable
 
     private void Send(byte[] data, EndPoint to)
     {
-        try { _sock?.SendTo(data, to); } catch (Exception e) { Log?.Invoke($"send failed: {e.Message}"); }
+        try { _sock?.SendTo(data, to); } catch (Exception e) { LogLimited("send", $"send failed: {e.Message}"); }
     }
 
     private void SetPeer(IPEndPoint addr)
     {
         if (!addr.Equals(Peer))
         {
-            Log?.Invoke($"phone connected: {addr}");
+            LogLimited("peer:" + addr.Address, $"phone connected: {addr}");
             Peer = addr;
             PeerChanged?.Invoke(addr);
         }
@@ -362,10 +410,17 @@ public sealed class Receiver : IDisposable
 
     private void ClearPeer(string why)
     {
-        if (Peer is null) return;
-        Log?.Invoke($"phone {Peer} {why}");
+        if (Peer is not { } old) return;
+        Log?.Invoke($"phone {old} {why}");
+        // A new session from this address has to pair again when pairing is on.
+        _paired.Remove(old.Address);
         Peer = null;
         PeerChanged?.Invoke(null);
+    }
+
+    private void LogLimited(string key, string msg)
+    {
+        if (_logLimit.ShouldLog(key, out int suppressed)) Log?.Invoke(LogLimiter.WithCount(msg, suppressed));
     }
 
     private void RxLoop()
@@ -373,12 +428,14 @@ public sealed class Receiver : IDisposable
         try { RxThreadInit?.Invoke(); } catch (Exception) { }
         var buf = new byte[4096];
         EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+        var sock = _sock;
+        if (sock is null) return;
         while (!_stop)
         {
             int n;
             try
             {
-                n = _sock!.ReceiveFrom(buf, ref from);
+                n = sock.ReceiveFrom(buf, ref from);
             }
             catch (SocketException e) when (e.SocketErrorCode == SocketError.TimedOut)
             {
@@ -388,30 +445,131 @@ public sealed class Receiver : IDisposable
             catch (ObjectDisposedException) { break; }
             ulong arrival = NowUs();
             var addr = (IPEndPoint)from;
-            if (!Protocol.TryDecode(buf.AsSpan(0, n), out var h, out _)) continue;
-            switch (h.Type)
+            try { HandlePacket(buf, n, addr, arrival); }
+            catch (Exception e)
             {
-                case Protocol.TAudio:
-                    SetPeer(new IPEndPoint(addr.Address, addr.Port));
-                    OnAudio(h, buf.AsSpan(Protocol.HeaderSize, h.PayloadLength), arrival);
-                    break;
-                case Protocol.TDiscover:
-                    Log?.Invoke($"discover from {addr}");
-                    Send(Protocol.Encode(Protocol.THello, h.Seq, NowUs()), addr);
-                    SetPeer(new IPEndPoint(addr.Address, addr.Port));
-                    break;
-                case Protocol.TPong:
-                    OnPong(h, buf.AsSpan(Protocol.HeaderSize, Math.Max(0, n - Protocol.HeaderSize)), arrival);
-                    break;
-                case Protocol.TPing:
-                    Send(Protocol.Encode(Protocol.TPong, h.Seq, h.TsUs), addr);
-                    break;
-                case Protocol.TBye:
-                    ClearPeer("said bye");
-                    break;
+                // 0.6.1 (audit N5): one bad packet must never end the receive thread (and with it the process).
+                LogLimited("rx-exception", $"packet from {addr} ignored after an error: {e.GetType().Name}: {e.Message}");
             }
             CheckPeerTimeout();
         }
+    }
+
+    /// <summary>
+    /// Trust boundary (0.6.1, audit H1 and L5). In order: the source must be on the USB tethering subnet (or loopback);
+    /// while a phone is connected, packets from any other address are ignored until it times out or says BYE; AUDIO
+    /// must be well-formed before it can connect a peer or resize the jitter buffer; and with a pairing code set, a new
+    /// phone must answer a challenge first.
+    /// </summary>
+    private void HandlePacket(byte[] buf, int n, IPEndPoint addr, ulong arrival)
+    {
+        if (!Protocol.TryDecode(buf.AsSpan(0, n), out var h, out _)) return;
+        var policy = _policy;
+        if (!ReferenceEquals(policy, _policySeen))
+        {
+            _policySeen = policy;
+            _paired.Clear(); _challenges.Clear(); _pairFailures.Clear();
+            Log?.Invoke("accepting: " + policy);
+        }
+        if (!policy.IsTrustedNetwork(addr.Address))
+        {
+            _lastUntrusted = addr.Address;
+            Interlocked.Exchange(ref _lastUntrustedTicks, Stopwatch.GetTimestamp());
+            LogLimited("untrusted:" + addr.Address, $"ignored packets from {addr.Address}: not on the USB tethering adapter");
+            return;
+        }
+        var peer = Peer;
+        bool fromPeer = peer is not null && peer.Address.Equals(addr.Address);
+        bool locked = peer is not null && !fromPeer;
+        switch (h.Type)
+        {
+            case Protocol.TAudio:
+                if (locked) { LogLimited("locked:" + addr.Address, $"ignored {addr}: connected to {peer} until it disconnects"); return; }
+                if (!Protocol.IsAcceptableAudio(h, _sampleRate, _channels, out var why))
+                {
+                    LogLimited("badaudio:" + addr.Address, $"ignored audio from {addr}: {why}");
+                    return;
+                }
+                if (!IsAdmitted(addr, policy, fromPeer)) { Challenge(addr, policy); return; }
+                SetPeer(new IPEndPoint(addr.Address, addr.Port));
+                OnAudio(h, buf.AsSpan(Protocol.HeaderSize, h.PayloadLength), arrival);
+                break;
+            case Protocol.TDiscover:
+                if (locked) { LogLimited("locked:" + addr.Address, $"ignored discover from {addr}: connected to {peer}"); return; }
+                if (!IsAdmitted(addr, policy, fromPeer)) { Challenge(addr, policy); return; }
+                LogLimited("discover:" + addr.Address, $"discover from {addr}");
+                Send(Protocol.Encode(Protocol.THello, h.Seq, NowUs()), addr);
+                SetPeer(new IPEndPoint(addr.Address, addr.Port));
+                break;
+            case Protocol.TPairProof:
+                if (locked) return;
+                OnPairProof(addr, policy, buf.AsSpan(Protocol.HeaderSize, Math.Max(0, n - Protocol.HeaderSize)), h.Seq);
+                break;
+            case Protocol.TPong:
+                // Phone status and settings are taken only from the connected phone.
+                if (!fromPeer) return;
+                OnPong(h, buf.AsSpan(Protocol.HeaderSize, Math.Max(0, n - Protocol.HeaderSize)), arrival);
+                break;
+            case Protocol.TPing:
+                if (locked || !IsAdmitted(addr, policy, fromPeer)) return;
+                Send(Protocol.Encode(Protocol.TPong, h.Seq, h.TsUs), addr);
+                break;
+            case Protocol.TBye:
+                if (fromPeer) ClearPeer("said bye");
+                break;
+        }
+    }
+
+    private bool IsAdmitted(IPEndPoint addr, SourcePolicy policy, bool fromPeer)
+    {
+        if (!policy.PairingRequired) return true;
+        return _paired.Contains(addr.Address);
+    }
+
+    private void Challenge(IPEndPoint addr, SourcePolicy policy)
+    {
+        long now = Stopwatch.GetTimestamp();
+        _pendingPairing = new IPEndPoint(addr.Address, addr.Port);
+        Interlocked.Exchange(ref _pendingPairingTicks, now);
+        if (_pairFailures.TryGetValue(addr.Address, out var f) && f.Failures >= MaxPairFailures && now < f.Until) return;
+        if (_challenges.TryGetValue(addr.Address, out var c))
+        {
+            if (Seconds(now - c.LastSent) < 1.0) return;
+            // A nonce lives 5 s, so a proof in flight still matches; then a fresh one is issued.
+            if (Seconds(now - c.Issued) >= 5.0) c = (Pairing.NewNonce(), now, now);
+            else c = (c.Nonce, c.Issued, now);
+        }
+        else
+        {
+            if (_challenges.Count >= 16) _challenges.Clear();
+            c = (Pairing.NewNonce(), now, now);
+            LogLimited("pair:" + addr.Address, $"pairing code required: challenge sent to {addr}");
+        }
+        _challenges[addr.Address] = c;
+        Send(Protocol.Encode(Protocol.TPairChallenge, 0, NowUs(), c.Nonce), addr);
+    }
+
+    private void OnPairProof(IPEndPoint addr, SourcePolicy policy, ReadOnlySpan<byte> payload, uint seq)
+    {
+        if (policy.PairingKey is not { } key) return;
+        if (!_challenges.TryGetValue(addr.Address, out var c)) return;
+        long now = Stopwatch.GetTimestamp();
+        if (_pairFailures.TryGetValue(addr.Address, out var f) && f.Failures >= MaxPairFailures && now < f.Until) return;
+        // Single use: the nonce is consumed whether or not the proof is right.
+        _challenges.Remove(addr.Address);
+        if (!Pairing.Verify(key, c.Nonce, payload))
+        {
+            int fails = (f.Until > now ? f.Failures : 0) + 1;
+            _pairFailures[addr.Address] = (fails, now + 60 * Stopwatch.Frequency);
+            LogLimited("pairfail:" + addr.Address, $"wrong pairing code from {addr} ({fails} of {MaxPairFailures} before a 60 s pause)");
+            return;
+        }
+        _pairFailures.Remove(addr.Address);
+        _paired.Add(addr.Address);
+        _pendingPairing = null;
+        Log?.Invoke($"phone {addr} paired");
+        Send(Protocol.Encode(Protocol.THello, seq, NowUs()), addr);
+        SetPeer(new IPEndPoint(addr.Address, addr.Port));
     }
 
     private void OnPong(in PacketHeader h, ReadOnlySpan<byte> payload, ulong arrival)
@@ -434,15 +592,16 @@ public sealed class Receiver : IDisposable
 
     private void OnAudio(in PacketHeader h, ReadOnlySpan<byte> payload, ulong arrivalUs)
     {
-        if (h.SampleRate != _sampleRate || h.Channels != _channels)
-        {
-            Log?.Invoke($"format mismatch: got {h.SampleRate} Hz/{h.Channels} ch");
-            return;
-        }
         if (h.Frames != FramesPerPacket)
         {
-            Log?.Invoke($"packet size changed {FramesPerPacket} -> {h.Frames} frames");
-            _jb = MakeJb(h.Frames);
+            lock (_jbSwap)
+            {
+                if (h.Frames != FramesPerPacket)
+                {
+                    LogLimited("pktsize", $"packet size changed {FramesPerPacket} -> {h.Frames} frames");
+                    _jb = MakeJb(h.Frames);
+                }
+            }
         }
         lock (_lock)
         {

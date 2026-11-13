@@ -21,10 +21,12 @@ class MicService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     private var lastKey = ""
+    private var wakeRenewedAt = 0L
 
     private val ticker = object : Runnable {
         override fun run() {
             val s = streamer ?: return
+            renewWakeLock(force = false)
             val target = s.targetAddress?.let { "${it.address.hostAddress}:${it.port}" }
             val key = "${s.state}|$target"
             if (key != lastKey) {
@@ -49,8 +51,11 @@ class MicService : Service() {
         } else {
             startForeground(NOTIF_ID, buildNotification(Streamer.State.STARTING, null))
         }
+        // 0.6.1 (audit L8): a non-counted lock with a 1 h timeout that the 1 s ticker renews every 30 min while the
+        // service runs, instead of a fixed 12 h cap that lapsed silently. If the process dies, it expires within 1 h.
         wakeLock = getSystemService(PowerManager::class.java)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CordMic:stream").apply { acquire(12 * 60 * 60 * 1000L) } // max 12 h
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CordMic:stream").apply { setReferenceCounted(false) }
+        renewWakeLock(force = true)
         val cfg = Streamer.Config(
             manualHost = intent?.getStringExtra(EXTRA_HOST),
             port = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_PORT) ?: Protocol.DEFAULT_PORT,
@@ -70,11 +75,21 @@ class MicService : Service() {
             autoOptimize = intent?.getBooleanExtra(EXTRA_AUTO_OPTIMIZE, true) ?: true,
             userSetGain = intent?.getBooleanExtra(EXTRA_USER_SET_GAIN, false) ?: false,
             upgradeGainNudge = intent?.getBooleanExtra(EXTRA_UPGRADE_GAIN_NUDGE, false) ?: false,
+            pairingCode = Pairing.normalize(intent?.getStringExtra(EXTRA_PAIR_CODE)),
         )
         streamer = Streamer(applicationContext, cfg).also { current = it; it.start() }
         handler.post(ticker)
         // Not sticky: Android 14 forbids restarting a microphone FGS from the background.
         return START_NOT_STICKY
+    }
+
+    @SuppressLint("WakelockTimeout")
+    private fun renewWakeLock(force: Boolean) {
+        val wl = wakeLock ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!WakeLockPolicy.shouldRenew(force, now, wakeRenewedAt)) return
+        wl.acquire(WakeLockPolicy.TIMEOUT_MS)
+        wakeRenewedAt = now
     }
 
     private fun shutdown() {
@@ -137,6 +152,7 @@ class MicService : Service() {
         const val EXTRA_AUTO_OPTIMIZE = "autoOptimize"
         const val EXTRA_USER_SET_GAIN = "userSetGain"
         const val EXTRA_UPGRADE_GAIN_NUDGE = "upgradeGainNudge"
+        const val EXTRA_PAIR_CODE = "pairCode"
         private const val CHANNEL = "cordmic"
         private const val NOTIF_ID = 1
         // Streamer holds only the application context, which cannot leak an Activity.
@@ -145,4 +161,11 @@ class MicService : Service() {
 
         fun stop(ctx: Context) = ctx.startService(Intent(ctx, MicService::class.java).setAction(ACTION_STOP))
     }
+}
+
+/** Wakelock renewal schedule (0.6.1): 1 h timeout, renewed every 30 min while streaming. */
+object WakeLockPolicy {
+    const val TIMEOUT_MS = 60 * 60 * 1000L
+    const val RENEW_EVERY_MS = 30 * 60 * 1000L
+    fun shouldRenew(force: Boolean, nowMs: Long, lastMs: Long): Boolean = force || lastMs == 0L || nowMs - lastMs >= RENEW_EVERY_MS
 }

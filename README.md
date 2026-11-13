@@ -125,8 +125,9 @@ to avoid processing the voice twice.
 
 What the installer does:
 - installs to `C:\Program Files\CordMic` with a Start menu shortcut (optional: start with Windows, desktop shortcut);
-- adds the inbound firewall rule **CordMic (UDP 50005)**, limited to the local subnet, for all profiles
-  (tethering networks are usually classified as "Public");
+- adds the inbound firewall rule **CordMic (UDP 50005)** for the *Private* profile. The scheduled task below marks
+  the phone's tethering network as *Private* and limits the rule to that network's subnet (from 0.6.1; before, the
+  rule allowed the whole local subnet on every profile). With no phone connected the rule allows only `127.0.0.1`;
 - adds the scheduled task `\CordMic\SetTetherMetric` (runs as SYSTEM at boot, logon and on network changes) that
   sets the phone adapter's interface **metric to 9999**, so internet traffic stays on LAN/Wi-Fi and the phone link
   carries only audio;

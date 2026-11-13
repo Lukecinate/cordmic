@@ -71,8 +71,8 @@ VIAddVersionKey /LANG=0 "LegalCopyright" "Copyright (c) ${PUBLISHER}. MIT Licens
 
 LangString TxtWelcomeTitle ${LANG_ENGLISH} "Install CordMic"
 LangString TxtWelcomeTitle ${LANG_INDONESIAN} "Pasang CordMic"
-LangString TxtWelcomeText ${LANG_ENGLISH} "CordMic turns an Android phone into a PC microphone over a USB cable (USB tethering), with no Wi-Fi and no USB debugging.$\r$\n$\r$\nThis installer will:$\r$\n  • install the CordMic tray app$\r$\n  • open UDP port 50005 in the firewall (local network only)$\r$\n  • give the phone adapter a low priority so games keep using LAN/Wi-Fi$\r$\n$\r$\nAn optional step can download VB-CABLE from its official site (verified, not bundled). A reboot may be required afterward."
-LangString TxtWelcomeText ${LANG_INDONESIAN} "CordMic menjadikan HP Android sebagai mikrofon PC lewat kabel USB (USB tethering), tanpa Wi-Fi dan tanpa USB debugging.$\r$\n$\r$\nInstaller ini akan:$\r$\n  • memasang aplikasi tray CordMic$\r$\n  • membuka port UDP 50005 di firewall (hanya jaringan lokal)$\r$\n  • membuat adapter HP berprioritas rendah agar game tetap pakai LAN/Wi-Fi$\r$\n$\r$\nLangkah opsional dapat mengunduh VB-CABLE dari situs resminya (diverifikasi, tidak dibundle). Restart mungkin diperlukan setelahnya."
+LangString TxtWelcomeText ${LANG_ENGLISH} "CordMic turns an Android phone into a PC microphone over a USB cable (USB tethering), with no Wi-Fi and no USB debugging.$\r$\n$\r$\nThis installer will:$\r$\n  • install the CordMic tray app$\r$\n  • open UDP port 50005 in the firewall (USB tethering link only, Private profile)$\r$\n  • give the phone adapter a low priority so games keep using LAN/Wi-Fi$\r$\n$\r$\nAn optional step can download VB-CABLE from its official site (verified, not bundled). A reboot may be required afterward."
+LangString TxtWelcomeText ${LANG_INDONESIAN} "CordMic menjadikan HP Android sebagai mikrofon PC lewat kabel USB (USB tethering), tanpa Wi-Fi dan tanpa USB debugging.$\r$\n$\r$\nInstaller ini akan:$\r$\n  • memasang aplikasi tray CordMic$\r$\n  • membuka port UDP 50005 di firewall (hanya link USB tethering, profil Private)$\r$\n  • membuat adapter HP berprioritas rendah agar game tetap pakai LAN/Wi-Fi$\r$\n$\r$\nLangkah opsional dapat mengunduh VB-CABLE dari situs resminya (diverifikasi, tidak dibundle). Restart mungkin diperlukan setelahnya."
 LangString TxtFinishTitle ${LANG_ENGLISH} "CordMic is installed"
 LangString TxtFinishTitle ${LANG_INDONESIAN} "CordMic sudah terpasang"
 LangString TxtFinishText ${LANG_ENGLISH} "CordMic runs in the system tray (bottom right). The setup guide opens when the app starts."
@@ -120,6 +120,14 @@ FunctionEnd
 ; Start the tray app as the logged-in user (not elevated): explorer.exe launches it with the shell's token.
 Function LaunchUnelevated
   Exec '"$WINDIR\explorer.exe" "$INSTDIR\CordMic.exe"'
+FunctionEnd
+
+; 0.6.1 (audit L10): a silent update that fails still brings the (previous) tray app back, so the mic does not stay down.
+Function .onInstFailed
+  ${If} ${Silent}
+  ${AndIf} ${FileExists} "$INSTDIR\CordMic.exe"
+    Call LaunchUnelevated
+  ${EndIf}
 FunctionEnd
 
 ;  Upgrade from the old brand: stop the old exe, remove its firewall rule, scheduled task, autostart value,
@@ -200,7 +208,7 @@ Section "$(SecMainName)" SecMain
   Pop $0
   ${If} $0 != 0
     DetailPrint "$(TxtPsFailed)"
-    nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="CordMic (UDP 50005)" dir=in action=allow protocol=UDP localport=50005 program="$INSTDIR\CordMic.exe" remoteip=localsubnet profile=any'
+    nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="CordMic (UDP 50005)" dir=in action=allow protocol=UDP localport=50005 program="$INSTDIR\CordMic.exe" remoteip=localsubnet profile=private'
     Pop $0
   ${EndIf}
 

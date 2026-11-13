@@ -118,6 +118,12 @@ public class DspPortTests
         for (int i = 0; i < 5; i++) { fresh.Lost(pkt); Assert.All(pkt, v => Assert.Equal(0f, v)); }
     }
 
+    /// <summary>
+    /// PLC-7 CPU budget, deterministic since 0.6.1 (audit L11): instead of a wall-clock limit (flaky on shared runners)
+    /// it checks the work that bounds the worst frame. Every loss run does exactly one pitch search, a search never
+    /// exceeds <see cref="PitchPlc.MaxTapsPerSearch"/> multiply-accumulates (≈ 0.1 M, far below 0.2 ms on any x64 CPU),
+    /// good packets do no search, and nothing allocates. The measured time is printed for information only.
+    /// </summary>
     [Fact]
     public void Plc7_WorstFrameCpu()
     {
@@ -125,20 +131,34 @@ public class DspPortTests
         var pkt = new float[P];
         var sig = Signal("voiced_150Hz", 2000 * P);
         var sw = new Stopwatch();
-        double worst = 0;
-        var times = new List<double>();
-        for (int p = 0; p < 2000; p++)
+        var times = new List<double>(256);
+        long worstTaps = 0, lossRuns = 0, goodTaps = 0;
+        for (int p = 0; p < 200; p++) Step(p, measure: false);
+        long alloc0 = GC.GetAllocatedBytesForCurrentThread();
+        for (int p = 200; p < 2000; p++) Step(p, measure: true);
+        long alloc = GC.GetAllocatedBytesForCurrentThread() - alloc0;
+        times.Sort();
+        _out.WriteLine($"PLC-7 loss frame worst {worstTaps} taps (bound {PitchPlc.MaxTapsPerSearch}), searches {plc.PitchSearches}, " +
+                       $"info: p99 {times[(int)(times.Count * 0.99)]:F3} ms, max {times[^1]:F3} ms, allocated {alloc} B");
+        Assert.Equal(0, goodTaps);
+        Assert.InRange(worstTaps, PitchPlc.MaxTapsPerSearch / 2, PitchPlc.MaxTapsPerSearch);
+        Assert.Equal(200, plc.PitchSearches);
+        Assert.Equal(180, lossRuns);
+        Assert.True(alloc <= 0, $"allocated {alloc} B in the measured loop (times list was pre-sized)");
+
+        void Step(int p, bool measure)
         {
+            long t0 = plc.SearchTaps;
             sw.Restart();
-            if (p % 10 == 9) plc.Lost(pkt); // each a new loss run: full pitch search
+            bool loss = p % 10 == 9; // each a new loss run: full pitch search
+            if (loss) plc.Lost(pkt);
             else { for (int i = 0; i < P; i++) pkt[i] = (float)sig[p * P + i]; plc.Good(pkt); }
             double ms = sw.Elapsed.TotalMilliseconds;
-            if (p > 200 && p % 10 == 9) times.Add(ms);
+            long taps = plc.SearchTaps - t0;
+            if (!measure) return;
+            if (loss) { lossRuns++; worstTaps = Math.Max(worstTaps, taps); if (times.Count < times.Capacity) times.Add(ms); }
+            else goodTaps += taps;
         }
-        times.Sort();
-        worst = times[(int)(times.Count * 0.99)];
-        _out.WriteLine($"PLC-7 loss frame p99 {worst:F3} ms (max {times[^1]:F3}), searches {plc.PitchSearches}");
-        Assert.True(worst <= 0.2, worst.ToString());
     }
 
     private sealed class ArraySource : IFloatSource

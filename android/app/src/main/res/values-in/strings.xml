@@ -83,6 +83,10 @@
     <string name="gain_value">+%1$d dB</string>
     <string name="gain_help">Default +6 dB. Volume otomatis mengatur sisanya. Puncak tetap di −1 dBFS atau lebih rendah.</string>
     <string name="err_port">Isi port dari 1 sampai 65535.</string>
+    <string name="label_pair_code">Kode pairing (opsional)</string>
+    <string name="helper_pair_code">Hanya perlu jika \"Wajibkan kode pairing di HP\" aktif di aplikasi PC.</string>
+    <string name="err_pair_code">Isi 6 digit yang tampil di aplikasi PC, atau kosongkan.</string>
+    <string name="pairing_needed">PC meminta kode pairing. Isi 6 digit yang tampil di aplikasi PC, lalu ketuk Hentikan lalu Mulai.</string>
     <string name="err_ip">Isi alamat IPv4 seperti 192.168.42.10, atau kosongkan.</string>
     <string name="expand_cd">Tampilkan %1$s</string>
     <string name="collapse_cd">Sembunyikan %1$s</string>

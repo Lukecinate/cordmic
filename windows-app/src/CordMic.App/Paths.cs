@@ -11,6 +11,8 @@ internal static class Paths
     public static string ExePath => Environment.ProcessPath ?? Application.ExecutablePath;
     public static string ExeDir => Path.GetDirectoryName(ExePath)!;
     public static string MetricScript => Path.Combine(ExeDir, "tools", "set-tether-metric.ps1");
+    /// <summary>Parent of the per-run private download directories (0.6.1, audit M1).</summary>
+    public static string Staging => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CordMic", "staging");
 
     // Pre-0.3.0 product name. Used only for one-time migration (settings + autostart), see Migration below.
     public const string LegacyName = "UsbMic";

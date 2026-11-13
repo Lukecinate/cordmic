@@ -1,14 +1,28 @@
 using System.Diagnostics;
-using System.IO.Compression;
 using System.Net.Http;
 using System.Security.Cryptography.X509Certificates;
 using CordMic.Core;
 
 namespace CordMic.App;
 
+/// <summary>Extracted, verified VB-CABLE setup. The files stay locked against writes until it is disposed.</summary>
+internal sealed class StagedCable : IDisposable
+{
+    public StagedCable(string setupPath, string dir, LockedFiles locks) { SetupPath = setupPath; Dir = dir; Locks = locks; }
+    public string SetupPath { get; }
+    public string Dir { get; }
+    public LockedFiles Locks { get; }
+    public void Dispose()
+    {
+        Locks.Dispose();
+        SecureFiles.TryDelete(Dir);
+    }
+}
+
 /// <summary>
-/// Downloads the official VB-CABLE pack, verifies the pinned SHA-256 (and Authenticode
-/// signer on Windows), then launches VB-Audio's own setup. The zip is never shipped with CordMic.
+/// Downloads the official VB-CABLE pack, verifies the pinned SHA-256, extracts it into a private directory with every
+/// file locked against writes, checks the setup's Authenticode signature with WinVerifyTrust on that handle plus the
+/// signer name, then launches VB-Audio's own setup. The zip is never shipped with CordMic.
 /// </summary>
 internal static class CableInstaller
 {
@@ -32,50 +46,59 @@ internal static class CableInstaller
         return false;
     }
 
-    public static async Task<string> DownloadAndVerifyAsync(CancellationToken ct = default)
+    public static async Task<StagedCable> DownloadAndVerifyAsync(CancellationToken ct = default)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "cordmic-vbcable-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        var zipPath = Path.Combine(dir, VbCable.FileName);
-        await using (var input = await Http.GetStreamAsync(VbCable.DownloadUrl, ct).ConfigureAwait(false))
-        await using (var output = File.Create(zipPath))
-            await input.CopyToAsync(output, ct).ConfigureAwait(false);
-
-        if (!VbCable.HashMatchesFile(zipPath))
-        {
-            TryDelete(dir);
+        byte[] zip = await Http.GetByteArrayAsync(VbCable.DownloadUrl, ct).ConfigureAwait(false);
+        // The pin is checked on the in-memory bytes, so nothing on disk can change what was verified.
+        if (!VbCable.HashMatches(zip))
             throw new InvalidOperationException("VB-CABLE package SHA-256 mismatch; aborting");
-        }
 
-        ZipFile.ExtractToDirectory(zipPath, dir);
-        var setup = Path.Combine(dir, VbCable.SetupX64);
-        if (!File.Exists(setup))
+        var dir = SecureFiles.CreatePrivateDirectory(Paths.Staging, "vbcable-");
+        var locks = new LockedFiles();
+        try
         {
-            TryDelete(dir);
-            throw new InvalidOperationException("Official zip did not contain " + VbCable.SetupX64);
-        }
-
-        if (OperatingSystem.IsWindows())
-        {
-            var cert = GetSignerSubject(setup);
-            if (!VbCable.SignerLooksTrusted(cert))
+            var setup = VbCable.ExtractLocked(zip, dir, locks);
+            if (OperatingSystem.IsWindows())
             {
-                TryDelete(dir);
-                throw new InvalidOperationException("Authenticode signer not recognized: " + (cert ?? "(none)"));
+                var handle = locks.Handles.First(h => string.Equals(h.Name, setup, StringComparison.OrdinalIgnoreCase));
+                int hr = Authenticode.Verify(handle, setup);
+                if (hr != 0) throw new InvalidOperationException($"Authenticode signature not trusted (0x{hr:X8})");
+                var subject = GetSignerSubject(setup);
+                if (!VbCable.SignerLooksTrusted(subject))
+                    throw new InvalidOperationException("Authenticode signer not recognized: " + (subject ?? "(none)"));
             }
+            return new StagedCable(setup, dir, locks);
         }
-        return setup;
+        catch
+        {
+            locks.Dispose();
+            SecureFiles.TryDelete(dir);
+            throw;
+        }
     }
 
-    public static void LaunchSetup(string setupPath)
+    /// <summary>
+    /// Runs the official setup elevated (no documented silent switch) and keeps every extracted file locked until it
+    /// exits, then removes the staging directory.
+    /// </summary>
+    public static async Task RunSetupAsync(StagedCable staged)
     {
-        // The official package documents no silent switch; run the UI elevated.
-        var psi = new ProcessStartInfo(setupPath)
+        var psi = new ProcessStartInfo(staged.SetupPath)
         {
             UseShellExecute = true,
             Verb = "runas",
         };
-        Process.Start(psi);
+        try
+        {
+            using var p = await Task.Run(() => Process.Start(psi)).ConfigureAwait(true);
+            if (p is not null)
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+                try { await p.WaitForExitAsync(cts.Token).ConfigureAwait(true); }
+                catch (OperationCanceledException) { }
+            }
+        }
+        finally { staged.Dispose(); }
     }
 
     public static string? GetSignerSubject(string path)
@@ -89,10 +112,5 @@ internal static class CableInstaller
         {
             return null;
         }
-    }
-
-    private static void TryDelete(string dir)
-    {
-        try { Directory.Delete(dir, recursive: true); } catch (Exception) { }
     }
 }

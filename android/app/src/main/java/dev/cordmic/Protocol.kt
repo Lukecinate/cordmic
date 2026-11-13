@@ -13,6 +13,9 @@ object Protocol {
     const val T_PING: Byte = 4
     const val T_PONG: Byte = 5
     const val T_BYE: Byte = 6
+    /** 0.6.1 pairing: PC → phone 16-byte nonce; phone → PC nonce ‖ 16-byte MAC (see [Pairing]). Older PCs never send it. */
+    const val T_PAIR_CHALLENGE: Byte = 7
+    const val T_PAIR_PROOF: Byte = 8
     const val DEFAULT_PORT = 50005
 
     /**

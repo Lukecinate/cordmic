@@ -34,7 +34,19 @@ if ($SkipIfPresent -and (Test-VbCableInstalled)) {
     exit 0
 }
 
-$tmp = Join-Path $env:TEMP ("cordmic-vbcable-" + [guid]::NewGuid().ToString("N"))
+# 0.6.1 (audit M1): stage in %ProgramData%\CordMic (Administrators/SYSTEM write only, set by cordmic-setup.ps1),
+# not the user's %TEMP%, so a process without admin rights cannot swap the verified files before they run elevated.
+$base = Join-Path $env:ProgramData 'CordMic'
+if (-not (Test-Path -LiteralPath $base)) {
+    New-Item -ItemType Directory -Path $base | Out-Null
+    & "$env:SystemRoot\System32\icacls.exe" $base /setowner '*S-1-5-32-544' /C /Q | Out-Null
+    & "$env:SystemRoot\System32\icacls.exe" $base /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
+}
+if ((Get-Item -LiteralPath $base -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+    Write-Host "$base is a reparse point; refusing to stage VB-CABLE there."
+    exit 1
+}
+$tmp = Join-Path $base ("vbcable-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
     $zip = Join-Path $tmp "VBCABLE_Driver_Pack46.zip"

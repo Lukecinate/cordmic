@@ -2,7 +2,7 @@
 
 CordMic is a local USB-tethering audio app. This page describes the privileged
 helper introduced in 0.5.2 and how to undo what it changes, and the network
-access the apps perform (current as of 0.6.0).
+access the apps perform (current as of 0.6.1).
 
 ## What the app changes
 
@@ -54,7 +54,13 @@ Previous values are stored in `%ProgramData%\CordMic\cable-format-backup.json`
 with an ACL that grants full control to Administrators and SYSTEM and read
 access to Users. The first successful configure keeps that backup so later
 runs cannot overwrite the original with the optimized format. Helper actions
-are logged to `%LOCALAPPDATA%\CordMic\logs\cable-helper.log`.
+are logged to `%ProgramData%\CordMic\cable-helper.log`.
+
+From 0.6.1 the elevated helper uses `%ProgramData%\CordMic` only if it is a
+real folder (not a junction or symbolic link) owned by Administrators; the
+installer sets that owner and ACL. A backup or log in a folder that fails the
+check is not read or written, and the backup is created with `CreateNew`, so a
+pre-planted file is never followed or overwritten.
 
 ## What the helper refuses
 
@@ -71,10 +77,45 @@ Exit codes: `0` success (including "already configured" and "nothing to
 restore"), `1` usage, `2` no matching VB-CABLE endpoints (the installer treats
 this as fine), `3` I/O or backup failure with no changes, `4` partial write.
 
+## Which phones the PC accepts (0.6.1)
+
+- **Sources.** The receiver handles packets only from `127.0.0.1` and from the
+  subnet of the detected USB tethering adapter. Packets from Wi-Fi, LAN or VPN
+  hosts are dropped without a reply, and the status line says so if they keep
+  arriving. An adapter that CordMic does not recognise as USB tethering is not
+  trusted; the status then shows *Phone not on the USB cable*.
+- **One phone.** The first phone that streams becomes the peer. Until it stops
+  for 3 s or says goodbye, audio, PONG and BYE from any other address are
+  ignored.
+- **Firewall.** The rule *CordMic (UDP 50005)* is created for the *Private*
+  profile and `127.0.0.1`. The SYSTEM task `\CordMic\SetTetherMetric` marks the
+  tethering network as *Private* and narrows the rule to its subnet whenever the
+  network changes, and on install or upgrade. If Windows refuses to change the
+  network category, the rule is still limited to the tethering subnet.
+- **Optional pairing code.** *Require a pairing code on the phone* (main window,
+  off by default) shows a 6-digit code. The phone enters it once under
+  Settings. The PC sends a random single-use challenge; the phone answers with
+  an HMAC-SHA256 proof keyed by PBKDF2-SHA256 of the code (20 000 iterations), so
+  the code itself never travels. Five wrong answers pause pairing from that
+  address for 60 s. With the option off, a phone on the tethering cable
+  connects without a code, as before.
+- **Phone side.** With a manual PC address the phone accepts control packets
+  only from that address; in automatic mode it takes settings (PING) only from
+  the PC it is streaming to.
+
+## Downloaded installers (0.6.1)
+
+The update installer and the VB-CABLE setup are downloaded into memory, checked
+(SHA-256, and for VB-CABLE the Authenticode signature and signer), and written
+to a new folder with a random name whose ACL allows only the current user,
+SYSTEM and Administrators. Each file stays open with write and delete sharing
+denied from the hash check until the started process has opened it, so the
+file cannot be replaced between the check and the launch.
+
 ## Network access
 
 Audio, discovery and control traffic stay on the USB tethering link (UDP 50005,
-local subnet only). Apart from that, CordMic makes only these requests, all over
+tethering subnet only). Apart from that, CordMic makes only these requests, all over
 HTTPS and without an account:
 
 - **Update check** (phone and PC, from 0.5.5): the latest GitHub Release of

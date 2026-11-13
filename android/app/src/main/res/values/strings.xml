@@ -86,6 +86,10 @@
     <string name="gain_value">+%1$d dB</string>
     <string name="gain_help">Default +6 dB. Auto volume does the rest. Peaks stay at or below −1 dBFS.</string>
     <string name="err_port">Enter a port from 1 to 65535.</string>
+    <string name="label_pair_code">Pairing code (optional)</string>
+    <string name="helper_pair_code">Only needed when the PC app has \"Require a pairing code on the phone\" turned on.</string>
+    <string name="err_pair_code">Enter the 6 digits shown in the PC app, or leave it empty.</string>
+    <string name="pairing_needed">The PC asks for a pairing code. Enter the 6 digits shown in the PC app, then tap Stop and Start.</string>
     <string name="err_ip">Enter an IPv4 address such as 192.168.42.10, or leave it empty.</string>
     <string name="expand_cd">Show %1$s</string>
     <string name="collapse_cd">Hide %1$s</string>

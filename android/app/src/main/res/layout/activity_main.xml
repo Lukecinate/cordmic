@@ -334,6 +334,23 @@
                             </com.google.android.material.textfield.TextInputLayout>
 
                             <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/pairCodeLayout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="12dp"
+                                android:hint="@string/label_pair_code"
+                                app:helperText="@string/helper_pair_code">
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/pairCode"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:importantForAutofill="no"
+                                    android:inputType="number"
+                                    android:maxLength="6"
+                                    android:maxLines="1" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
                                 android:id="@+id/presetLayout"
                                 style="@style/Widget.CordMic.Dropdown"
                                 android:layout_width="match_parent"
