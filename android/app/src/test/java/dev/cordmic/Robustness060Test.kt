@@ -49,7 +49,7 @@ class Robustness060Test {
     @Test fun micDirectionGuardsNeverThrow() {
         assertEquals(1, applyFrontFocusOps(30, true, FakeOps({ true })))
         assertEquals(0, applyFrontFocusOps(30, false, FakeOps({ throw IllegalStateException() })))
-        assertEquals(2, applyFrontFocusOps(30, true, FakeOps({ throw IllegalStateException("hal") })))
+        assertEquals(3, applyFrontFocusOps(30, true, FakeOps({ throw IllegalStateException("hal") }))) // 0.6.2: narrow-field fallback
         assertEquals(1, applyFrontFocusOps(30, true, FakeOps({ true }, { throw UnsupportedOperationException() }, { throw RuntimeException() })))
         val logs = mutableListOf<String>()
         assertEquals(1, applyFrontFocusOps(30, true, FakeOps({ true }, mics = { 0 }), logs::add))

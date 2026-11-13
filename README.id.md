@@ -310,12 +310,20 @@ dimatikan. Di PC, sebuah worker thread (bukan callback audio) menjalankan:
    diselaraskan dengan delay RNNoise 20 ms.
 2. **WhisperGuard** mencampur kembali ke keluaran Kuat saat RNNoise membuang sinyal yang jelas ada (bisikan atau
    konsonan lembut). *Seimbang* (preset default), *Prioritas bisikan* (lebih banyak dicampur kembali, bisikan paling
-   terjaga) dan *Maksimal* (hanya RNNoise, pembersihan paling kuat, bisikan bisa menipis).
+   terjaga) dan *Maksimal* (hanya RNNoise, pembersihan paling kuat, bisikan bisa menipis). Sejak 0.6.2 guard baru
+   terbuka setelah sinyal ada selama 300 ms (atau RNNoise mendeteksi suara) dan melepas dalam sekitar 200 ms, sehingga
+   benturan singkat tidak membuatnya hidup-mati.
 3. **Volume otomatis (B3)**, bila Volume otomatis aktif: berbasis loudness (LUFS), menuju −21 LUFS, dibekukan saat
-   jeda, dengan limiter −1 dBFS. Gain-nya diingat antarsesi.
+   jeda, dengan limiter −1 dBFS. Gain dibatasi agar latar yang dikuatkan tetap di −60 dBFS atau lebih rendah. Gain-nya
+   diingat antarsesi, paling tinggi +15 dB.
+4. **Lantai nyaman** (0.6.2): lapisan noise sangat pelan, 45 dB di bawah loudness ucapan keluaran, paling tinggi −65 dBFS, sehingga jeda tidak pernah
+   jatuh ke sunyi digital dan lompatan antara ucapan dan jeda tetap kecil.
 
-Tambahan latensi sekitar 30 ms (RNNoise 20 ms ditambah satu frame worker 10 ms). Pemrosesan memakan sekitar 0,55 ms
-per frame 10 ms di mesin build tanpa alokasi per frame. Bila worker melewatkan 3 tenggat dalam 1 detik, Studio mati
+Tambahan latensi sekitar 40 ms (RNNoise 20 ms ditambah dua frame worker 10 ms; satu frame sebelum 0.6.2). Pemrosesan memakan sekitar 0,55 ms
+per frame 10 ms di mesin build tanpa alokasi per frame. Bila buffer worker kurang saat diambil render, celahnya diisi
+dengan mengulang periode pitch terakhir (dicatat sebagai `studiounder=` / `studiomiss=` di log), bukan sunyi singkat.
+Mengganti preset Studio berpindah langsung tanpa membangun ulang jitter buffer. Selama tidak ada HP yang terhubung,
+worker Studio dijeda. Bila worker melewatkan 3 tenggat dalam 1 detik, Studio mati
 untuk sesi itu, pemberitahuan muncul, dan peredam noise HP dipakai lagi. Dengan HP versi lebih lama dari 0.6.0, PC
 menampilkan bahwa HP belum mengonfirmasi bypass.
 
@@ -374,7 +382,7 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
   didistribusikan di luar Google Play. Versi 0.3.0 memakai kunci debug; uninstall dulu sebelum memasang versi berikutnya.
 - **Round-trip time hanya dari sisi PC.** HP menjawab PING dari PC tetapi tidak mengukurnya, jadi aplikasi HP
   menampilkan umur balasan PC terakhir.
-- **Latensi dan loudness Studio.** Peredam bising Studio di PC menambah sekitar 30 ms, lebih dari target 12 ms di
+- **Latensi dan loudness Studio.** Peredam bising Studio di PC menambah sekitar 40 ms, lebih dari target 12 ms di
   rencana 0.6.0, karena itu sifatnya opsional. Bisikan bisa tetap beberapa LU di bawah target −21 LUFS, dan bunyi
   hentakan seperti bus atau keyboard masih bisa terdengar saat jeda dengan Seimbang (Maksimal menghindarinya).
 - **Pemeriksaan perangkat belum dilakukan di hardware.** Peringatan mic dibuat hening dan capture privacy-sensitive
@@ -480,7 +488,7 @@ cordmic/
 
 Pipeline ini **dirancang untuk sekitar 30–45 ms end-to-end**. Ini anggaran rancangan, bukan hasil ukur: capture
 ~3–10 ms + paket 5 ms + link USB 1–2 ms + jitter buffer 10–15 ms + WASAPI/VB-CABLE ~3–20 ms, ditambah 2,7 ms bila
-noise cancellation Kuat aktif, atau sekitar 30 ms bila peredam bising Studio di PC aktif. Latensi sebenarnya bergantung pada HP, jalur capture, dan stack audio PC.
+noise cancellation Kuat aktif, atau sekitar 40 ms bila peredam bising Studio di PC aktif. Latensi sebenarnya bergantung pada HP, jalur capture, dan stack audio PC.
 *Fokus depan (latensi lebih tinggi)* dan *Voice communication* menambah delay capture.
 
 **Delay sisi PC yang ditampilkan aplikasi:** jaringan (½ round trip) + jitter buffer (rata-rata waktu) + output

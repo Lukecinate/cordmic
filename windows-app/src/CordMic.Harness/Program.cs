@@ -83,7 +83,9 @@ static class StudioHost
 
     public static int Run(string[] a)
     {
-        string preset = "balanced", inp = "", outp = "", vadOut = "", gainOut = "", mixOut = ""; bool autovol = false; double start = AgcB3.DefaultStartGainDb;
+        string preset = "balanced", inp = "", outp = "", vadOut = "", gainOut = "", mixOut = "", holeMode = "conceal"; bool autovol = false; double start = AgcB3.DefaultStartGainDb;
+        var holes = new List<(double Sec, double Ms)>();
+        bool comfort = true, relgate = true; double cbelow = StudioChain.ComfortBelowSpeechDb; var est = LoudnessEstimator.GatedFrames; double relDb = AgcB3.RelGateDb; int arm = WhisperGuard.ArmFrames; double release = WhisperGuard.Release, ceil = AgcB3.CeilDbfs;
         for (int i = 1; i < a.Length; i++)
             switch (a[i])
             {
@@ -95,6 +97,21 @@ static class StudioHost
                 case "--mix": mixOut = a[++i]; break;
                 case "--autovol": autovol = true; break;
                 case "--start-gain": start = double.Parse(a[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                // 0.6.2: simulate a Studio render underflow (sec:ms) on the s16 output, healed the 0.6.1 way (fade) or concealed.
+                case "--hole":
+                    var hp = a[++i].Split(':');
+                    holes.Add((double.Parse(hp[0], System.Globalization.CultureInfo.InvariantCulture), double.Parse(hp[1], System.Globalization.CultureInfo.InvariantCulture)));
+                    break;
+                case "--hole-mode": holeMode = a[++i]; break;
+                // evaluation switches (defaults = shipping behaviour)
+                case "--no-comfort": comfort = false; break;
+                case "--comfort-below": cbelow = double.Parse(a[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--no-relgate": relgate = false; break;
+                case "--est": est = (LoudnessEstimator)int.Parse(a[++i]); break;
+                case "--relgate-db": relDb = double.Parse(a[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--arm": arm = int.Parse(a[++i]); break;
+                case "--release": release = double.Parse(a[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--ceil": ceil = double.Parse(a[++i], System.Globalization.CultureInfo.InvariantCulture); break;
             }
         if (preset == "strong") return StrongOnly(inp, outp);
         var p = preset switch { "whisper" => StudioPreset.Whisper, "max" => StudioPreset.Max, _ => StudioPreset.Balanced };
@@ -107,10 +124,13 @@ static class StudioHost
         var buf = new float[total];
         Array.Copy(x, buf, n);
         var vads = new List<float>(); var gains = new List<float>(); var mixes = new List<float>();
-        using var c = new StudioChain(p, autovol, start);
+        using var c = new StudioChain(p, autovol, start) { ComfortEnabled = comfort, ComfortBelowDbUsed = cbelow };
+        c.Agc.CeilingDbfs = ceil; c.Agc.Estimator = relgate ? est : LoudnessEstimator.Frames; c.Agc.RelativeGateDb = relDb;
+        if (c.Guard is { } gd) { gd.ArmFramesUsed = arm; gd.ReleaseUsed = release; }
         for (int f = 0; f < total; f += StudioChain.Frame) { c.Process(buf.AsSpan(f, StudioChain.Frame)); vads.Add((float)c.LastVad); gains.Add((float)c.Agc.GainDb); mixes.Add((float)(c.Guard?.Mix ?? 0)); }
         var y = new float[x.Length];
         Array.Copy(buf, d, y, 0, Math.Min(n, total - d));
+        if (holes.Count > 0) ApplyHoles(y, holes, holeMode);
         var ob = new byte[y.Length * 4];
         Buffer.BlockCopy(y, 0, ob, 0, ob.Length);
         File.WriteAllBytes(outp, ob);
@@ -119,5 +139,28 @@ static class StudioHost
         if (gainOut != "") { var gb = new byte[gains.Count * 4]; Buffer.BlockCopy(gains.ToArray(), 0, gb, 0, gb.Length); File.WriteAllBytes(gainOut, gb); }
         Console.Error.WriteLine($"studio {p}: {n} samples, delay {d}, final AGC gain {c.Agc.GainDb:F1} dB");
         return 0;
+    }
+
+    /// <summary>Replaces each hole with what the render path plays when the Studio ring runs short.</summary>
+    private static void ApplyHoles(float[] y, List<(double Sec, double Ms)> holes, string mode)
+    {
+        var s = new short[y.Length];
+        for (int i = 0; i < y.Length; i++) s[i] = (short)Math.Clamp((int)Math.Round(y[i] * 32768.0), short.MinValue, short.MaxValue);
+        var gc = new GapConcealer();
+        int pos = 0;
+        foreach (var (sec, ms) in holes.OrderBy(h => h.Sec))
+        {
+            int a = Math.Clamp((int)(sec * 48000), pos, s.Length), len = Math.Min((int)(ms * 48), s.Length - a);
+            gc.Real(s.AsSpan(pos, a - pos));
+            if (mode == "fade")
+            {
+                short last = a > 0 ? s[a - 1] : (short)0;
+                for (int k = 0; k < len; k++) s[a + k] = (short)Math.Round(last * (k < 96 ? 0.5 + 0.5 * Math.Cos(Math.PI * (k + 1) / 96) : 0));
+            }
+            else gc.Conceal(s.AsSpan(a, len));
+            pos = a + len;
+        }
+        gc.Real(s.AsSpan(pos));
+        for (int i = 0; i < y.Length; i++) y[i] = s[i] / 32768f;
     }
 }

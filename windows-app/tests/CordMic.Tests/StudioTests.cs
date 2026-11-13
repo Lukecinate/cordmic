@@ -56,7 +56,7 @@ public class StudioTests
         Assert.InRange(best, StudioChain.RnnoiseDelay - 1, StudioChain.RnnoiseDelay);
     }
 
-    private static float[] Noise(int n, double rms, int seed)
+    internal static float[] Noise(int n, double rms, int seed)
     {
         var r = new Random(seed); var y = new float[n];
         double lp = 0;
@@ -180,10 +180,10 @@ public class StudioTests
     [Fact]
     public void Agc_ReachesTargetHoldsInPausesAndLimitsPeaks()
     {
-        // Far speech at about -40 dBFS with RNNoise VAD 1 during syllables, a quiet floor at -75 dBFS.
+        // Far speech at about -40 dBFS with RNNoise VAD 1 during syllables, a quiet floor at -86 dBFS.
         var agc = new AgcB3(0);
         int n = Fs * 20;
-        var v = Voice(n, 0.012, 4); var nz = Noise(n, 0.0002, 6);
+        var v = Voice(n, 0.012, 4); var nz = Noise(n, 0.00005, 6); // 0.6.2: floor -86 dBFS (the -60 dBFS floor cap allows the +19 dB needed)
         var frame = new float[F]; var outp = new float[n];
         double gainBeforePause = 0, maxChangeInPause = 0;
         for (int f = 0; f + F <= n; f += F)

@@ -39,7 +39,7 @@ data class EngineStats(
         exclusive?.let { append(if (it) " EXCLUSIVE" else " SHARED") }
         bufferFrames?.let { append(" buf=$it") }
         xruns?.let { append(" xrun=$it") }
-        dirCode?.let { append(when (it) { 1 -> " dir=front"; 2 -> " dir=unsupported"; else -> " dir=off" }) }
+        dirCode?.let { append(when (it) { 1 -> " dir=front"; 2 -> " dir=unsupported"; 3 -> " dir=narrow"; else -> " dir=off" }) }
         micCount?.let { if (it > 0) append(" mics=$it") }
     }
 }
@@ -161,10 +161,10 @@ class AudioRecordCapture(private val rate: Int, private val source: Int, private
 }
 
 
-/** Apply the Android 10+ front-facing mic preference. Never throws; returns the dir code (0 off, 1 front, 2 unsupported). */
+/** Apply the Android 10+ front-facing mic preference. Never throws; returns the dir code (0 off, 1 front, 2 unsupported, 3 narrow field). */
 internal fun applyFrontFocus(rec: AudioRecord, want: Boolean): Int =
     applyFrontFocusOps(Build.VERSION.SDK_INT, want, object : MicDirectionOps {
         override fun setDirectionTowardsUser() = rec.setPreferredMicrophoneDirection(MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
         override fun setFieldDimensionNarrow() { rec.setPreferredMicrophoneFieldDimension(1.0f) }
         override fun activeMicrophoneCount() = rec.activeMicrophones.size
-    }) { Log.i("CordMic", it) }
+    }, { Log.i("CordMic", it) }, FrontFocusReporter.shared)

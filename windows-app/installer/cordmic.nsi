@@ -175,6 +175,13 @@ FunctionEnd
 Section "$(SecMainName)" SecMain
   SectionIn RO
   DetailPrint "$(TxtClosing)"
+  ; 0.6.2+: ask a running CordMic to quit cleanly (saves settings, flushes its log); older versions ignore this.
+  System::Call 'kernel32::OpenEventW(i 0x0002, i 0, w "Local\CordMic.Quit") p .r1'
+  ${If} $1 <> 0
+    System::Call 'kernel32::SetEvent(p r1)'
+    System::Call 'kernel32::CloseHandle(p r1)'
+    Sleep 1500
+  ${EndIf}
   nsExec::Exec '"$SYSDIR\taskkill.exe" /IM CordMic.exe /F'
   Pop $0
   Sleep 700

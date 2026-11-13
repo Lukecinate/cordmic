@@ -13,6 +13,15 @@ public sealed class JitterStats
     public long UnderrunConcealed;
     /// <summary>Hard resyncs of the drift resampler (fill more than 20 ms above target; packets dropped once).</summary>
     public long ResampleResyncs;
+    /// <summary>0.6.2: in-place target changes (<see cref="JitterBuffer.Retarget"/>).</summary>
+    public long Retargets;
+
+    /// <summary>Zeroes every counter (0.6.2: a new phone session starts from zero).</summary>
+    public void Reset()
+    {
+        Pushed = Played = Concealed = Late = Duplicates = OverflowDrops = Underruns = Resets = 0;
+        CatchUpDrops = SampleSlips = UnderrunConcealed = ResampleResyncs = Retargets = 0;
+    }
 }
 
 /// <summary>
@@ -86,13 +95,76 @@ public sealed class JitterBuffer : IFloatSource
     public int SampleRate { get; }
     public int BytesPerPacket { get; private set; }
     /// <summary>Target configured at construction (before any adaptive raise).</summary>
-    public int BaseTarget { get; }
+    public int BaseTarget { get; private set; }
     /// <summary>Target in use: <see cref="BaseTarget"/> plus the adaptive extra packets.</summary>
     public int Target => BaseTarget + _extraPackets;
     public int MaxDepth => _baseMax + _extraPackets;
     /// <summary>Overflow trim target (usually one period above <see cref="Target"/>).</summary>
     public int HighWater => _baseHigh + _extraPackets;
-    private readonly int _baseMax, _baseHigh;
+    private int _baseMax, _baseHigh;
+
+    /// <summary>
+    /// 0.6.2: smoother drift control for a 10 ms block consumer (the Studio worker). The controller gain is halved, a
+    /// 2 ms dead-band is applied, target changes are slewed at <see cref="TargetSlewSamplesPerSec"/> instead of stepping,
+    /// and the hard resync threshold is 30 ms instead of 20 ms, so the worker's bursty pulls do not cause ratio swings,
+    /// resync drops and later underruns.
+    /// </summary>
+    public bool StudioMode
+    {
+        get => _studioMode;
+        set
+        {
+            lock (_lock)
+            {
+                _studioMode = value;
+                _dc.Gain = value ? DriftController.KpTuned / 2 : DriftController.KpTuned;
+                _dc.DeadBand = value ? StudioDeadBandSamples : 0;
+            }
+        }
+    }
+    private bool _studioMode;
+    private int _uplcRun;
+    /// <summary>Longest run of underrun concealment, in packets (0.6.2).</summary>
+    public int MaxUnderrunConcealPackets => Math.Max(1, (int)Math.Ceiling(0.2 * SampleRate / Math.Max(1, FramesPerPacket)));
+
+    /// <summary>
+    /// 0.6.2: the phone went away. Drops everything queued and returns to buffering, so nothing is concealed (or
+    /// counted) while idle. The statistics are kept for the last stats line; <see cref="ResetStats"/> clears them
+    /// when the next session starts.
+    /// </summary>
+    public void Pause()
+    {
+        lock (_lock)
+        {
+            ResetLocked();
+            _slewTarget = double.NaN;
+        }
+    }
+
+    /// <summary>0.6.2: zeroes the statistics (a new phone session starts from zero).</summary>
+    public void ResetStats() { lock (_lock) Stats.Reset(); }
+    private double _slewTarget = double.NaN;
+    public const double StudioDeadBandSamples = 96, TargetSlewSamplesPerSec = 96, StudioResyncSamples = 1440;
+
+    /// <summary>
+    /// 0.6.2: changes the target, max depth, high water and render period without clearing the buffer or resetting the
+    /// resampler (a Studio on/off or preset change used to rebuild the buffer and cause an underrun/overflow burst).
+    /// Returns false when the ring is too small for <paramref name="maxPackets"/>; the caller then rebuilds.
+    /// </summary>
+    public bool Retarget(int targetPackets, int maxPackets, int highWaterPackets, double renderPeriodMs)
+    {
+        if (targetPackets < 1 || highWaterPackets < targetPackets || maxPackets < highWaterPackets) return false;
+        lock (_lock)
+        {
+            if (maxPackets + MaxExtraPackets + 2 > _cap) return false;
+            BaseTarget = targetPackets;
+            _baseMax = maxPackets;
+            _baseHigh = highWaterPackets;
+            RenderPeriodMs = renderPeriodMs;
+            Stats.Retargets++;
+            return true;
+        }
+    }
     /// <summary>
     /// Raise the target by one packet when two underruns occur within <see cref="AdaptWindowSec"/>,
     /// up to <see cref="MaxExtraPackets"/>; lower it again after <see cref="CalmSec"/> without one.
@@ -144,7 +216,7 @@ public sealed class JitterBuffer : IFloatSource
         BytesPerPacket = bytes;
         // Span can briefly be MaxDepth+1 between insert and trim; the ring must be larger than that
         // so two live sequence numbers never share a slot.
-        _cap = NextPow2(Math.Max(8, _baseMax + MaxExtraPackets + 2));
+        _cap = NextPow2(Math.Max(16, 2 * _baseMax + MaxExtraPackets + 2)); // 0.6.2: room for Retarget
         _mask = _cap - 1;
         _pool = new byte[_cap * bytes];
         _seq = new uint[_cap];
@@ -324,6 +396,7 @@ public sealed class JitterBuffer : IFloatSource
                 plc.Good(_plcF);
                 FromFloat(_plcF, dst);
                 _plcPlayed = true;
+                _uplcRun = 0;
             }
             else FadeInPacket(dst);
             RememberLast(dst);
@@ -410,8 +483,17 @@ public sealed class JitterBuffer : IFloatSource
         FromFloat(_rsOut.AsSpan(0, frames), dst);
         double after = FillFramesLocked();
         if (ResyncIfFarAboveLocked(after, target)) { after = FillFramesLocked(); before = after + frames; }
-        _dc.Target = target;
-        if (_next is not null) _dc.Update((before + after) / 2, frames / (double)SampleRate);
+        double dt = frames / (double)SampleRate;
+        if (_studioMode)
+        {
+            // Slew target steps (adaptive raise, Retarget) so the proportional term does not jump by kp·step.
+            if (double.IsNaN(_slewTarget)) _slewTarget = target;
+            double st = TargetSlewSamplesPerSec * dt;
+            _slewTarget += Math.Clamp(target - _slewTarget, -st, st);
+            _dc.Target = _slewTarget;
+        }
+        else { _dc.Target = target; _slewTarget = double.NaN; }
+        if (_next is not null) _dc.Update((before + after) / 2, dt);
     }
 
     /// <summary>
@@ -420,7 +502,7 @@ public sealed class JitterBuffer : IFloatSource
     /// </summary>
     private bool ResyncIfFarAboveLocked(double fill, double target)
     {
-        if (_next is null || _buffering || fill - target <= DriftController.ResyncSamples) return false;
+        if (_next is null || _buffering || fill - target <= (_studioMode ? StudioResyncSamples : DriftController.ResyncSamples)) return false;
         int drop = (int)Math.Round((fill - target) / FramesPerPacket);
         for (int i = 0; i < drop && SpanLocked() > 0; i++)
         {
@@ -470,6 +552,9 @@ public sealed class JitterBuffer : IFloatSource
                 {
                     // 0.6.0: keep concealing through an underrun / rebuffer instead of fading to silence.
                     if (!(PlcOn && _plcPlayed && _plc is { } plc)) break;
+                    // 0.6.2: concealment has faded to silence long before this; stop synthesising (and counting)
+                    // when the stream is gone instead of concealing for the whole idle period.
+                    if (++_uplcRun > MaxUnderrunConcealPackets) { _plcPlayed = false; break; }
                     plc.Lost(_plcF);
                     FromFloat(_plcF, _out);
                     Stats.UnderrunConcealed++;

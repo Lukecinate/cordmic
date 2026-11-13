@@ -297,6 +297,7 @@ public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool
         !Known ? "?" :
         DirCode == 1 ? "front" :
         DirCode == 2 ? "unsupported" :
+        DirCode == 3 ? "narrow" :
         FrontFocus ? "on" : "off";
     public string MicText => !Known || MicCount <= 0 ? "-" : MicCount.ToString();
     /// <summary>Phone background level before its user gain; "~" marks the initial guess before a pause was measured.</summary>

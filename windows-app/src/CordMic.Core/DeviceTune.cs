@@ -93,7 +93,7 @@ public static class DeviceTune
         int mics, int dirCode, bool frontFocus)
     {
         string path = !aaudio ? "AudioRecord" : exclusive ? "AAudio exclusive" : lowLatency ? "AAudio low-latency" : "AAudio";
-        string dir = dirCode == 1 ? "front focus" : frontFocus ? "front focus unsupported" : "omni";
+        string dir = dirCode == 1 ? "front focus" : dirCode == 3 ? "front focus (narrow field)" : frontFocus ? "front focus unsupported" : "omni";
         string mic = mics > 0 ? $", {mics} mic{(mics == 1 ? "" : "s")}" : "";
         string who = string.IsNullOrWhiteSpace(model) ? "" : model.Trim() + " · ";
         return $"Detected: {who}{path}{mic}, {dir}";

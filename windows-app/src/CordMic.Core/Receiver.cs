@@ -14,7 +14,8 @@ public sealed record StatsSnapshot(
     double UnderrunPerMin = double.NaN, double OverflowPerMin = double.NaN,
     PhoneLink Phone = default,
     double DriftPpm = double.NaN, long UnderrunConcealed = 0, string Studio = "off", double StudioCpuMs = double.NaN,
-    double StudioAgcGainDb = double.NaN, double SnrDb = double.NaN)
+    double StudioAgcGainDb = double.NaN, double SnrDb = double.NaN,
+    long StudioMisses = 0, long StudioUnderflows = 0, double StudioConcealedMs = 0)
 {
     /// <summary>Jitter-buffer delay to show: the time-averaged depth once a window completed, else the instantaneous depth.</summary>
     public double BufferMs => double.IsNaN(BufferAvgMs) ? DepthMs : BufferAvgMs;
@@ -37,7 +38,39 @@ public sealed record StatsSnapshot(
         $"floor={Phone.FloorText} gate={Phone.GateText} agcgain={Phone.AgcGainText} exp={Phone.ExpanderText}" +
         (string.IsNullOrEmpty(Phone.Name) ? "" : $" dev={Phone.Name.Replace(' ', '_')}") +
         $" drift={Ms(DriftPpm, "F0")}ppm uplc={UnderrunConcealed} studio={Studio} studiocpu={Ms(StudioCpuMs, "F2")}ms " +
-        $"studiogain={Ms(StudioAgcGainDb)}dB snr={Ms(SnrDb, "F0")}dB silenced={(Phone.Silenced ? 1 : 0)} devns={(Phone.NsSuspected ? 1 : 0)}";
+        $"studiogain={Ms(StudioAgcGainDb)}dB snr={Ms(SnrDb, "F0")}dB silenced={(Phone.Silenced ? 1 : 0)} devns={(Phone.NsSuspected ? 1 : 0)} " +
+        $"studiomiss={StudioMisses} studiounder={StudioUnderflows} studioconceal={StudioConcealedMs:F0}ms";
+}
+
+/// <summary>
+/// Underrun / overflow rates per minute over 10 s windows (0.6.2: re-based when the jitter buffer is replaced or its
+/// counters go back, so a rate is never negative).
+/// </summary>
+public sealed class RateMeter
+{
+    private long _ticks, _u, _o;
+    private object? _src;
+    private double _uRate = double.NaN, _oRate = double.NaN;
+    public double WindowSec { get; init; } = 10;
+
+    public void Reset() { _ticks = 0; _src = null; _uRate = _oRate = double.NaN; }
+
+    public (double UnderrunPerMin, double OverflowPerMin) Update(object source, long underruns, long overflows, long nowTicks, long ticksPerSec)
+    {
+        if (_ticks == 0 || !ReferenceEquals(_src, source) || underruns < _u || overflows < _o)
+        {
+            _ticks = nowTicks; _src = source; _u = underruns; _o = overflows;
+            return (_uRate, _oRate);
+        }
+        double sec = (nowTicks - _ticks) / (double)ticksPerSec;
+        if (sec >= WindowSec)
+        {
+            _uRate = Math.Max(0, underruns - _u) / sec * 60.0;
+            _oRate = Math.Max(0, overflows - _o) / sec * 60.0;
+            _ticks = nowTicks; _u = underruns; _o = overflows;
+        }
+        return (_uRate, _oRate);
+    }
 }
 
 /// <summary>
@@ -78,7 +111,9 @@ public sealed class Receiver : IDisposable
     private bool _pingDropLogged;
     private byte _ctrlSeq = 1;
     private PhoneLink _phone;
-    private long _rateTicks, _rateUnderruns, _rateOverflows;
+    private readonly RateMeter _rates = new();
+    private long _studioMissLogged;
+    private StudioProcessor? _studioMissRef;
     private double _underrunPerMin = double.NaN, _overflowPerMin = double.NaN;
     private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size + SettingsSync.Size];
     // 0.6.0 Studio noise reduction (PC side) and the distance hint.
@@ -171,6 +206,7 @@ public sealed class Receiver : IDisposable
             PitchConcealment = true,
             AdaptiveTarget = true,
             RenderPeriodMs = PolicyPeriodMs,
+            StudioMode = StudioActive,
         };
     }
 
@@ -255,15 +291,29 @@ public sealed class Receiver : IDisposable
     {
         int target = TargetPackets();
         double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
-        if (!force && _jb.BaseTarget == target && _jb.FramesPerPacket == FramesPerPacket
-            && Math.Abs(_jb.RenderPeriodMs - PolicyPeriodMs) < 0.05)
+        var jb = _jb;
+        bool studio = StudioActive;
+        if (!force && jb.BaseTarget == target && jb.FramesPerPacket == FramesPerPacket
+            && Math.Abs(jb.RenderPeriodMs - PolicyPeriodMs) < 0.05)
         {
+            if (jb.StudioMode != studio) jb.StudioMode = studio;
             LogTarget(pktMs, target);
             return;
         }
-        if (_jb.BaseTarget != target || _jb.FramesPerPacket != FramesPerPacket
-            || Math.Abs(_jb.RenderPeriodMs - PolicyPeriodMs) >= 0.05 || force)
-            _jb = MakeJb(FramesPerPacket);
+        // 0.6.2: same packet size -> change the limits in place (no rebuild, no underrun/overflow burst on a Studio
+        // or preset change). Only a packet-size change or a ring that is too small rebuilds the buffer.
+        if (jb.FramesPerPacket == FramesPerPacket)
+        {
+            int max = JitterPolicy.MaxDepthPackets(_jitterMs, PolicyPeriodMs, pktMs);
+            int high = JitterPolicy.HighWaterPackets(_jitterMs, PolicyPeriodMs, pktMs);
+            if (jb.Retarget(target, max, high, PolicyPeriodMs))
+            {
+                jb.StudioMode = studio;
+                LogTarget(pktMs, target);
+                return;
+            }
+        }
+        _jb = MakeJb(FramesPerPacket);
         LogTarget(pktMs, target);
     }
 
@@ -274,7 +324,11 @@ public sealed class Receiver : IDisposable
     }
 
     /// <summary>True while PC Studio noise reduction runs (configured, RNNoise loaded, not fallen back).</summary>
-    public bool StudioActive => _studio is not null && !_studioFailed;
+    public bool StudioActive => (_studio is not null || _studioSuspended) && !_studioFailed;
+    /// <summary>0.6.2: Studio is configured but its worker is stopped because no phone is connected.</summary>
+    public bool StudioPaused => _studioSuspended;
+    private volatile bool _studioSuspended;
+    private readonly object _studioLock = new();
     public StudioPreset StudioPreset => _studioPreset;
     /// <summary>Why Studio is not running although configured (RNNoise missing, mono only, CPU fallback), else null.</summary>
     public string? StudioUnavailableReason { get; private set; }
@@ -291,35 +345,97 @@ public sealed class Receiver : IDisposable
     /// </summary>
     public bool ConfigureStudio(StudioPreset preset, bool autoVolume, double startGainDb)
     {
-        bool same = preset == _studioPreset && autoVolume == _studioAutoVolume && (_studio is not null || preset == StudioPreset.Off);
+        lock (_studioLock) return ConfigureStudioLocked(preset, autoVolume, startGainDb);
+    }
+
+    private bool ConfigureStudioLocked(StudioPreset preset, bool autoVolume, double startGainDb)
+    {
+        bool same = preset == _studioPreset && autoVolume == _studioAutoVolume
+                    && (_studio is not null || _studioSuspended || preset == StudioPreset.Off);
+        bool wasAutoVolume = _studioAutoVolume;
         _studioPreset = preset; _studioAutoVolume = autoVolume; _studioStartGainDb = startGainDb;
-        if (same && !_studioFailed) return preset == StudioPreset.Off || _studio is not null;
+        if (same && !_studioFailed) return true;
+        // 0.6.2: a preset or auto-volume change while Studio runs swaps the chain on the worker (crossfade); the
+        // jitter buffer and the worker ring keep running, so there is no rebuild and no gap.
+        if (preset != StudioPreset.Off && _studio is { } cur && !_studioFailed)
+        {
+            double g = autoVolume ? (wasAutoVolume ? cur.AgcGainDb : startGainDb) : 0;
+            StudioChain? chain = null;
+            try { chain = new StudioChain(preset, autoVolume, double.IsFinite(g) ? g : startGainDb); }
+            catch (Exception e) { Log?.Invoke($"studio chain swap failed, restarting Studio: {e.Message}"); }
+            if (chain is not null && cur.ReplaceChain(chain))
+            {
+                Log?.Invoke($"studio preset -> {preset}, auto volume {(autoVolume ? $"on ({g:F1} dB)" : "off")} (seamless switch)");
+                NotifyLinkControlChanged();
+                return true;
+            }
+            chain?.Dispose();
+        }
+        if (preset != StudioPreset.Off && _studioSuspended && !_studioFailed)
+        {
+            Log?.Invoke($"studio preset -> {preset} (starts when the phone reconnects)");
+            NotifyLinkControlChanged();
+            return true;
+        }
         var old = _studio;
         _studio = null;
+        _studioSuspended = false;
         _studioFailed = false;
         StudioUnavailableReason = null;
         old?.Dispose();
         if (preset != StudioPreset.Off)
         {
-            if (_channels != 1) StudioUnavailableReason = "Studio needs a mono stream";
-            else if (!Rnnoise.IsAvailable) StudioUnavailableReason = "RNNoise library not found: " + Rnnoise.UnavailableReason;
-            else
-            {
-                try
-                {
-                    var st = new StudioProcessor(new StudioChain(preset, autoVolume, startGainDb), buf => _jb.Pull(buf), _renderPeriodMs, StudioThreadInit);
-                    st.FellBack += OnStudioFellBack;
-                    _studio = st;
-                }
-                catch (Exception e) { StudioUnavailableReason = e.Message; }
-            }
-            if (StudioUnavailableReason is { } why) Log?.Invoke($"studio unavailable: {why}");
-            else Log?.Invoke($"studio on: {preset}, auto volume {(autoVolume ? $"on (start {startGainDb:F1} dB)" : "off")}, +{StudioProcessor.AddedLatencyMs:F0} ms");
+            if (StartStudioLocked(startGainDb))
+                Log?.Invoke($"studio on: {preset}, auto volume {(autoVolume ? $"on (start {startGainDb:F1} dB)" : "off")}, +{StudioProcessor.AddedLatencyMs:F0} ms");
         }
         else if (old is not null) Log?.Invoke("studio off");
         ApplyTarget(force: false);
         NotifyLinkControlChanged();
         return preset == StudioPreset.Off || _studio is not null;
+    }
+
+    private bool StartStudioLocked(double startGainDb)
+    {
+        if (_channels != 1) StudioUnavailableReason = "Studio needs a mono stream";
+        else if (!Rnnoise.IsAvailable) StudioUnavailableReason = "RNNoise library not found: " + Rnnoise.UnavailableReason;
+        else
+        {
+            try
+            {
+                var st = new StudioProcessor(new StudioChain(_studioPreset, _studioAutoVolume, startGainDb), buf => _jb.Pull(buf), _renderPeriodMs, StudioThreadInit);
+                st.FellBack += OnStudioFellBack;
+                _studio = st;
+            }
+            catch (Exception e) { StudioUnavailableReason = e.Message; }
+        }
+        if (StudioUnavailableReason is { } why) { Log?.Invoke($"studio unavailable: {why}"); return false; }
+        return true;
+    }
+
+    /// <summary>0.6.2: the phone went away. Stops the Studio worker (no processing, no concealment while idle).</summary>
+    private void SuspendStudio()
+    {
+        lock (_studioLock)
+        {
+            if (_studio is not { } st || _studioFailed) return;
+            if (_studioAutoVolume && double.IsFinite(st.AgcGainDb)) _studioStartGainDb = AgcB3.ClampSaved(st.AgcGainDb);
+            _studio = null;
+            _studioSuspended = true;
+            st.Dispose();
+            Log?.Invoke("studio paused (no phone)");
+        }
+    }
+
+    /// <summary>0.6.2: a phone connected again; restarts a paused Studio worker.</summary>
+    private void ResumeStudio()
+    {
+        lock (_studioLock)
+        {
+            if (!_studioSuspended || _studioFailed || _studioPreset == StudioPreset.Off) return;
+            _studioSuspended = false;
+            if (StartStudioLocked(_studioStartGainDb)) Log?.Invoke($"studio resumed: {_studioPreset}");
+            else ApplyTarget(force: false);
+        }
     }
 
     private void OnStudioFellBack(string why)
@@ -402,7 +518,16 @@ public sealed class Receiver : IDisposable
         if (!addr.Equals(Peer))
         {
             LogLimited("peer:" + addr.Address, $"phone connected: {addr}");
+            bool wasIdle = Peer is null;
+            if (wasIdle)
+            {
+                // 0.6.2: a new session starts with clean counters and rates (the previous session's last stats line
+                // stays readable until then).
+                _jb.ResetStats();
+                ResetSessionCounters();
+            }
             Peer = addr;
+            if (wasIdle) ResumeStudio();
             PeerChanged?.Invoke(addr);
         }
         _peerLastTicks = Stopwatch.GetTimestamp();
@@ -415,6 +540,10 @@ public sealed class Receiver : IDisposable
         // A new session from this address has to pair again when pairing is on.
         _paired.Remove(old.Address);
         Peer = null;
+        // 0.6.2: stop Studio and concealment while no phone is connected (0.6.1 kept concealing and counting for the
+        // whole idle period); the counters restart from zero when the next session begins.
+        SuspendStudio();
+        _jb.Pause();
         PeerChanged?.Invoke(null);
     }
 
@@ -713,6 +842,16 @@ public sealed class Receiver : IDisposable
         }
     }
 
+    private void ResetSessionCounters()
+    {
+        lock (_lock)
+        {
+            _firstSeq = null; _maxSeq = null; _received = 0; _reordered = 0; _transitPrev = null; _jitterUs = 0;
+            _rates.Reset(); _underrunPerMin = double.NaN; _overflowPerMin = double.NaN;
+            _studioMissLogged = 0;
+        }
+    }
+
     public StatsSnapshot Snapshot()
     {
         lock (_lock)
@@ -723,19 +862,13 @@ public sealed class Receiver : IDisposable
             var js = jb.Stats;
             var peer = Peer;
             long now = Stopwatch.GetTimestamp();
-            if (_rateTicks == 0)
+            (_underrunPerMin, _overflowPerMin) = _rates.Update(jb, js.Underruns, js.OverflowDrops, now, Stopwatch.Frequency);
+            var st = _studio;
+            if (!ReferenceEquals(st, _studioMissRef)) { _studioMissRef = st; _studioMissLogged = 0; }
+            if (st is not null && st.Underflows > _studioMissLogged)
             {
-                _rateTicks = now; _rateUnderruns = js.Underruns; _rateOverflows = js.OverflowDrops;
-            }
-            else
-            {
-                double sec = Seconds(now - _rateTicks);
-                if (sec >= 10)
-                {
-                    _underrunPerMin = (js.Underruns - _rateUnderruns) / sec * 60.0;
-                    _overflowPerMin = (js.OverflowDrops - _rateOverflows) / sec * 60.0;
-                    _rateTicks = now; _rateUnderruns = js.Underruns; _rateOverflows = js.OverflowDrops;
-                }
+                LogLimited("studiomiss", $"studio underflow: {st.Underflows - _studioMissLogged} short render pull(s) concealed ({st.ConcealedSamples / 48.0:F0} ms total)");
+                _studioMissLogged = st.Underflows;
             }
             double pktMs = FramesPerPacket * 1000.0 / _sampleRate;
             return new StatsSnapshot(
@@ -745,7 +878,8 @@ public sealed class Receiver : IDisposable
                 _lastAudioTicks == 0 ? double.PositiveInfinity : Seconds(now - _lastAudioTicks),
                 jb.AvgDepthMs, jb.MinResidualMs, js.CatchUpDrops, js.SampleSlips,
                 _renderPeriodMs, jb.Target * pktMs, jb.Target, _underrunPerMin, _overflowPerMin, _phone,
-                jb.DriftPpm, js.UnderrunConcealed, StudioText(), StudioCpu(), StudioAgcGainDb, _hint.SnrDb);
+                jb.DriftPpm, js.UnderrunConcealed, StudioText(), StudioCpu(), StudioAgcGainDb, _hint.SnrDb,
+                st?.Misses ?? 0, st?.Underflows ?? 0, st is null ? 0 : st.ConcealedSamples / 48.0);
         }
     }
 
@@ -754,6 +888,7 @@ public sealed class Receiver : IDisposable
         if (_studioPreset == StudioPreset.Off) return "off";
         string p = _studioPreset.ToString().ToLowerInvariant();
         if (_studioFailed) return p + "-fallback";
+        if (_studioSuspended) return p + "-paused";
         if (_studio is null) return p + "-unavailable";
         return _phone.StudioBypass ? p : p + "-nophoneack";
     }

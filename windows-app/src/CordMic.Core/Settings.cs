@@ -122,7 +122,7 @@ public sealed class AppSettings
         NoiseCancellation = NoiseMode != NoiseMode.Off;
         if (!Enum.IsDefined(StudioPreset)) StudioPreset = CordMic.Core.Dsp.StudioPreset.Off;
         if (double.IsNaN(StudioAgcGainDb) || double.IsInfinity(StudioAgcGainDb)) StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
-        StudioAgcGainDb = Math.Clamp(StudioAgcGainDb, CordMic.Core.Dsp.AgcB3.GMin, CordMic.Core.Dsp.AgcB3.GMax);
+        StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.ClampSaved(StudioAgcGainDb); // 0.6.2: persisted start gain ≤ +15 dB
     }
 
     public void ResetAudioDefaults()

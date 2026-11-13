@@ -5,6 +5,8 @@ internal static class Program
 {
     private const string MutexName = @"Local\CordMic.SingleInstance";
     private const string ShowEventName = @"Local\CordMic.ShowWizard";
+    /// <summary>0.6.2: set by the installer (before it force-closes CordMic) so the running app quits cleanly and flushes its log.</summary>
+    internal const string QuitEventName = @"Local\CordMic.Quit";
 
     [STAThread]
     private static int Main(string[] args)
@@ -36,15 +38,22 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         using var show = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
+        using var quit = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
         using var ctx = new AppController(openWizard: !tray);
-        Application.ThreadException += (_, e) => ctx.Log("ui exception: " + e.Exception);
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => ctx.Log("fatal: " + e.ExceptionObject);
+        Application.ThreadException += (_, e) => { ctx.Log("ui exception: " + e.Exception); ctx.FlushLog(); };
+        // 0.6.2: write queued log lines before the process goes away (crash, logoff/shutdown, forced exit).
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => { ctx.Log("fatal: " + e.ExceptionObject); ctx.FlushLog(); };
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => ctx.FlushLog();
+        Application.ApplicationExit += (_, _) => ctx.FlushLog();
+        Microsoft.Win32.SystemEvents.SessionEnding += (_, e) => { ctx.Log($"windows session ending ({e.Reason})"); ctx.FlushLog(); };
 
         // Wait for "show" signals from second instances without blocking the UI thread.
         var ui = SynchronizationContext.Current!;
         var reg = ThreadPool.RegisterWaitForSingleObject(show, (_, _) => ui.Post(_ => ctx.ShowWizard(), null), null, -1, false);
+        var regQuit = ThreadPool.RegisterWaitForSingleObject(quit, (_, _) => ui.Post(_ => { ctx.Log("quit requested by the installer"); ctx.Quit(); }, null), null, -1, true);
         Application.Run(ctx);
         reg.Unregister(null);
+        regQuit.Unregister(null);
         return 0;
     }
 }

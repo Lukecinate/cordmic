@@ -24,11 +24,16 @@ from agc2 import integrated_lufs, db2
 HOST = None
 FS = 48000
 
-def cs_studio(x, preset, autovol=False, start_gain=15.0):
+# 0.6.2 changed WhisperGuard timing and added a comfort floor on purpose; the port check compares the C# chain with
+# those switched back to the 0.6.0 behaviour, so it still verifies that the C# port matches the Python reference.
+PORT_FLAGS = ["--no-comfort", "--arm", "1", "--release", "0.9"]
+
+def cs_studio(x, preset, autovol=False, start_gain=15.0, extra=()):
     with tempfile.TemporaryDirectory() as d:
         np.asarray(x, dtype="<f4").tofile(f"{d}/in.f32")
         cmd = [HOST, "studio", "--preset", preset, "--in", f"{d}/in.f32", "--out", f"{d}/out.f32", "--gain", f"{d}/g.f32"]
         if autovol: cmd += ["--autovol", "--start-gain", str(start_gain)]
+        cmd += os.environ.get("CORDMIC_STUDIO_EXTRA", "").split() + list(extra)  # evaluation switches of the 0.6.2 host
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         y = np.fromfile(f"{d}/out.f32", dtype="<f4").astype(float)
         g = np.fromfile(f"{d}/g.f32", dtype="<f4").astype(float)
@@ -46,6 +51,7 @@ def nr_job(a):
         outs["cs_" + p] = cs_studio(x, p)[0]
     if REF:
         r, _ = rnn_vad(x); outs["ref_balanced"] = gated(x, r, k, thr_db=12, mmax=0.7)[0]
+        outs["cs_balanced_port"] = cs_studio(x, "balanced", extra=PORT_FLAGS)[0]
     rows = []
     for name, y in outs.items():
         rr = evaluate(c, x, y, dns=True)
@@ -100,7 +106,7 @@ if __name__ == "__main__":
     avail = [s for s in H.SPK if os.path.isdir(f"{ROOT}/ext/ears/{s}")]
     if len(avail) < len(H.SPK): print("missing EARS talkers (skipped):", sorted(set(H.SPK) - set(avail)), flush=True)
     spk = avail[:2] if a.quick else avail; noises = H.NOISES[:2] if a.quick else H.NOISES
-    out = os.path.join(ROOT, "results"); res = []
+    out = os.environ.get("CORDMIC_GATES_OUT") or os.path.join(ROOT, "results"); os.makedirs(out, exist_ok=True); res = []
     with Pool(8, initializer=init, initargs=(a.host, a.ref)) as p:
         if not a.skip_nr:
             jobs = [(s, u, st, e, snr) for s in spk for u in ["rainbow_03", "rainbow_05"] for st in ["whisper", "regular"] for e in noises
@@ -130,9 +136,9 @@ if __name__ == "__main__":
                 gate(res, w >= 0.8, f"NR-8 {st} OVRL win rate vs Strong", f"{100*w:.0f} %", ">= 80 %")
             if REF:
                 for st, snr in (("whisper", 20), ("regular", 5)):
-                    dl = M("cs_balanced", st, snr, "loss_mid") - M("ref_balanced", st, snr, "loss_mid")
-                    do = M("cs_balanced", st, snr, "dns_ovr") - M("ref_balanced", st, snr, "dns_ovr")
-                    gate(res, abs(do) <= 0.05 and abs(dl) <= 0.3, f"PORT C# vs Python Balanced ({st} {snr} dB)", f"mid loss {dl:+.2f} dB, OVRL {do:+.3f}", "|OVRL| <= 0.05, |loss| <= 0.3")
+                    dl = M("cs_balanced_port", st, snr, "loss_mid") - M("ref_balanced", st, snr, "loss_mid")
+                    do = M("cs_balanced_port", st, snr, "dns_ovr") - M("ref_balanced", st, snr, "dns_ovr")
+                    gate(res, abs(do) <= 0.05 and abs(dl) <= 0.3, f"PORT C# (0.6.0 guard timing, no comfort floor) vs Python Balanced ({st} {snr} dB)", f"mid loss {dl:+.2f} dB, OVRL {do:+.3f}", "|OVRL| <= 0.05, |loss| <= 0.3")
         if not a.skip_agc:
             J = [(i, r, d) for i in range(8) for r in V.ROOMS for d in (-24.0, -38.0)]
             S = p.map(agc_static, J); T = p.map(agc_trans, J)

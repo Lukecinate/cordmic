@@ -308,12 +308,20 @@ is off. On the PC, a worker thread (not the audio callback) runs:
    time-aligned to RNNoise's 20 ms delay.
 2. **WhisperGuard** mixes back toward the Strong output while RNNoise is removing a clearly present signal (a whisper
    or a soft consonant). *Balanced* (default preset), *Whisper priority* (mixes back more, keeps whispers best) and
-   *Max* (RNNoise only, strongest cleaning, may thin whispers).
+   *Max* (RNNoise only, strongest cleaning, may thin whispers). Since 0.6.2 the guard opens only after the signal
+   has been present for 300 ms (or RNNoise detects voice) and releases over about 200 ms, so short bumps do not
+   switch it on and off.
 3. **Auto volume (B3)**, when Auto volume is on: loudness (LUFS) based, toward −21 LUFS, frozen in pauses, with a
-   −1 dBFS limiter. Its gain is remembered between sessions.
+   −1 dBFS limiter. The gain is capped so the boosted background stays at or below −60 dBFS. Its gain is remembered
+   between sessions, at most +15 dB.
+4. **Comfort floor** (0.6.2): a very low noise bed 45 dB below the output speech loudness, at most −65 dBFS, so pauses never drop to digital silence
+   and the step between speech and pauses stays small.
 
-Added latency is about 30 ms (RNNoise 20 ms plus one 10 ms worker frame). Processing takes about 0.55 ms per 10 ms
-frame on the build machine with no per-frame allocation. If the worker misses 3 deadlines within 1 s, Studio turns off
+Added latency is about 40 ms (RNNoise 20 ms plus two 10 ms worker frames; one frame before 0.6.2). Processing takes about 0.55 ms per 10 ms
+frame on the build machine with no per-frame allocation. A render pull that finds the worker's buffer short is filled
+by repeating the last pitch period (counted as `studiounder=` / `studiomiss=` in the log) instead of a short silence.
+Changing the Studio preset switches on the fly without rebuilding the jitter buffer. While no phone is connected the
+Studio worker is paused. If the worker misses 3 deadlines within 1 s, Studio turns off
 for the session, a notice appears and the phone's own noise cancellation is used again. With a phone older than
 0.6.0 the PC shows that the phone has not confirmed the bypass.
 
@@ -372,7 +380,7 @@ settings in use. Do not attach voice recordings to public issues.
   distributed outside Google Play. Version 0.3.0 used a debug key; uninstall it before installing a later version.
 - **Round-trip time is PC-side only.** The phone answers the PC's PING but does not time it, so the phone app
   shows the age of the last PC reply instead.
-- **Studio latency and loudness.** PC Studio noise reduction adds about 30 ms, more than the 12 ms target in the
+- **Studio latency and loudness.** PC Studio noise reduction adds about 40 ms, more than the 12 ms target in the
   0.6.0 plan, which is why it is opt-in. Whispers can stay a few LU below the −21 LUFS target, and bumps such as a
   bus or keyboard can still be heard in pauses with Balanced (Max avoids that).
 - **Device checks not done on hardware.** The silenced-microphone warning and privacy-sensitive capture follow the
@@ -479,7 +487,7 @@ cordmic/
 
 The pipeline is **designed for roughly 30–45 ms end-to-end**. This is a design budget, not a measurement:
 capture ~3–10 ms + 5 ms packet + USB link 1–2 ms + 10–15 ms jitter buffer + WASAPI/VB-CABLE ~3–20 ms, plus 2.7 ms
-when Strong noise cancellation is on, or about 30 ms when PC Studio noise reduction is on. Actual latency depends on the phone, the capture path and the PC audio stack.
+when Strong noise cancellation is on, or about 40 ms when PC Studio noise reduction is on. Actual latency depends on the phone, the capture path and the PC audio stack.
 *Front focus (higher latency)* and *Voice communication* add capture delay.
 
 **PC-side delay shown by the app:** network (½ round trip) + jitter buffer (time-averaged) + Windows output (the

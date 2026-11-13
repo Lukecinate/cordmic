@@ -76,9 +76,17 @@ public sealed class DriftController
     public const double KpTuned = 2e-6;
     private double _fillF, _integ;
     private bool _init;
-    private readonly double _kp, _ki;
+    private double _kp;
+    private readonly double _ki;
 
     public double Target { get; set; }
+    /// <summary>Proportional gain in use (0.6.2: the jitter buffer lowers it while Studio is on).</summary>
+    public double Gain { get => _kp; set => _kp = value > 0 ? value : _kp; }
+    /// <summary>
+    /// Dead-band on the smoothed fill error, in samples (0.6.2; default 0 = reference behaviour). Errors inside it are
+    /// treated as zero, so the bursty fill of a 10 ms block consumer does not wobble the ratio.
+    /// </summary>
+    public double DeadBand { get; set; }
     public double Ratio { get; private set; } = 1.0;
     public long Resyncs { get; private set; }
 
@@ -101,6 +109,7 @@ public sealed class DriftController
         double a = Math.Min(1.0, dtSec / TauSec);
         _fillF += a * (fill - _fillF);
         double e = _fillF - Target;
+        if (DeadBand > 0) e = Math.Abs(e) <= DeadBand ? 0 : e - Math.Sign(e) * DeadBand;
         double im = Limit / _ki;
         _integ = Math.Clamp(_integ + e * calls, -im, im);
         Ratio = Math.Clamp(1 + _kp * e + _ki * _integ, 1 - Limit, 1 + Limit);

@@ -3,7 +3,7 @@ namespace CordMic.Core.Dsp;
 /// <summary>
 /// PC-side Studio noise reduction for one 48 kHz mono stream, 480-sample frames (0.6.0 spec §3–4):
 /// RNNoise in parallel with a PC instance of the 0.5.7 Strong suppressor, WhisperGuard mix (Balanced / Whisper)
-/// or the Max blend, then the B3 loudness AGC and the −1 dBFS limiter. The input and the Strong output are delayed
+/// or the Max blend, then the B3 loudness AGC and the −1 dBFS limiter, then (0.6.2) a −65 dBFS comfort-noise floor. The input and the Strong output are delayed
 /// to line up with RNNoise. Allocation-free after construction; not thread-safe (one worker thread owns it).
 /// </summary>
 public sealed class StudioChain : IDisposable
@@ -21,12 +21,20 @@ public sealed class StudioChain : IDisposable
     private readonly VoiceChain _strong;
     private readonly WhisperGuard? _guard;
     private readonly AgcB3 _agc;
+    private readonly ComfortNoise _cn = new();
     private readonly float[] _r = new float[Frame], _xd = new float[Frame], _kd = new float[Frame], _y = new float[Frame];
     private readonly short[] _ks = new short[Frame];
     private readonly DelayLine _dx = new(RnnoiseDelay), _dk = new(RnnoiseDelay - StrongDelay);
 
     public StudioPreset Preset { get; }
     public AgcB3 Agc => _agc;
+    public ComfortNoise Comfort => _cn;
+    /// <summary>Comfort floor on (default; settable for evaluation).</summary>
+    public bool ComfortEnabled { get; set; } = true;
+    /// <summary>Comfort level relative to the running output speech level, in dB.</summary>
+    public const double ComfortBelowSpeechDb = 45, ComfortInitialDbfs = -75;
+    /// <summary>Comfort offset in use (default <see cref="ComfortBelowSpeechDb"/>; settable for evaluation).</summary>
+    public double ComfortBelowDbUsed { get; set; } = ComfortBelowSpeechDb;
     public WhisperGuard? Guard => _guard;
     public double LastVad { get; private set; }
     /// <summary>Native RNNoise frames run so far (one per <see cref="Process"/> call; used by the CPU-budget test).</summary>
@@ -63,9 +71,18 @@ public sealed class StudioChain : IDisposable
         }
         x.CopyTo(_xd);
         _dx.Process(_xd);
-        if (_guard is not null) _guard.Process(_xd, _r, _kd, _y);
+        if (_guard is not null) _guard.Process(_xd, _r, _kd, _y, LastVad);
         else for (int i = 0; i < Frame; i++) _y[i] = 0.9f * _r[i] + 0.1f * _xd[i];
         _agc.Process(_y, LastVad);
+        if (ComfortEnabled)
+        {
+            // Comfort level follows the output speech loudness: 45 dB below it, at most −65 dBFS (Auto volume at −21 LUFS
+            // gives about −66), at least −90 dBFS. It never depends on the pause itself, so it cannot pump.
+            double sp = _agc.OutputLoudnessLufs;
+            double lvl = double.IsNaN(sp) ? ComfortInitialDbfs : Math.Clamp(sp - ComfortBelowDbUsed, -90, ComfortNoise.DefaultDbfs);
+            _cn.SetLevel(lvl);
+            _cn.AddTo(_y);
+        }
         _y.CopyTo(x);
     }
 

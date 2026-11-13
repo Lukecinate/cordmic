@@ -2,6 +2,49 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] - 2026-11-13
+
+Audio-quality and robustness release from an analysis of 0.6.1 recordings and logs. Android `versionCode` is 18 /
+`versionName` 0.6.2. Wire version stays 1; 0.6.2 works with 0.6.1, 0.6.0 and 0.5.4–0.5.7 on the other side. The
+release APK is signed with the same key as 0.6.1. The Windows installer is not Authenticode-signed.
+
+### Fixed
+- **Studio Balanced no longer "breathes" in pauses.** WhisperGuard opens only after the signal has been present for
+  300 ms (or RNNoise reports voice) and its mix releases over about 200 ms instead of 100 ms. A comfort floor is
+  added after Auto volume, 45 dB below the output speech loudness and at most −65 dBFS (about −66 dBFS at the
+  −21 LUFS Auto volume target), so pauses never fall to digital silence and the level step between words and
+  pauses stays small (all Studio presets).
+- **Short holes in Studio output.** The worker now keeps two 10 ms frames ready instead of one (Studio adds about
+  40 ms instead of 30 ms; the preset labels say so). A render pull that still finds the buffer short repeats the last
+  pitch period at full level for 10 ms, fades over 20 ms and crossfades back over 2 ms, instead of a 2 ms fade to
+  silence. Each such pull is counted and logged (`studiounder=`, `studiomiss=`, `studioconceal=` in the stats line).
+- **Underrun/overflow bursts on Studio and preset changes.** Changing the Studio preset or Auto volume swaps the
+  chain on the worker with a one-frame crossfade, and Studio on/off changes the jitter-buffer limits in place; the
+  buffer is rebuilt only when the packet size changes. With Studio on, the drift controller uses half the gain, a
+  2 ms dead-band, slews target changes at 2 ms/s and resyncs only above 30 ms, so the worker's 10 ms pulls no longer
+  cause ratio swings, resync drops and later underruns.
+- **Auto volume.** The noise-floor estimate ignores digital-silence frames; the gain is capped so the boosted floor
+  stays at or below −60 dBFS (was −50); the loudness estimate ignores speech frames more than 15 dB below the running
+  level (decay tails), which made it read about 2 dB low and over-boost on the 0.6.1 recordings (checked against
+  BS.1770 integrated loudness on those recordings and on the LibriSpeech room set); the gain remembered for the next session
+  is capped at +15 dB (a session that ended at +30 dB no longer starts there).
+- **Statistics after a disconnect.** When the phone times out or says goodbye, the Studio worker pauses and the
+  jitter buffer stops concealing (0.6.1 kept concealing and counting for the whole idle period); counters restart
+  from zero with the next session. Underrun/overflow rates are re-based when the buffer changes and are never
+  negative. Underrun concealment stops after 200 ms of silence.
+- **Log on exit.** Queued log lines are written on quit, on a crash, at Windows logoff/shutdown and at process exit.
+  The installer asks a running CordMic (0.6.2 or newer) to quit cleanly before closing it.
+- **Version stamp.** The build stamps the commit actually built (`0.6.2+<commit>` in the log) and refuses to build
+  with uncommitted changes unless explicitly allowed; 0.6.1 showed the previous commit.
+- **Android front focus on the AudioRecord path.** When the phone refuses the direction call, CordMic falls back to
+  the narrow field dimension (reported as `dir=narrow`, *front focus (narrow field)*) or the default microphone, and
+  logs the outcome once instead of on every capture open.
+
+### Tests
+- 0.6.2 regression tests for each item (`Fixes062Tests`, `Fixes062Test`): .NET 228, Kotlin 57, all passing.
+- The C# release-gate script runs its Python port check with the 0.6.0 guard timing and no comfort floor
+  (`PORT_FLAGS`), since 0.6.2 changes both on purpose.
+
 ## [0.6.1] - 2026-11-13
 
 Security and robustness release from a concurrency and security audit of 0.6.0. Android `versionCode` is 17 /

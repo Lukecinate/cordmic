@@ -334,6 +334,7 @@ internal sealed class AppController : ApplicationContext
         if (_rx is not { } rx || !rx.StudioActive || !_settings.AutoVolume) return;
         double g = rx.StudioAgcGainDb;
         if (double.IsNaN(g)) return;
+        g = CordMic.Core.Dsp.AgcB3.ClampSaved(g); // 0.6.2: never start a session above +15 dB
         if (!force && (DateTime.UtcNow < _nextStudioGainSave || Math.Abs(g - _settings.StudioAgcGainDb) < 0.5)) return;
         _nextStudioGainSave = DateTime.UtcNow.AddSeconds(30);
         _settings.StudioAgcGainDb = Math.Round(g, 1);
@@ -899,8 +900,15 @@ internal sealed class AppController : ApplicationContext
     /// <summary>Wizard step 1 polls this so a freshly installed cable shows up without restarting.</summary>
     public void RecheckDevices() { _audio.ConsumeDevicesDirty(); RefreshDevices(); EnsureOutput(); UpdateStatus(); }
 
+    /// <summary>Writes queued log lines now (crash, shutdown, forced exit). Safe from any thread; never throws.</summary>
+    public void FlushLog() { try { _log.Flush(); } catch (Exception) { } }
+
+    private bool _quitting;
+
     public void Quit()
     {
+        if (_quitting) return;
+        _quitting = true;
         _timer.Stop();
         SaveStudioGain(force: true);
         _tray.Visible = false;

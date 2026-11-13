@@ -105,6 +105,7 @@ object DeviceTune {
         }
         val dir = when {
             dirCode == 1 -> "front focus"
+            dirCode == 3 -> "front focus (narrow field)"
             frontFocus -> "front focus unsupported"
             else -> "omni"
         }

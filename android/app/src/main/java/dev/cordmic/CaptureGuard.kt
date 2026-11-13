@@ -25,18 +25,38 @@ internal interface MicDirectionOps {
 
 /**
  * Apply the Android 10+ front-facing mic preference through [ops]. Never throws: every call is wrapped, an exception
- * or an empty microphone list is treated as "unknown" and capture continues. Returns 0 off, 1 front, 2 unsupported.
+ * or an empty microphone list is treated as "unknown" and capture continues. Returns 0 off, 1 front,
+ * 2 unsupported, 3 narrow field only (0.6.2 fallback: the direction call was refused or threw, but the narrow field
+ * dimension was accepted). Each distinct outcome is logged once per [reporter] instead of on every capture open.
  */
-internal fun applyFrontFocusOps(sdk: Int, want: Boolean, ops: MicDirectionOps, log: (String) -> Unit = {}): Int {
+internal fun applyFrontFocusOps(
+    sdk: Int, want: Boolean, ops: MicDirectionOps, log: (String) -> Unit = {},
+    reporter: FrontFocusReporter = FrontFocusReporter(),
+): Int {
     if (!want) return 0
     if (sdk < 29) return 2
-    val ok = try { ops.setDirectionTowardsUser() } catch (t: Throwable) { log("mic direction: $t"); return 2 }
-    try { ops.setFieldDimensionNarrow() } catch (t: Throwable) { log("mic field: $t") }
-    try {
-        val n = ops.activeMicrophoneCount()
-        log(if (n > 0) "activeMicrophones=$n" else "activeMicrophones unknown")
-    } catch (t: Throwable) { log("activeMicrophones: $t") }
-    return if (ok) 1 else 2
+    val dirOk = try { ops.setDirectionTowardsUser() } catch (t: Throwable) { reporter.once("dir-throw", log) { "mic direction: ${t.javaClass.simpleName}" }; false }
+    val fieldOk = try { ops.setFieldDimensionNarrow(); true } catch (t: Throwable) { reporter.once("field-throw", log) { "mic field: ${t.javaClass.simpleName}" }; false }
+    val code = when { dirOk -> 1; fieldOk -> 3; else -> 2 }
+    reporter.once("result-$code", log) {
+        val mics = try { ops.activeMicrophoneCount() } catch (_: Throwable) { 0 }
+        val m = if (mics > 0) "activeMicrophones=$mics" else "activeMicrophones unknown"
+        when (code) {
+            1 -> "front focus on ($m)"
+            3 -> "front focus: direction not supported by this phone, using the narrow field only ($m)"
+            else -> "front focus: not supported by this phone, default microphone ($m)"
+        }
+    }
+    return code
+}
+
+/** Logs each key once (process lifetime when shared), so a phone that refuses the direction call does not spam the log. */
+internal class FrontFocusReporter {
+    private val seen = HashSet<String>()
+    @Synchronized fun once(key: String, log: (String) -> Unit, msg: () -> String) {
+        if (seen.add(key)) log(msg())
+    }
+    companion object { val shared = FrontFocusReporter() }
 }
 
 /** What the voice chain runs for one block, given the user's settings and whether the PC asked for Studio. */
