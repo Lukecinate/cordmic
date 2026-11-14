@@ -13,6 +13,11 @@ using CordMic.Core.Dsp;
 // Output is aligned with the input (chain delay removed); --vad / --gain are per 480-sample processing frame.
 if (args.Length > 0 && args[0] == "studio") return StudioHost.Run(args);
 
+// Docs/QA (0.7.0): dump the Settings window catalog (pages, rows, resolved EN or ID strings, layout constants) as JSON
+// for tools/render_settings.py, which draws labelled HTML/PNG renders (WinForms cannot render on Linux).
+//   dotnet run -- settings-json en|id > settings.en.json
+if (args.Length > 1 && args[0] == "settings-json") return SettingsDump.Run(args[1]);
+
 int port = Protocol.DefaultPort; double seconds = 10, jitter = 10; string bind = "0.0.0.0";
 var probes = new List<IPEndPoint>();
 bool anySource = false; string? pairingCode = null;
@@ -162,5 +167,41 @@ static class StudioHost
         }
         gc.Real(s.AsSpan(pos));
         for (int i = 0; i < y.Length; i++) y[i] = s[i] / 32768f;
+    }
+}
+
+static class SettingsDump
+{
+    public static int Run(string lang)
+    {
+        L.Set(lang == "id" ? L.Indonesian : L.English);
+        string? T(string? k) => k is null ? null : L.T(k);
+        var pages = SettingsCatalog.Pages.Select(p => new
+        {
+            id = p.ToString(),
+            title = L.T(SettingsCatalog.TitleKey(p)),
+            lead = p == SettingsPage.Updates ? L.T(SettingsCatalog.LeadKey(p), "0.7.0") : L.T(SettingsCatalog.LeadKey(p)),
+            items = SettingsCatalog.Items(p).Select(i => new
+            {
+                id = i.Id, kind = i.Kind.ToString(), label = L.T(i.LabelKey), help = T(i.HelpKey),
+                options = i.OptionKeys?.Select(k => L.T(k)).ToArray(),
+                optionHelp = i.OptionHelpKeys?.Select(k => L.T(k)).ToArray(),
+            }).ToArray(),
+        }).ToArray();
+        var strings = new[]
+        {
+            "set.title", "set.keys", "set.update.card", "set.update.ready", "set.update.install", "set.update.cancel", "set.update.now",
+            "set.update.noteInstalled", "set.update.notePortable", "set.update.step.download", "set.update.step.verify",
+            "set.update.step.install", "set.update.step.restart", "set.update.lastChecked", "set.update.minutesAgo",
+            "set.update.downloading", "set.update.check", "set.update.current", "set.version", "set.portable", "set.delay.now",
+            "set.pairing.code", "menu.output.auto", "ui.gainValue",
+        }.ToDictionary(k => k, k => L.T(k));
+        var layout = new
+        {
+            SettingsLayout.DefaultWidth, SettingsLayout.DefaultHeight, SettingsLayout.MinWidth, SettingsLayout.MinHeight,
+            SettingsLayout.NavWidth, SettingsLayout.ContentPadX, SettingsLayout.ContentPadY, SettingsLayout.RowGap,
+        };
+        Console.WriteLine(JsonSerializer.Serialize(new { lang, pages, strings, layout }, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
     }
 }
