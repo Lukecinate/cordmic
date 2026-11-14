@@ -349,7 +349,9 @@ background with progress, verifies it and then asks: the tray icon shows a notif
 Settings → Updates downloads, verifies, installs and restarts in one go; **Cancel** stops a check or download. With
 *Install when I exit CordMic* on, a ready update is installed when you choose Exit in the tray. Only one check or
 download runs at a time. The download goes to a private, randomly named folder (readable only by the current
-user), and the checksum is computed on the same locked file handle that is later run or unpacked.
+user), and the checksum is computed on the same locked file handle that is later run or unpacked. Since 0.7.1 a
+verified update is kept across restarts: at start CordMic re-checks the folder and the checksum and offers
+**Install** at once; if the file is gone or changed it is downloaded again right away.
 
 - *Installed copy*: the verified `CordMic-Setup-<version>.exe` runs with `/S`; Windows asks for permission once
   (UAC; SmartScreen may also appear because the installer is not Authenticode-signed). The mic pauses for about
@@ -569,7 +571,7 @@ official install.
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (255 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI |
+| .NET (291 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), 0.7.1 regression tests (install/check race, restore of a ready update after restart, watchdog, clean-up, monotonic schedule, font scale per DPI), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI |
 | Kotlin (57 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 The release gates for noise reduction and Auto volume (DNSMOS, ESTOI, PESQ, LUFS) run on the shipping C# code through
@@ -610,6 +612,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 0.7.1 | Text follows each monitor's scale, a downloaded update survives a restart, fixes from an audit of the 0.7.0 updater and windows |
 | 0.7.0 | New Windows Settings window (pages, help text, scrolling, keyboard, DPI), automatic background update downloads with one-click Update now, progress and Cancel, portable self-update with rollback, slimmer tray menu |
 | 0.6.0 | Pitch-based packet-loss concealment, resampling drift control, optional PC Studio noise reduction (RNNoise + WhisperGuard + LUFS Auto volume), silenced-mic warning, privacy-sensitive capture, move-closer hint |
 | 0.5.7 | Smoother Strong noise reduction (spectral floor, per-band gain smoothing, whisper and consonant protection); phone noise floor, gate, Auto volume gain and expander in the PC log |

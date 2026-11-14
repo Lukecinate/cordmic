@@ -2,6 +2,47 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-11-14
+
+Windows patch release: fixes the two known limitations of 0.7.0 and every finding of an audit of the 0.7.0 code
+(1 high, 10 medium, 8 low). Android `versionCode` is 20 / `versionName` 0.7.1
+(version parity only; no Android behaviour change). Wire version stays 1. The release APK is signed with the same
+key as 0.6.1–0.7.0. The Windows installer is not Authenticode-signed. 0.7.0 → 0.7.1 is the first update that runs
+through the 0.7.0 automatic updater.
+
+### Fixed
+- **Text follows the monitor's scale.** The main and Settings windows build their fonts for the DPI of the monitor
+  they are on and rebuild them when moved to a monitor with another scale (Windows suggested size and position
+  used, old fonts disposed). Previously text kept the size of the first monitor.
+- **A downloaded update survives a restart.** The verified update folder keeps a small `ready.json` (version, kind,
+  file name, SHA-256). At start CordMic checks that the folder is still private, re-opens the file locked and
+  re-hashes it; *Install* is offered right away without waiting for the six-hour check. A missing, changed or
+  outdated file is deleted and, with automatic downloads on, downloaded again immediately.
+- **Install vs. check race.** A check (timer, button or tray) can no longer run while an update is being installed,
+  an install waits for a running check, and a second click cannot start a second installer.
+- Only the update notification installs when clicked; other notifications (phone lost, output fallback) no longer do.
+- No update events, notifications or log writes after Exit.
+- A stuck "Installing" (installer started but CordMic never closed) turns into an error with the download link
+  after three minutes, and checks work again.
+- Portable update: the helper only waits for the old CordMic if the process ID still belongs to it (start time
+  passed with `--started`; 0.7.0 callers that pass only `--pid` are accepted), waits until `CordMic.exe` can be
+  written, and a retry after a failed start unpacks into a fresh folder.
+- Old update folders and portable `.update-backup-*` folders are removed at start (one hour old, or dated more than
+  a day in the future); the ready update is kept.
+- Scheduling uses a monotonic clock for the 30-minute re-check, and a last-check time saved while the clock was
+  ahead no longer stops automatic checks.
+- The application icon and logo are shared, and per-window bitmaps and the tooltip are disposed (no handle growth
+  when windows are reopened); download progress posts at most one pending UI update; a gain change made just before
+  closing is saved; the unpacked size of a portable zip is counted from the bytes written; the helper closes its log
+  before restarting CordMic; the settings migration reads a log that is open in another program; a settings file
+  without `Version` is migrated as schema 1.
+
+### Tests
+- .NET: 291 (was 255): 36 regression tests in `Release071Tests` (install/check race, double install, notification
+  policy, events after dispose, restore after restart including tampered, outdated and non-private folders,
+  watchdog, clean-up, monotonic schedule, helper arguments and PID check, font scale and disposal, coalescing, zip
+  byte limit, shared log read, missing schema version). Kotlin: 57 (unchanged).
+
 ## [0.7.0] - 2026-11-14
 
 Windows usability and updater release, from user feedback that the PC settings were hard to use and that Check for

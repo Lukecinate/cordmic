@@ -351,7 +351,9 @@ menampilkan **● Pasang CordMic x.y.z**, dan roda gigi menampilkan titik teal. 
 **Batal** menghentikan pemeriksaan atau unduhan. Bila *Pasang saat aku keluar dari CordMic* aktif, pembaruan yang
 siap dipasang saat kamu memilih Keluar di tray. Hanya satu pemeriksaan atau unduhan yang berjalan pada satu waktu.
 Unduhan disimpan di folder privat bernama acak (hanya bisa dibaca pengguna saat ini), dan checksum dihitung pada
-handle file terkunci yang sama yang kemudian dijalankan atau diekstrak.
+handle file terkunci yang sama yang kemudian dijalankan atau diekstrak. Sejak 0.7.1 pembaruan yang sudah
+diverifikasi tetap tersimpan setelah restart: saat dibuka CordMic memeriksa ulang folder dan checksum lalu langsung
+menawarkan **Pasang**; bila file hilang atau berubah, file diunduh ulang saat itu juga.
 
 - *Salinan terpasang*: `CordMic-Setup-<versi>.exe` yang sudah diverifikasi dijalankan dengan `/S`; Windows meminta
   izin sekali (UAC; SmartScreen juga bisa muncul karena installer belum ditandatangani Authenticode). Mic berhenti
@@ -568,7 +570,7 @@ lokal ditandatangani kunci debug, dan updater di aplikasi akan menolaknya sebaga
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, UDP loopback (bersih dan lossy) |
-| .NET (255 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200% |
+| .NET (291 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), test regresi 0.7.1 (race pasang/periksa, pemulihan pembaruan siap setelah restart, watchdog, pembersihan, jadwal monotonik, skala font per DPI), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200% |
 | Kotlin (57 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 Gerbang rilis untuk peredam noise dan Volume otomatis (DNSMOS, ESTOI, PESQ, LUFS) dijalankan pada kode C# yang dikirim
@@ -609,6 +611,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 0.7.1 | Teks mengikuti skala tiap monitor, pembaruan yang sudah diunduh tetap ada setelah restart, perbaikan dari audit updater dan jendela 0.7.0 |
 | 0.7.0 | Jendela Pengaturan Windows baru (halaman, teks bantuan, bisa digulir, keyboard, DPI), unduhan pembaruan otomatis di latar belakang dengan Perbarui sekarang sekali klik, progres dan Batal, pembaruan mandiri versi portabel dengan rollback, menu tray lebih ringkas |
 | 0.6.0 | Penyamaran packet loss berbasis pitch, kontrol drift dengan resampler, peredam bising Studio di PC opsional (RNNoise + WhisperGuard + Volume otomatis LUFS), peringatan mic dibuat hening, capture privacy-sensitive, pemberitahuan dekatkan HP |
 | 0.5.7 | Peredam noise Kuat yang lebih halus (batas bawah spektral, penghalusan gain per pita, perlindungan bisikan dan konsonan); lantai noise, gate, gain Volume otomatis, dan expander HP tampil di log PC |
