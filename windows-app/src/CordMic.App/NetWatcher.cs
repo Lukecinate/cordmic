@@ -22,8 +22,10 @@ internal sealed class NetWatcher : IDisposable
 {
     private volatile bool _dirty = true;
     private DateTime _lastScan = DateTime.MinValue;
-    private string _lastKey = "";
+    private string? _lastKey; // null = nothing logged yet, so the first scan is always logged (0.7.2: also "none")
     public TetherAdapter? Current { get; private set; }
+    /// <summary>0.7.2: every adapter that looks like a tethering adapter, up or not, with or without an address.</summary>
+    public IReadOnlyList<TetherAdapterInfo> Candidates { get; private set; } = Array.Empty<TetherAdapterInfo>();
     public event Action<TetherAdapter?>? Changed;
 
     public NetWatcher()
@@ -41,7 +43,7 @@ internal sealed class NetWatcher : IDisposable
         _dirty = false;
         _lastScan = DateTime.UtcNow;
         TetherAdapter? found = null;
-        try { found = Scan(); }
+        try { var cands = new List<TetherAdapterInfo>(); found = Scan(cands); Candidates = cands; }
         catch (Exception ex) { log("adapter scan failed: " + ex.Message); }
         var key = found?.Key ?? "";
         if (key == _lastKey) return;
@@ -53,30 +55,38 @@ internal sealed class NetWatcher : IDisposable
         Changed?.Invoke(found);
     }
 
-    public static TetherAdapter? Scan()
+    public static TetherAdapter? Scan() => Scan(null);
+
+    public static TetherAdapter? Scan(List<TetherAdapterInfo>? candidates)
     {
+        TetherAdapter? result = null;
         uint best = 0;
         bool haveBest = Native.GetBestInterface(BitConverter.ToUInt32(new byte[] { 1, 1, 1, 1 }, 0), out best) == 0;
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
-            if (ni.OperationalStatus != OperationalStatus.Up) continue;
             if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
             if (!DeviceRules.IsTetheringAdapter(ni.Description, ni.Name)) continue;
+            bool up = ni.OperationalStatus == OperationalStatus.Up;
+            if (!up) { candidates?.Add(new TetherAdapterInfo(ni.Description, ni.Name, false, false)); continue; }
             var ip = ni.GetIPProperties();
             int idx = -1;
             try { idx = ip.GetIPv4Properties()?.Index ?? -1; } catch (NetworkInformationException) { }
             var uni = ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork);
             var local = uni?.Address;
-            if (local is null) continue; // no IPv4 yet (DHCP still running) -> try again next tick
+            candidates?.Add(new TetherAdapterInfo(ni.Description, ni.Name, true, local is not null && !IsLinkLocal(local)));
+            if (local is null || result is not null) continue; // no IPv4 yet (DHCP still running) -> try again next tick
             int prefix = 24;
             try { if (uni!.PrefixLength is > 0 and <= 32) prefix = uni.PrefixLength; } catch (Exception) { }
             var phone = ip.GatewayAddresses.Select(g => g.Address).FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !a.Equals(IPAddress.Any))
                         ?? ip.DhcpServerAddresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-            return new TetherAdapter(ni.Id, ni.Name, ni.Description, idx, local, phone,
-                                     haveBest && idx >= 0 && best == (uint)idx, prefix);
+            result = new TetherAdapter(ni.Id, ni.Name, ni.Description, idx, local, phone,
+                                       haveBest && idx >= 0 && best == (uint)idx, prefix);
+            if (candidates is null) break;
         }
-        return null;
+        return result;
     }
+
+    private static bool IsLinkLocal(IPAddress a) { var b = a.GetAddressBytes(); return b.Length == 4 && b[0] == 169 && b[1] == 254; }
 
     public void Dispose()
     {

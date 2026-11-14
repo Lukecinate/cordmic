@@ -37,7 +37,17 @@ function Remove-All {
     }
 }
 
+# 0.7.2: undo the mic-only settings on tethering adapters Windows still knows (DNS back to DHCP, default routes allowed).
+function Reset-TetherAdapters {
+    $pattern = 'Remote NDIS|RNDIS|UsbNcm|USB NCM|\bNCM\b|SAMSUNG Mobile USB|Android USB Ethernet'
+    foreach ($a in @(Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Where-Object { $_.InterfaceDescription -match $pattern -or $_.Name -match $pattern })) {
+        foreach ($fam in 'IPv4', 'IPv6') { Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $fam -IgnoreDefaultRoutes Disabled -ErrorAction SilentlyContinue }
+        Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ResetServerAddresses -ErrorAction SilentlyContinue
+    }
+}
+
 if ($Action -eq 'Uninstall') {
+    Reset-TetherAdapters
     Remove-All
     Write-Output 'CordMic: firewall rule and task removed'
     Stop-Transcript | Out-Null

@@ -1,7 +1,6 @@
 package dev.cordmic
 
 import android.Manifest
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -82,6 +81,7 @@ class MainActivity : AppCompatActivity() {
     private var lastRunning: Boolean? = null
     private var usbCache: String? = null
     private var usbCheckedAt = 0L
+    private var linkCache = UsbLink.UNKNOWN
     private var installBusy = false
     private var updateBusy = false
 
@@ -333,6 +333,7 @@ class MainActivity : AppCompatActivity() {
         if (usbCheckedAt == 0L || now - usbCheckedAt > 1000) {
             usbCheckedAt = now
             usbCache = TetherNet.find()?.let { "${it.name} · ${it.local.hostAddress}/${it.prefix}" }
+            linkCache = UsbLink.read(this, ifaceUp = usbCache != null)
         }
         return usbCache
     }
@@ -340,7 +341,7 @@ class MainActivity : AppCompatActivity() {
     private fun liveState(): UiState {
         val s = MicService.current
         val usb = usbNow()
-        if (s == null) return UiState(if (permissionDenied) Phase.PERMISSION_DENIED else Phase.IDLE, usb = usb)
+        if (s == null) return UiState(if (permissionDenied) Phase.PERMISSION_DENIED else Phase.IDLE, usb = usb, link = linkCache)
         val phase = Phase.of(s.state)
         val heard = s.lastHeardAt
         return UiState(
@@ -354,6 +355,7 @@ class MainActivity : AppCompatActivity() {
             usb = usb,
             stats = s.engineStats,
             micSilenced = s.micSilenced,
+            link = linkCache,
         )
     }
 
@@ -630,15 +632,18 @@ class MainActivity : AppCompatActivity() {
     private fun locale(): Locale = resources.configuration.locales[0]
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    /** Tethering screen differs per vendor: try the AOSP/One UI screen, then wireless settings, then Settings. */
+    /**
+     * 0.7.2: tethering screen differs per vendor and Android version. Try the AOSP/One UI tethering activity, the
+     * older TetherSettings class, wireless settings, then Settings; when only a general screen opened, show the exact
+     * path as a toast.
+     */
     private fun openTetheringSettings() {
-        val candidates = listOf(
-            Intent().setComponent(ComponentName("com.android.settings", "com.android.settings.TetherSettings")),
-            Intent(Settings.ACTION_WIRELESS_SETTINGS),
-            Intent(Settings.ACTION_SETTINGS),
-        )
-        for (i in candidates) {
-            try { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) {}
+        for ((index, i) in UsbLink.tetherSettingsIntents().withIndex()) {
+            try {
+                startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                if (index >= 2) Toast.makeText(this, R.string.tether_path_hint, Toast.LENGTH_LONG).show()
+                return
+            } catch (_: Exception) {}
         }
         Toast.makeText(this, R.string.err_no_settings_app, Toast.LENGTH_LONG).show()
     }
@@ -655,10 +660,16 @@ class MainActivity : AppCompatActivity() {
     private fun maybeAutoCheckUpdates() {
         val p = getPreferences(MODE_PRIVATE)
         if (!p.getBoolean("autoUpdate", false)) return
+        // 0.7.2: automatic checks never spend mobile data (metered network); a manual check still works.
+        if (isMetered()) return
         val last = p.getLong("lastUpdateCheck", 0L)
         if (System.currentTimeMillis() - last < AppUpdate.MIN_CHECK_MS) return
         checkForUpdates(interactive = false)
     }
+
+    private fun isMetered(): Boolean = try {
+        getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered ?: true
+    } catch (_: Exception) { true }
 
     private fun checkForUpdates(interactive: Boolean) {
         if (updateBusy) return

@@ -142,6 +142,57 @@ public static class SettingsLayout
         return (tops, y + Px(ContentPadY, dpi));
     }
 
+    /// <summary>
+    /// 0.7.2: geometry of one Settings page (device pixels), computed headless from measuring functions so it can be
+    /// unit-tested without WinForms. <paramref name="measureTitle"/> and the others return a height for a text width.
+    /// </summary>
+    public static PageGeometry Compose(int clientWidth, double dpi, Func<int, int> measureTitle, Func<int, int> measureLead,
+        IReadOnlyList<Func<int, int>> rows, Func<int, int> measureKeys)
+    {
+        int padX = Px(ContentPadX, dpi), padY = Px(ContentPadY, dpi);
+        int w = Math.Max(Px(200, dpi), clientWidth - 2 * padX);
+        int th = Math.Max(0, measureTitle(w)), lh = Math.Max(0, measureLead(w));
+        var title = new PageRect(padX, padY, w, th);
+        var lead = new PageRect(padX, padY + th + Px(4, dpi), w, lh);
+        int header = th + Px(4, dpi) + lh + Px(10, dpi);
+        var heights = rows.Select(r => Math.Max(0, r(w))).ToList();
+        var (tops, total) = Stack(heights, dpi, header);
+        var rects = heights.Select((h, i) => new PageRect(padX, tops[i], w, h)).ToArray();
+        int kh = Math.Max(0, measureKeys(w));
+        var keys = new PageRect(padX, total, w, kh);
+        return new PageGeometry(w, title, lead, rects, keys, total + kh + padY);
+    }
+
     /// <summary>True when the content needs the vertical scrollbar in a viewport of <paramref name="viewportH"/>.</summary>
     public static bool NeedsScroll(int contentH, int viewportH) => contentH > viewportH;
+}
+
+/// <summary>A rectangle in content coordinates (before the scroll offset).</summary>
+public readonly record struct PageRect(int X, int Y, int W, int H)
+{
+    public int Bottom => Y + H;
+}
+
+/// <summary>Result of <see cref="SettingsLayout.Compose"/>.</summary>
+public sealed record PageGeometry(int TextWidth, PageRect Title, PageRect Lead, PageRect[] Rows, PageRect Keys, int Total);
+
+/// <summary>
+/// 0.7.2 (Settings crash in 0.7.0/0.7.1): WinForms raises Layout from inside a constructor (for example when
+/// AutoScroll is set), before the fields a layout pass uses exist. A control's layout handler calls
+/// <see cref="TryEnter"/> first: it is refused until <see cref="MarkBuilt"/> and while a pass is already running.
+/// </summary>
+public sealed class LayoutGate
+{
+    private bool _built, _running;
+    public bool Built => _built;
+    public void MarkBuilt() => _built = true;
+
+    public bool TryEnter()
+    {
+        if (!_built || _running) return false;
+        _running = true;
+        return true;
+    }
+
+    public void Exit() => _running = false;
 }

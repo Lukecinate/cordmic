@@ -548,8 +548,10 @@ internal sealed class LinkRow : Row
 
 internal sealed class StatusRow : Row
 {
-    private readonly Label _title, _line1, _line2, _help;
+    private readonly Label _title, _line1, _line2, _help, _guide;
     private readonly Func<string?> _l1, _l2;
+    /// <summary>0.7.2: step-by-step help while the phone is not connected (tethering guidance), else null.</summary>
+    public Func<string?>? Guidance { get; init; }
 
     public StatusRow(SettingsForm f, string title, string? help, Func<string?> line1, Func<string?> line2) : base(f)
     {
@@ -558,7 +560,8 @@ internal sealed class StatusRow : Row
         _line1 = Lbl(Fonts.Body, Theme.Ink);
         _line2 = Lbl(Fonts.Small, Theme.Muted);
         _help = Lbl(Fonts.Small, Theme.Muted, help);
-        Controls.AddRange(new Control[] { _title, _line1, _line2, _help });
+        _guide = Lbl(Fonts.Small, Theme.Ink);
+        Controls.AddRange(new Control[] { _title, _line1, _line2, _guide, _help });
     }
 
     public override int Arrange(int width)
@@ -566,6 +569,7 @@ internal sealed class StatusRow : Row
         int y = Place(_title, 0, 0, width);
         if (!string.IsNullOrEmpty(_line1.Text)) y = Place(_line1, 0, y + Sx(4), width); else _line1.Visible = false;
         if (!string.IsNullOrEmpty(_line2.Text)) y = Place(_line2, 0, y + Sx(2), width); else _line2.Visible = false;
+        if (!string.IsNullOrEmpty(_guide.Text)) y = Place(_guide, 0, y + Sx(8), width); else _guide.Visible = false;
         if (!string.IsNullOrEmpty(_help.Text)) y = Place(_help, 0, y + Sx(6), width);
         return y;
     }
@@ -573,7 +577,7 @@ internal sealed class StatusRow : Row
     public override bool RefreshValue()
     {
         base.RefreshValue();
-        return SetText(_line1, _l1()) | SetText(_line2, _l2());
+        return SetText(_line1, _l1()) | SetText(_line2, _l2()) | SetText(_guide, Guidance?.Invoke());
     }
 }
 

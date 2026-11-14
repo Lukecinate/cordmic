@@ -20,6 +20,8 @@ data class UiState(
     val stats: EngineStats? = null,
     /** 0.6.0: Android silenced the capture because another app uses the microphone. */
     val micSilenced: Boolean = false,
+    /** 0.7.2: USB port state from the USB_STATE broadcast (charging only vs no cable). */
+    val link: UsbLink = UsbLink.UNKNOWN,
 ) {
     val running: Boolean get() = phase.running
 }
@@ -63,13 +65,21 @@ object UiCopy {
 
     /** Message resource; STREAMING takes (target, engine) arguments. */
     fun message(ui: UiState): Int = when (ui.phase) {
-        Phase.IDLE -> if (ui.usb != null) R.string.state_idle_msg_tether_on else R.string.state_idle_msg_tether_off
+        Phase.IDLE -> if (ui.usb != null) R.string.state_idle_msg_tether_on else tetherMessage(ui.link, R.string.state_idle_msg_tether_off)
         Phase.PERMISSION_DENIED -> R.string.state_permission_msg
         Phase.STARTING -> R.string.state_starting_msg
-        Phase.WAITING_TETHER -> R.string.state_waiting_msg
+        Phase.WAITING_TETHER -> tetherMessage(ui.link, R.string.state_waiting_msg)
         Phase.SEARCHING -> R.string.state_searching_msg
         Phase.STREAMING -> R.string.state_streaming_msg
         Phase.MIC_FAILED -> R.string.state_mic_failed_msg
+    }
+
+    /** 0.7.2: say why tethering is not up, when the USB broadcast tells us. */
+    fun tetherMessage(link: UsbLink, fallback: Int): Int = when (link) {
+        UsbLink.CHARGING_ONLY -> R.string.state_msg_charging_only
+        UsbLink.NO_CABLE -> R.string.state_msg_no_cable
+        UsbLink.TETHER_STARTING -> R.string.state_msg_tether_starting
+        else -> fallback
     }
 
     fun hint(ui: UiState): HintAction = when {

@@ -93,13 +93,37 @@ internal sealed class SettingsForm : Form
         if (disposing) _fonts.Dispose();
     }
 
-    internal int Sx(int logical) => SettingsLayout.Px(logical, DeviceDpi);
+    internal int Sx(int logical) => SettingsLayout.Px(logical, Dpi);
+    /// <summary>DPI used for layout: the window's, or a forced one for the UI self-test (<see cref="SelfTest"/>).</summary>
+    internal int Dpi => _dpiOverride ?? DeviceDpi;
+    private int? _dpiOverride;
+
+    /// <summary>
+    /// 0.7.2: builds every page at <paramref name="dpi"/> without showing the window (used by
+    /// <c>CordMic.exe --self-test-ui</c>). Returns one line per page; throws on the first failure.
+    /// </summary>
+    internal IEnumerable<string> SelfTest(int dpi)
+    {
+        _dpiOverride = dpi;
+        _fonts.Switch(dpi, fs => { Font = fs.Body; _version.Font = fs.Small; foreach (var it in _navItems) it.ApplyFonts(); });
+        _content.Size = new Size(SettingsLayout.Px(SettingsLayout.DefaultWidth - SettingsLayout.NavWidth, dpi), SettingsLayout.Px(SettingsLayout.DefaultHeight, dpi));
+        foreach (var p in SettingsCatalog.Pages)
+        {
+            ShowPage(p);
+            RefreshNow();
+            _content.ArrangeNow();
+            int expected = SettingsCatalog.Items(p).Count();
+            if (_content.RowCount != expected) throw new InvalidOperationException($"page {p}: {_content.RowCount} of {expected} rows built");
+            if (_content.ContentHeight <= 0) throw new InvalidOperationException($"page {p}: empty layout");
+            yield return $"{p} @ {dpi * 100 / 96}%: {_content.RowCount} rows, {_content.ContentHeight} px";
+        }
+    }
     internal AppController App => _app;
 
     private void ApplyInitialSize()
     {
         var wa = Screen.FromPoint(Cursor.Position).WorkingArea;
-        var (w, h) = SettingsLayout.InitialSize(DeviceDpi, wa.Width, wa.Height);
+        var (w, h) = SettingsLayout.InitialSize(Dpi, wa.Width, wa.Height);
         ApplyMinimum();
         Size = new Size(w, h);
         Location = new Point(wa.Left + (wa.Width - w) / 2, wa.Top + (wa.Height - h) / 2);
@@ -109,7 +133,7 @@ internal sealed class SettingsForm : Form
     private void ApplyMinimum()
     {
         var wa = Screen.FromControl(this).WorkingArea;
-        var (mw, mh) = SettingsLayout.MinimumSize(DeviceDpi, wa.Width, wa.Height);
+        var (mw, mh) = SettingsLayout.MinimumSize(Dpi, wa.Width, wa.Height);
         MinimumSize = new Size(mw, mh);
     }
 
@@ -167,16 +191,23 @@ internal sealed class SettingsForm : Form
         private readonly Label _title, _lead, _keys;
         private readonly List<Row> _rows = new();
         private SettingsPage _page;
-        private bool _arranging;
+        // 0.7.2: 0.7.0/0.7.1 set AutoScroll first; WinForms ran a layout pass inside this constructor, before the labels
+        // existed, and the Settings window never opened (NullReferenceException in Row.Measure). Every field is now
+        // created first and layout is refused until the constructor has finished.
+        private readonly LayoutGate _gate = new();
 
         public PagePanel(SettingsForm f)
         {
             _f = f;
-            AutoScroll = true;
             _title = new Label { Font = f.Fonts.Title, ForeColor = Theme.Ink, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false };
             _lead = new Label { Font = f.Fonts.Body, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false };
             _keys = new Label { Font = f.Fonts.Small, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false, Text = L.T("set.keys") };
+            _gate.MarkBuilt();
+            AutoScroll = true; // may raise Layout; safe now
         }
+
+        internal int RowCount => _rows.Count;
+        internal int ContentHeight => AutoScrollMinSize.Height;
 
         public void Show(SettingsPage p) { _page = p; Rebuild(); }
 
@@ -240,30 +271,25 @@ internal sealed class SettingsForm : Form
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            if (_arranging) return;
-            _arranging = true;
+            if (!_gate.TryEnter()) return; // not built yet, or a pass is already running
             try { Arrange(); }
-            finally { _arranging = false; }
+            finally { _gate.Exit(); }
         }
+
+        internal void ArrangeNow() { if (_gate.TryEnter()) { try { Arrange(); } finally { _gate.Exit(); } } }
 
         private void Arrange()
         {
-            double dpi = _f.DeviceDpi;
-            int padX = _f.Sx(SettingsLayout.ContentPadX), padY = _f.Sx(SettingsLayout.ContentPadY);
-            int w = Math.Max(_f.Sx(200), ClientSize.Width - 2 * padX);
-            int oy = AutoScrollPosition.Y;
-            int th = Row.Measure(_title, w), lh = Row.Measure(_lead, w);
-            _title.SetBounds(padX, padY + oy, w, th);
-            _lead.SetBounds(padX, padY + th + _f.Sx(4) + oy, w, lh);
-            int header = th + _f.Sx(4) + lh + _f.Sx(10);
+            // Geometry comes from SettingsLayout.Compose (Core, unit-tested headless); this only measures and applies it.
             var shown = _rows.Where(r => r.Wanted).ToList();
-            var heights = shown.Select(r => r.Arrange(w)).ToList();
-            var (tops, total) = SettingsLayout.Stack(heights, dpi, header);
-            for (int i = 0; i < shown.Count; i++) shown[i].SetBounds(padX, tops[i] + oy, w, heights[i]);
-            int kh = Row.Measure(_keys, w);
-            _keys.SetBounds(padX, total + oy, w, kh);
-            total += kh + padY;
-            if (AutoScrollMinSize.Height != total) AutoScrollMinSize = new Size(0, total);
+            var g = SettingsLayout.Compose(ClientSize.Width, _f.Dpi, w => Row.Measure(_title, w), w => Row.Measure(_lead, w),
+                shown.Select(r => (Func<int, int>)r.Arrange).ToList(), w => Row.Measure(_keys, w));
+            int oy = AutoScrollPosition.Y;
+            _title.SetBounds(g.Title.X, g.Title.Y + oy, g.Title.W, g.Title.H);
+            _lead.SetBounds(g.Lead.X, g.Lead.Y + oy, g.Lead.W, g.Lead.H);
+            for (int i = 0; i < shown.Count; i++) shown[i].SetBounds(g.Rows[i].X, g.Rows[i].Y + oy, g.Rows[i].W, g.Rows[i].H);
+            _keys.SetBounds(g.Keys.X, g.Keys.Y + oy, g.Keys.W, g.Keys.H);
+            if (AutoScrollMinSize.Height != g.Total) AutoScrollMinSize = new Size(0, g.Total);
             Invalidate();
         }
 
@@ -375,7 +401,7 @@ internal static class RowFactory
         {
             // Connection
             case "phone":
-                return new StatusRow(f, T(item.LabelKey), H(item), () => app.Status.Title, () => app.Status.Detail);
+                return new StatusRow(f, T(item.LabelKey), H(item), () => app.Status.Title, () => app.Status.Detail) { Guidance = () => app.Status.Help };
             case "pairing":
                 return new ToggleRow(f, T(item.LabelKey), H(item), () => app.PairingEnabled, v => app.SetPairing(v))
                 {

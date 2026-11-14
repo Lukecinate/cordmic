@@ -19,6 +19,9 @@ internal sealed class MainForm : Form
     private readonly DpiResources<FontSet> _fonts;
     private int _animTicks;
     private bool _dotShown;
+    // 0.7.2: BuildUi sets ClientSize, which raises Resize while the old controls are already disposed and the new ones
+    // not yet created. LayoutHero is refused until the controls exist.
+    private LayoutGate _gate = new();
 
     public MainForm(AppController app)
     {
@@ -50,7 +53,7 @@ internal sealed class MainForm : Form
             Location = loc;
         };
         FormClosed += (_, _) => { _anim.Stop(); _anim.Dispose(); };
-        Resize += (_, _) => { if (_orb is not null) LayoutHero(); };
+        Resize += (_, _) => LayoutHero();
     }
 
     protected override void Dispose(bool disposing)
@@ -74,6 +77,7 @@ internal sealed class MainForm : Form
         foreach (var c in old) c.Dispose();
         _tip?.Dispose(); _tip = null;
         _gearGlyph?.Dispose(); _gearGlyph = null;
+        _gate = new LayoutGate();
         BuildUi();
         ResumeLayout(true);
         LayoutHero();
@@ -172,6 +176,7 @@ internal sealed class MainForm : Form
         Controls.Add(_detail);
         Controls.Add(_settingsLink);
         _dotShown = false;
+        _gate.MarkBuilt();
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -202,10 +207,17 @@ internal sealed class MainForm : Form
 
     private void LayoutHero()
     {
+        if (!_gate.TryEnter()) return;
+        try { LayoutHeroCore(); }
+        finally { _gate.Exit(); }
+    }
+
+    private void LayoutHeroCore()
+    {
         int w = ClientSize.Width;
         _orb.Location = new Point((w - _orb.Width) / 2, Sx(108));
         _state.SetBounds(Sx(32), _orb.Bottom + Sx(22), w - Sx(64), Sx(30));
-        _detail.SetBounds(Sx(32), _state.Bottom + Sx(4), w - Sx(64), Sx(52));
+        _detail.SetBounds(Sx(24), _state.Bottom + Sx(4), w - Sx(48), Sx(64)); // 0.7.2: room for three lines of tethering guidance
         _settingsLink.Location = new Point((w - _settingsLink.Width) / 2, ClientSize.Height - _settingsLink.Height - Sx(18));
     }
 
@@ -255,6 +267,13 @@ internal sealed class MainForm : Form
         }
         else _detail.Text = st.Detail;
         RefreshUpdateDot();
+    }
+
+    /// <summary>0.7.2: UI self-test hook: one full rebuild and layout without showing the window.</summary>
+    internal void SelfTest()
+    {
+        RebuildUi();
+        if (_orb is null || _detail is null || _orb.IsDisposed) throw new InvalidOperationException("main window controls missing after rebuild");
     }
 
     private int Sx(int px) => (int)Math.Round(px * DeviceDpi / 96.0);

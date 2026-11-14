@@ -4,6 +4,10 @@
   Since 0.6.1 it also keeps the firewall rule narrow: the tether network is set to the Private profile and the
   rule "CordMic (UDP 50005)" allows only the tether subnet (Private profile). With no tether adapter the rule is
   scoped to 127.0.0.1, which admits nothing from the network.
+  Since 0.7.2 the phone link is "mic only": the tether interface ignores default routes (IPv4 and IPv6), any
+  default route through the phone is removed and the interface's DNS server is set to loopback, so Windows never
+  sends internet traffic (and never spends mobile data) through the phone. Opt out: an administrator creates
+  %ProgramData%\CordMic\allow-phone-internet, and the next run restores DHCP DNS and default routes.
   Runs as SYSTEM from the scheduled task "\CordMic\SetTetherMetric" (network connected/disconnected events,
   logon, boot) or elevated from the tray menu ("Perbaiki prioritas jaringan HP").
 #>
@@ -17,6 +21,7 @@ $metric  = 9999
 $ruleName = 'CordMic (UDP 50005)'
 $logDir  = Join-Path $env:ProgramData 'CordMic'
 $log     = Join-Path $logDir 'tether-metric.log'
+$allowInternet = Test-Path (Join-Path $logDir 'allow-phone-internet')
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 function Log($m) {
     $line = "{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $m
@@ -36,6 +41,42 @@ function Get-CordMicSubnet([string]$Ip, [int]$Prefix) {
     $nb = [BitConverter]::GetBytes([uint32]($v -band $mask))
     [Array]::Reverse($nb)
     return "{0}/{1}" -f ([System.Net.IPAddress]::new($nb)), $Prefix
+}
+
+# 0.7.2: mic-only link. Never route internet (or DNS) through the phone; idempotent, logs only changes.
+function Set-CordMicMicOnly($a) {
+    foreach ($fam in 'IPv4', 'IPv6') {
+        $ipif = Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $fam -ErrorAction SilentlyContinue
+        if (-not $ipif) { continue }
+        $want = if ($allowInternet) { 'Disabled' } else { 'Enabled' }
+        if ("$($ipif.IgnoreDefaultRoutes)" -ne $want) {
+            try {
+                Set-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $fam -IgnoreDefaultRoutes $want -ErrorAction Stop
+                Log "$fam ignore-default-routes $want on '$($a.Name)'"
+            } catch { Log "could not set $fam ignore-default-routes on '$($a.Name)': $($_.Exception.Message)" }
+        }
+    }
+    if ($allowInternet) {
+        $dns = Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if ($dns -and (@($dns.ServerAddresses) -contains '127.0.0.1')) {
+            try { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ResetServerAddresses -ErrorAction Stop; Log "DNS reset to DHCP on '$($a.Name)' (allow-phone-internet)" }
+            catch { Log "DNS reset failed on '$($a.Name)': $($_.Exception.Message)" }
+        }
+        return
+    }
+    foreach ($r in @(Get-NetRoute -InterfaceIndex $a.ifIndex -DestinationPrefix '0.0.0.0/0', '::/0' -ErrorAction SilentlyContinue)) {
+        try {
+            Remove-NetRoute -InputObject $r -Confirm:$false -ErrorAction Stop
+            Log "removed default route ($($r.AddressFamily)) via the phone on '$($a.Name)'"   # next hop not logged
+        } catch { Log "could not remove default route on '$($a.Name)': $($_.Exception.Message)" }
+    }
+    $dns4 = Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+    if ($dns4 -and -not ((@($dns4.ServerAddresses).Count -eq 1) -and (@($dns4.ServerAddresses)[0] -eq '127.0.0.1'))) {
+        try {
+            Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses '127.0.0.1' -ErrorAction Stop
+            Log "DNS on '$($a.Name)' set to loopback (no lookups through the phone)"
+        } catch { Log "could not set DNS on '$($a.Name)': $($_.Exception.Message)" }
+    }
 }
 
 # Private profile + tether subnet only. If Windows refuses to mark the tether network Private, the rule also
@@ -77,6 +118,7 @@ do {
     $adapters = Get-NetAdapter -ErrorAction SilentlyContinue |
         Where-Object { $_.InterfaceDescription -match $pattern -or $_.Name -match $pattern }
     foreach ($a in $adapters) {
+        Set-CordMicMicOnly $a
         foreach ($fam in 'IPv4', 'IPv6') {
             $ipif = Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily $fam -ErrorAction SilentlyContinue
             if ($ipif -and $ipif.InterfaceMetric -ne $metric) {

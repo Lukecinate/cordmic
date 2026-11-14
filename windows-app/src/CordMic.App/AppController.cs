@@ -9,7 +9,7 @@ namespace CordMic.App;
 
 internal enum Health { Waiting, Ok, Warn, Error }
 
-internal sealed record AppStatus(Health Health, string Title, string Detail, string Tooltip);
+internal sealed record AppStatus(Health Health, string Title, string Detail, string Tooltip, string? Help = null);
 
 /// <summary>PC-side delay estimate split by stage (ms). Network = RTT/2 (USB link + both UDP stacks);
 /// Buffer = time-averaged jitter-buffer wait; Output = average time our samples sit in the WASAPI endpoint
@@ -55,6 +55,13 @@ internal sealed class AppController : ApplicationContext
     private readonly UpdateCoordinator _updates;
     // Audit M5: re-evaluate the six-hour schedule every 30 minutes on a monotonic clock.
     private readonly PeriodicGate _autoCheckGate = new(TimeSpan.FromMinutes(30));
+    // 0.7.2: read-only USB/tethering diagnosis (Setup API on a worker thread, at most every 3 s while not connected).
+    private readonly PeriodicGate _usbScanGate = new(TimeSpan.FromSeconds(3));
+    private volatile IReadOnlyList<UsbDeviceInfo>? _usbDevices;
+    private int _usbScanRunning;
+    private string? _lastTetherLog;
+    private bool _lastViaPhone;
+    public TetherDiagnosisResult Tether { get; private set; } = new(TetherLink.NothingOnUsb);
     private BalloonKind _balloon;
     private PostCoalescer _updateUi = null!;
     private Action<UpdateState>? _onUpdateChanged;
@@ -180,6 +187,7 @@ internal sealed class AppController : ApplicationContext
         try
         {
             _net.Tick(Log);
+            UpdateTether();
             EnsureReceiver();
             if (_audio.ConsumeDevicesDirty()) RefreshDevices();
             EnsureOutput();
@@ -406,6 +414,50 @@ internal sealed class AppController : ApplicationContext
     /// Before 0.4.2 the output part was the nominal 10 ms setting, so older numbers are not directly comparable.</summary>
     public double? EstLatencyMs() => LatencyBreakdown()?.TotalMs;
 
+    /// <summary>0.7.2: status for "no usable tethering adapter", with Samsung-first guidance (EN/ID).</summary>
+    private static AppStatus TetherStatus(TetherDiagnosisResult t)
+    {
+        var (title, detail, tip) = TetherDiagnosis.Keys(t.Link);
+        var help = TetherDiagnosis.HelpKey(t.Link) is { } hk ? L.T(hk) : null;
+        if (t.Link == TetherLink.DriverProblem) help = L.T("status.tether.steps") + "\n\n" + help;
+        return new(Health.Waiting, L.T(title), L.T(detail, t.ProblemCode), L.T(tip), help);
+    }
+
+    /// <summary>
+    /// 0.7.2: works out why there is no tethering adapter (phone charging only, driver problem, nothing on USB) from
+    /// the adapters NetWatcher saw and a background Setup API scan. Read-only; logs every change once.
+    /// </summary>
+    private void UpdateTether()
+    {
+        bool connected = _net.Current is not null;
+        bool viaPhone = _net.Current?.CarriesInternet == true;
+        if (viaPhone != _lastViaPhone)
+        {
+            _lastViaPhone = viaPhone;
+            Log(viaPhone ? "warning: Windows routes PC internet through the phone (mobile data); run \"Stop using phone data\""
+                         : "internet via phone: no");
+        }
+        if (!connected && _usbScanGate.TryEnter() && Interlocked.CompareExchange(ref _usbScanRunning, 1, 0) == 0)
+        {
+            _ = Task.Run(() =>
+            {
+                try { _usbDevices = UsbProbe.Scan(); }
+                finally { Volatile.Write(ref _usbScanRunning, 0); }
+            });
+        }
+        var t = TetherDiagnosis.Diagnose(_net.Candidates, connected ? null : _usbDevices);
+        if (connected && t.Link != TetherLink.Ready) t = new TetherDiagnosisResult(TetherLink.Ready, _net.Current!.Description);
+        Tether = t;
+        var line = t.LogLine();
+        if (line != _lastTetherLog)
+        {
+            // Before the first USB scan finished, "nothing on USB" is only a guess: wait for the scan.
+            if (!connected && _usbDevices is null && t.Link == TetherLink.NothingOnUsb) return;
+            _lastTetherLog = line;
+            Log("tether: " + line);
+        }
+    }
+
     private void UpdateStatus()
     {
         var s = Stats;
@@ -428,8 +480,9 @@ internal sealed class AppController : ApplicationContext
             st = new(Health.Warn, L.T("status.untrusted.title"), L.T("status.untrusted.detail", stranger), L.T("status.untrusted.title"));
         else if (s?.Peer is null)
         {
-            st = a is null
-                ? new(Health.Waiting, L.T("status.waiting.title"), L.T("status.waiting.detail"), L.T("status.waiting.tip"))
+            st = a is null ? TetherStatus(Tether)
+                // 0.7.2: phone found but Windows routes PC internet through it (mobile data): say so before streaming starts.
+                : a.CarriesInternet ? new(Health.Warn, L.T("status.viaPhoneIdle.title"), L.T("status.viaPhoneIdle.detail"), L.T("status.viaPhoneIdle.tip"))
                 : new(Health.Waiting, L.T("status.detected.title"), L.T("status.detected.detail", a.Description, a.PhoneIp), L.T("status.detected.tip"));
         }
         else
@@ -492,6 +545,7 @@ internal sealed class AppController : ApplicationContext
         if (_miUpdate is null) return;
         var st = _updates.State;
         string text = st.ReadyToInstall ? "\u25CF " + L.T("menu.updateReady", st.Tag)
+            : st.Phase == UpdatePhase.Available && !string.IsNullOrEmpty(st.Tag) ? L.T("menu.updateReady", st.Tag)
             : st.Busy ? L.T("menu.updating")
             : L.T("menu.checkUpdate");
         if (_miUpdate.Text != text) _miUpdate.Text = text;
@@ -503,8 +557,11 @@ internal sealed class AppController : ApplicationContext
     {
         var st = _updates.State;
         if (st.ReadyToInstall) { _ = _updates.InstallStagedAsync(); return; }
-        ShowSettings(SettingsPage.Updates);
+        // 0.7.2: a newer version was found but not downloaded (automatic downloads off): download, verify, install.
+        if (st.Phase == UpdatePhase.Available && !st.Busy) { _ = _updates.UpdateNowAsync(); ShowSettings(SettingsPage.Updates); return; }
+        // 0.7.2: start the check first, so it runs even if the Settings window cannot open (0.7.1 lost it there).
         if (!st.Busy) _ = _updates.CheckAsync(download: _settings.AutoUpdate);
+        ShowSettings(SettingsPage.Updates);
     }
 
     public void SetOutput(RenderDevice? d)
@@ -739,10 +796,25 @@ internal sealed class AppController : ApplicationContext
             w.Activate();
             return;
         }
-        _settingsWindow = new SettingsForm(this, page ?? SettingsPage.Sound);
-        _settingsWindow.FormClosed += (_, _) => _settingsWindow = null;
-        _settingsWindow.Show();
-        _settingsWindow.Activate();
+        // 0.7.2: 0.7.0/0.7.1 crashed here (layout ran inside a constructor). A failure is now logged and explained
+        // instead of silently doing nothing; the tray keeps working.
+        SettingsForm? created = null;
+        try
+        {
+            created = new SettingsForm(this, page ?? SettingsPage.Sound);
+            created.FormClosed += (_, _) => _settingsWindow = null;
+            _settingsWindow = created;
+            created.Show();
+            created.Activate();
+        }
+        catch (Exception ex)
+        {
+            Log("settings window failed: " + ex);
+            FlushLog();
+            _settingsWindow = null;
+            try { created?.Dispose(); } catch (Exception) { }
+            MessageBox.Show(L.T("dlg.settingsFailed"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     public void SetNoiseChoice(NoiseChoice c)

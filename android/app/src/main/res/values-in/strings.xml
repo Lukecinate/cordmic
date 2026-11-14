@@ -3,11 +3,11 @@
     <!-- Kartu status -->
     <string name="state_idle_title">Siap dimulai</string>
     <string name="state_idle_msg_tether_on">USB tethering aktif. Ketuk Mulai untuk menjadikan HP ini mikrofon PC.</string>
-    <string name="state_idle_msg_tether_off">Colok kabel USB dan aktifkan USB tethering, lalu ketuk Mulai.</string>
+    <string name="state_idle_msg_tether_off">Colok kabel USB dan aktifkan Tethering USB (Samsung: Pengaturan › Koneksi › Hotspot Seluler dan Tethering › Tethering USB), lalu ketuk Mulai.</string>
     <string name="state_starting_title">Memulai</string>
     <string name="state_starting_msg">Membuka mikrofon.</string>
     <string name="state_waiting_title">Menunggu USB tethering</string>
-    <string name="state_waiting_msg">Aktifkan USB tethering di Pengaturan. CordMic tersambung begitu tethering aktif.</string>
+    <string name="state_waiting_msg">Aktifkan Tethering USB (Samsung: Pengaturan › Koneksi › Hotspot Seluler dan Tethering › Tethering USB). CordMic tersambung begitu tethering aktif.</string>
     <string name="state_searching_title">Mencari PC</string>
     <string name="state_searching_msg">Pastikan CordMic berjalan di PC. Jika tidak ditemukan, isi alamat IP PC di Pengaturan di bawah.</string>
     <string name="state_streaming_title">Streaming ke PC</string>
@@ -16,6 +16,10 @@
     <string name="state_mic_failed_msg">Aplikasi lain mungkin sedang memakai mikrofon. Tutup aplikasi itu, atau hentikan lalu mulai lagi.</string>
     <string name="state_permission_title">Izin mikrofon diperlukan</string>
     <string name="state_permission_msg">CordMic memerlukan akses mikrofon untuk mengirim suara kamu ke PC.</string>
+    <string name="state_msg_charging_only">Kabel sudah tersambung, tetapi HP hanya mengisi daya. Nyalakan Tethering USB: Pengaturan › Koneksi › Hotspot Seluler dan Tethering › Tethering USB, atau ketuk notifikasi USB › Tethering USB. Biarkan HP tidak terkunci.</string>
+    <string name="state_msg_no_cable">Kabel USB ke komputer tidak terdeteksi. Pakai kabel USB data yang dicolok langsung ke PC, lalu nyalakan Tethering USB.</string>
+    <string name="state_msg_tether_starting">Tethering USB sedang dinyalakan. CordMic tersambung begitu PC selesai menyiapkan koneksi.</string>
+    <string name="tether_path_hint">Samsung: Pengaturan › Koneksi › Hotspot Seluler dan Tethering › Tethering USB. CordMic memakai kabel hanya untuk mic; kuota HP tidak dipakai.</string>
     <string name="action_open_tethering">Buka pengaturan tethering</string>
     <string name="action_open_app_settings">Buka pengaturan aplikasi</string>
     <string name="err_no_settings_app">Buka Pengaturan › Koneksi › Hotspot Seluler dan Tethering di HP kamu.</string>

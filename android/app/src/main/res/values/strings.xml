@@ -5,11 +5,11 @@
     <!-- Status card -->
     <string name="state_idle_title">Ready to start</string>
     <string name="state_idle_msg_tether_on">USB tethering is on. Tap Start to use this phone as your PC microphone.</string>
-    <string name="state_idle_msg_tether_off">Connect the USB cable and turn on USB tethering, then tap Start.</string>
+    <string name="state_idle_msg_tether_off">Connect the USB cable and turn on USB tethering (Samsung: Settings › Connections › Mobile Hotspot and Tethering › USB tethering), then tap Start.</string>
     <string name="state_starting_title">Starting</string>
     <string name="state_starting_msg">Opening the microphone.</string>
     <string name="state_waiting_title">Waiting for USB tethering</string>
-    <string name="state_waiting_msg">Turn on USB tethering in Settings. CordMic connects as soon as it is on.</string>
+    <string name="state_waiting_msg">Turn on USB tethering (Samsung: Settings › Connections › Mobile Hotspot and Tethering › USB tethering). CordMic connects as soon as it is on.</string>
     <string name="state_searching_title">Looking for your PC</string>
     <string name="state_searching_msg">Make sure CordMic is running on your PC. If it is not found, enter the PC IP address in Settings below.</string>
     <string name="state_streaming_title">Streaming to your PC</string>
@@ -18,6 +18,10 @@
     <string name="state_mic_failed_msg">Another app may be using the microphone. Close it, or stop and start again.</string>
     <string name="state_permission_title">Microphone permission needed</string>
     <string name="state_permission_msg">CordMic needs microphone access to send your voice to the PC.</string>
+    <string name="state_msg_charging_only">The cable is connected, but the phone is only charging. Turn on USB tethering: Settings › Connections › Mobile Hotspot and Tethering › USB tethering, or tap the USB notification › USB tethering. Keep the phone unlocked.</string>
+    <string name="state_msg_no_cable">No USB cable to a computer detected. Use a USB data cable plugged straight into the PC, then turn on USB tethering.</string>
+    <string name="state_msg_tether_starting">USB tethering is starting. CordMic connects as soon as the PC has set up the link.</string>
+    <string name="tether_path_hint">Samsung: Settings › Connections › Mobile Hotspot and Tethering › USB tethering. CordMic uses the cable only for the mic; it never uses your mobile data.</string>
     <string name="action_open_tethering">Open tethering settings</string>
     <string name="action_open_app_settings">Open app settings</string>
     <string name="err_no_settings_app">Open Settings › Connections › Mobile Hotspot and Tethering on your phone.</string>

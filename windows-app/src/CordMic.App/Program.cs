@@ -27,10 +27,16 @@ internal static class Program
         if (CordMic.Core.Updates.PortableUpdateArgs.Mentions(args)) return PortableUpdateHelper.Run(args);
 
         bool tray = args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
+        bool selfTest = args.Any(a => a.Equals(UiSelfTest.Arg, StringComparison.OrdinalIgnoreCase));
         using var mutex = new Mutex(true, MutexName, out bool first);
         if (!first)
         {
             // Already running (e.g. started at logon): a Start-menu click just opens the guide in that instance.
+            if (selfTest)
+            {
+                MessageBox.Show("CordMic is running. Exit it from the tray menu first, then run the self-test again.", "CordMic UI self-test");
+                return 2;
+            }
             try { if (!tray && EventWaitHandle.TryOpenExisting(ShowEventName, out var ev)) { ev.Set(); ev.Dispose(); } }
             catch (Exception) { }
             return 0;
@@ -42,7 +48,13 @@ internal static class Program
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         using var show = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName);
         using var quit = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
-        using var ctx = new AppController(openWizard: !tray);
+        using var ctx = new AppController(openWizard: !tray && !selfTest);
+        if (selfTest)
+        {
+            int code = UiSelfTest.Run(ctx, quiet: args.Any(a => a.Equals("--quiet", StringComparison.OrdinalIgnoreCase)));
+            ctx.Quit();
+            return code;
+        }
         Application.ThreadException += (_, e) => { ctx.Log("ui exception: " + e.Exception); ctx.FlushLog(); };
         // 0.6.2: write queued log lines before the process goes away (crash, logoff/shutdown, forced exit).
         AppDomain.CurrentDomain.UnhandledException += (_, e) => { ctx.Log("fatal: " + e.ExceptionObject); ctx.FlushLog(); };
