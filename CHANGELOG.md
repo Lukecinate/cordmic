@@ -2,6 +2,64 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-11-14
+
+Windows usability and updater release, from user feedback that the PC settings were hard to use and that Check for
+updates still required a manual download from GitHub. Android `versionCode` is 19 / `versionName` 0.7.0 (version
+parity only; no Android behaviour change). Wire version stays 1; 0.7.0 works with 0.6.x and 0.5.4–0.5.7 on the
+other side. The release APK is signed with the same key as 0.6.1 and 0.6.2. The Windows installer is not
+Authenticode-signed.
+
+### Added
+- **Settings window (Windows).** One window with the pages Connection, Sound, Noise & voice, Updates and Advanced,
+  replacing the fixed-height settings panel (about 992 px tall at 100%, which went off small screens). Every setting
+  has a plain-language label and one help line (English and Indonesian). The page scrolls, the window opens at most
+  90% of the work area with a minimum of 560 × 420 logical px, and everything is laid out from the window's DPI
+  (100–200%, re-laid out on DPI change). Keyboard: Tab / Shift+Tab, arrow keys inside a group, Ctrl+Tab /
+  Ctrl+Shift+Tab or Ctrl+PageDown / PageUp between pages, Esc closes. A focused list or slider no longer changes
+  its value when the mouse wheel scrolls the page.
+- **Noise reduction as one choice:** Off, Phone – light (recommended), Phone – strong, PC Studio – balanced /
+  whisper / maximum. It replaces the separate Noise cancellation and PC Studio lists; the phone mode is kept when a
+  Studio option is chosen.
+- **Delay or stability:** Lowest delay (jitter Low + output Auto), Balanced (Normal + Auto), Most stable (Safe +
+  Stable), with the current phone-to-PC delay. Jitter buffer and Windows output mode moved to Advanced; other
+  combinations show a note instead of a selection.
+- **Automatic update downloads (Windows), on by default.** CordMic checks at start and about every six hours,
+  downloads a newer release in the background with progress, verifies it and asks before installing (notification,
+  "● Install CordMic x.y.z" in the tray menu, teal dot on the gear and the Updates page). Settings → Updates has one
+  primary button (Check for updates / Update now / Install and restart / Try again), Cancel, a progress bar and the
+  steps Download → Verify → Install → Restart. **Update now** downloads, verifies, installs and restarts in one go.
+  Optional **Install when I exit CordMic**. Errors are plain sentences with a link to the download page.
+- **Portable self-update.** A portable copy (`portable.txt` next to `CordMic.exe`, or no `Uninstall.exe`)
+  downloads `CordMic-Portable-<version>.zip`, verifies it against `SHA256SUMS` on the locked handle, unpacks it with
+  a path-traversal guard and starts the new `CordMic.exe --apply-portable-update`, which waits for the old process
+  to exit, replaces the files with a backup (the executable last), rolls every file back on any failure and starts
+  CordMic again. No elevation. A folder that cannot be written falls back to the download page.
+- The portable zip now contains `portable.txt` and is written by `windows-app/build.sh`.
+- `CordMic.Harness settings-json` and `tools/render/render_settings.py`: labelled HTML/PNG renders of the Settings
+  pages from the app's catalog, strings and layout constants (WinForms cannot run on Linux).
+
+### Changed
+- **Tray menu** reduced to: status, Open CordMic, Connect / Disconnect, Settings…, Check for updates (or Install
+  CordMic x.y.z), Fix phone network priority (only when needed), Open log, Exit. Output device, output mode, jitter
+  buffer, Start with Windows and language moved to the Settings window.
+- **Main window** keeps the round connect button (now focusable, Enter/Space) and the status lines; the settings
+  panel is replaced by a Settings link and the gear. Esc closes, Ctrl+, opens Settings.
+- **Updater engine** rewritten (`CordMic.Core/Updates`): one check or download at a time (a second request joins the
+  running one), streaming download with progress, 60 s stall timeout, 400 MB cap, cancel at any point, old staging
+  folders removed after an hour. Kept from 0.6.1: private randomly named staging folder with a user-only ACL, the
+  checksum computed on the same locked handle that is run or unpacked, no downgrade, Authenticode check for the
+  VB-CABLE package.
+- **Settings schema 2.** On first start of 0.7.0, *Download updates automatically* is turned on unless the log
+  shows it was explicitly turned off in 0.6.1 or later; all other settings are kept. The migration runs once.
+
+### Tests
+- .NET: 255 (was 228), including the updater against a fake release server (progress, background ready, concurrent
+  checks, cancel, checksum mismatch, up to date, no downgrade, declined permission), portable detection, read-only
+  folder, missing asset, helper arguments, swap, rollback and zip extraction, settings migration and log-based
+  detection, noise/delay choices, catalog strings in both languages, and the Settings layout at 100/125/150/200%
+  DPI on several work-area sizes. Kotlin: 57 (unchanged).
+
 ## [0.6.2] - 2026-11-13
 
 Audio-quality and robustness release from an analysis of 0.6.1 recordings and logs. Android `versionCode` is 18 /

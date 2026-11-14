@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build CordMic for Windows (works on Linux, macOS or WSL): tests -> win-x64 single-file publish -> NSIS installer.
-# Needs: .NET 8 SDK (dotnet on PATH), NSIS 3 (makensis), python3 (interop test).
+# Needs: .NET 8 SDK (dotnet on PATH), NSIS 3 (makensis), python3 (interop test, portable zip).
+# Output: ../dist/CordMic-Setup-<ver>.exe and ../dist/CordMic-Portable-<ver>.zip (0.7.0+: the zip carries portable.txt,
+# which tells the in-app updater to update that folder in place).
 set -euo pipefail
 cd "$(dirname "$0")"
 VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' src/CordMic.App/CordMic.App.csproj | head -1)
@@ -18,5 +20,17 @@ rm -rf publish
 dotnet publish src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:SourceRevisionId=$REV -o publish
 (cd installer && makensis -V2 -DVERSION=$VERSION cordmic.nsi)
-ls -la ../dist/CordMic-Setup-$VERSION.exe
+# Portable zip: the same publish folder plus the portable marker, files at the zip root (the updater expects
+# CordMic.exe there and the asset name CordMic-Portable-<ver>.zip).
+printf 'CordMic portable copy. Keep this file: it tells CordMic to update this folder in place.\r\n' > publish/portable.txt
+python3 - "$VERSION" <<'PY'
+import os, sys, zipfile
+ver = sys.argv[1]
+out = os.path.join("..", "dist", f"CordMic-Portable-{ver}.zip")
+os.makedirs(os.path.dirname(out), exist_ok=True)
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for name in sorted(os.listdir("publish")):
+        z.write(os.path.join("publish", name), name)
+PY
+ls -la ../dist/CordMic-Setup-$VERSION.exe ../dist/CordMic-Portable-$VERSION.zip
 echo "built CordMic $VERSION+$REV"

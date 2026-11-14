@@ -80,6 +80,14 @@ previews of the 0.4 setup guide.
 |---|
 | ![CordMic connect window](docs/screenshots/windows-main.png) |
 
+| Settings: Noise & voice (0.7.0 render) | Settings: Updates (0.7.0 render) |
+|---|---|
+| ![Settings window, Noise & voice page (render)](docs/screenshots/windows-settings-noise-render.png) | ![Settings window, Updates page (render)](docs/screenshots/windows-settings-updates-render.png) |
+
+The Settings images are renders drawn by `tools/render/render_settings.py` from the app's own catalog, strings and
+layout constants, with sample values; they are not screenshots of the running app.
+[Indonesian Sound page](docs/screenshots/windows-settings-sound-id-render.png).
+
 | Setup guide, streaming (0.4 preview) | Setup guide, waiting (0.4 preview) | Tray menu and tooltip |
 |---|---|---|
 | ![Windows setup guide, streaming (design preview)](docs/screenshots/windows-wizard-streaming-preview.png) | ![Windows setup guide, waiting (design preview)](docs/screenshots/windows-wizard-waiting-preview.png) | ![Windows tray (design preview)](docs/screenshots/windows-tray-preview.png) |
@@ -156,36 +164,39 @@ the measured Windows output buffer), plus round-trip time and packet loss over t
 ### Main window
 
 Double-click the tray icon (or **Open CordMic**). The window has one round button (disconnected, searching,
-connected, error), a status line with the phone model and the live PC-side delay, the **Detected:** line reported
-by the phone (for example `Detected: SM-S721B · AAudio exclusive, 3 mics, front focus`), and a Settings panel:
+connected, error; it can be focused and pressed with Enter or Space), a status line with the phone model and the live
+PC-side delay, and a **Settings** link. The gear in the header opens the same Settings window and shows a teal dot
+when an update is downloaded and ready. Esc closes the window, Ctrl+, opens Settings.
 
-| Setting | Default | Notes |
+### Settings window (0.7.0)
+
+One window with five pages on the left. Every setting has a plain-language label and one help line. The page
+scrolls when the window is small, the window opens at most 90% of the screen, and it is laid out from the window's
+DPI (100–200%). Keyboard: Tab / Shift+Tab between settings, arrow keys inside a group, Ctrl+Tab / Ctrl+Shift+Tab
+(or Ctrl+PageDown / PageUp) between pages, Esc closes.
+
+| Page | Settings | Default |
 |---|---|---|
-| Output device | Automatic | Best virtual cable found (VB-CABLE A–D, VAC, VoiceMeeter), or a specific device |
-| Output mode | Auto | *Auto* picks the shortest stable period and tries Exclusive only when that is shorter. *Low latency* (shared, about one period queued), *Stable* (keeps the whole Windows buffer full; for busy PCs) or *Exclusive* (WASAPI exclusive; CordMic then owns "CABLE Input" and falls back to Low latency if refused). An explicit choice is never overwritten |
-| Latency (jitter buffer) | Normal 10 ms | Low 5 / Normal 10 / Safe 20 ms, raised automatically to what the render period needs (see [Architecture](#architecture--protocol)) |
-| Noise cancellation | Light | Off / Light / Strong (applied on the phone) |
-| PC Studio noise reduction | Off | Off / Balanced / Whisper priority / Max, run on the PC (see [PC Studio noise reduction](#pc-studio-noise-reduction-optional)) |
-| Voice clarity | On | High-pass, low-shelf and presence EQ (on the phone) |
-| Auto volume | On | Gated AGC toward −18 dBFS (on the phone) |
-| Front focus | On | Asks the phone for the mic facing the user where the capture path supports it |
-| Front focus (higher latency) | Off | Switches the phone to AudioRecord so the direction can take effect on phones whose AAudio path cannot |
-| Mic gain | +6 dB | 0 to +24 dB, applied on the phone before Auto volume |
-| Start with Windows | Off | Also in the tray menu |
-| Install / Optimize VB-CABLE | – | Shown when no cable is found, or when the cable format is not optimal |
-| Check for updates, Auto update | Auto update off | See [Updates](#updates) |
-| Reset audio settings | – | Restores the voice defaults above on both sides |
-| Open logs | – | Opens the log folder |
+| Connection | Phone status; Ask for a pairing code (with New code); Start with Windows; Language (Automatic, English, Bahasa Indonesia) | Pairing per previous setting; Start with Windows off; Automatic |
+| Sound | Virtual microphone (Automatic = best virtual cable found: VB-CABLE A–D, VAC, VoiceMeeter, or a specific device); Install VB-CABLE (only when no cable is found); Auto volume; Phone mic boost 0 to +24 dB; **Delay or stability**: Lowest delay / Balanced / Most stable, with the current phone-to-PC delay | Automatic; Auto volume on; +6 dB; Balanced |
+| Noise & voice | **Noise reduction**, one choice: Off, Phone – light (recommended), Phone – strong, PC Studio – balanced / whisper / maximum (+40 ms, see [PC Studio noise reduction](#pc-studio-noise-reduction-optional)); Voice clarity; Front focus; Phone microphones (what the phone reported) | Phone – light; Voice clarity on; Front focus on |
+| Updates | Update card (status, progress, Cancel, one primary button); Download updates automatically; Install when I exit CordMic; Download page on GitHub | Download automatically **on**; install on exit off |
+| Advanced | Jitter buffer (Low 5 / Normal 10 / Safe 20 ms); Windows output mode (Auto, Low latency, Stable, Exclusive); Front focus, compatible mode (AudioRecord, higher latency); Optimize VB-CABLE; Fix phone network priority; Mic mode is set on the phone; Get VB-CABLE; Open log; Reset audio settings | Normal; Auto; off |
+
+*Delay or stability* sets the jitter buffer and output mode together: Lowest delay = Low + Auto, Balanced = Normal +
+Auto, Most stable = Safe + Stable. Other combinations chosen under Advanced leave all three unselected, with a note that custom values are set under Advanced. *Output mode Auto*
+picks the shortest stable period and tries Exclusive only when that is shorter; an explicit choice is never
+overwritten. Settings from 0.6.x are migrated on first start and nothing is lost.
 
 Voice settings changed here are applied to the phone live, and changes made on the phone show up here. A control
 that is focused, being dragged or open is not overwritten by an incoming value. A warning appears when speech stays
-below about −40 dBFS after gain. Since 0.6.0 two more notices can appear under the noise settings: *Move the phone
-closer (about 15 cm) for a cleaner sound* when the estimated speech-to-noise ratio stays below 15 dB for 10 s (hidden
-again above 18 dB for 10 s), and a warning when Android reports that another app has silenced CordMic's microphone.
+below about −40 dBFS after gain. Under Noise reduction two more notices can appear: *Move the phone closer (about
+15 cm) for a cleaner sound* when the estimated speech-to-noise ratio stays below 15 dB for 10 s (hidden again above
+18 dB for 10 s), and a warning when Android reports that another app has silenced CordMic's microphone.
 
-Right-click the tray icon for **Output device**, **Output mode**, **Jitter buffer**, **Mic mode (set on the
-phone)**, **Open CordMic**, **Fix phone network priority** (shown only when internet goes through the phone; asks
-for UAC), **Open log**, **Start with Windows**, **Language / Bahasa** (Automatic, English, Bahasa Indonesia) and **Exit**.
+Right-click the tray icon for **Open CordMic**, **Connect / Disconnect**, **Settings…**, **Check for updates**
+(shown as **● Install CordMic x.y.z** in teal when an update is ready), **Fix phone network priority** (shown only
+when internet goes through the phone; asks for UAC), **Open log** and **Exit**.
 
 ### Settings and logs
 
@@ -327,12 +338,33 @@ for the session, a notice appears and the phone's own noise cancellation is used
 
 ## Updates
 
-Both apps can **Check for updates**, and an optional **Auto update** toggle (off by default) checks at launch and
-about every six hours. CordMic reads the latest GitHub Release of `Lukecinate/cordmic` over HTTPS without an
-account, verifies the downloaded asset against the release's `SHA256SUMS`, and never installs an older version.
-Android also requires the APK signing certificate to match the installed app and hands the file to the system
-installer (Install is tapped once; "install unknown apps" may be requested). Windows runs the verified setup with
-`/S`; UAC or SmartScreen may still appear. No other data is sent.
+Both apps can **Check for updates**. CordMic reads the latest GitHub Release of `Lukecinate/cordmic` over HTTPS
+without an account, verifies the downloaded asset against the release's `SHA256SUMS`, and never installs an older
+version. No other data is sent.
+
+**Windows (0.7.0).** *Download updates automatically* is on by default (also for existing users, unless it was
+turned off in 0.6.1 or later). CordMic checks at start and about every six hours, downloads a newer version in the
+background with progress, verifies it and then asks: the tray icon shows a notification, the tray menu shows
+**● Install CordMic x.y.z** and the gear shows a teal dot. Nothing is installed without a click. **Update now** in
+Settings → Updates downloads, verifies, installs and restarts in one go; **Cancel** stops a check or download. With
+*Install when I exit CordMic* on, a ready update is installed when you choose Exit in the tray. Only one check or
+download runs at a time. The download goes to a private, randomly named folder (readable only by the current
+user), and the checksum is computed on the same locked file handle that is later run or unpacked.
+
+- *Installed copy*: the verified `CordMic-Setup-<version>.exe` runs with `/S`; Windows asks for permission once
+  (UAC; SmartScreen may also appear because the installer is not Authenticode-signed). The mic pauses for about
+  10 seconds while CordMic restarts.
+- *Portable copy* (a folder with `portable.txt`, or without `Uninstall.exe`): the verified
+  `CordMic-Portable-<version>.zip` is unpacked and a small helper (the new `CordMic.exe --apply-portable-update`)
+  waits for CordMic to exit, replaces the files in place with a backup, rolls everything back if any file fails,
+  and starts CordMic again. No permission prompt. If the folder cannot be written (for example under Program
+  Files), CordMic says so and links to the download page.
+- Errors are plain sentences (no internet, checksum mismatch, permission declined, folder not writable) with a link
+  to the download page on GitHub.
+
+**Android.** An optional **Auto update** toggle (off by default) checks at launch and about every six hours. Android
+also requires the APK signing certificate to match the installed app and hands the file to the system installer
+(Install is tapped once; "install unknown apps" may be requested).
 
 ## Troubleshooting
 
@@ -391,8 +423,9 @@ settings in use. Do not attach voice recordings to public issues.
 
 - Audio travels only over the USB tethering link to the PC on the local subnet; it is not stored by CordMic.
 - The device probe runs on the phone. Only a short capability summary and the model name are sent to the PC.
-- There is no telemetry or analytics. The only internet requests are the optional update check (GitHub Releases)
-  and the optional VB-CABLE download from vb-audio.com, both over HTTPS.
+- There is no telemetry or analytics. The only internet requests are the update check and download (GitHub
+  Releases; on Windows automatic by default and can be turned off) and the optional VB-CABLE download from
+  vb-audio.com, all over HTTPS.
 - The tray app runs as the signed-in user. Changing the VB-CABLE format uses a fixed-verb elevated helper mode;
   see [docs/SECURITY.md](docs/SECURITY.md) for what it changes and how to undo it.
 
@@ -511,7 +544,13 @@ Linux or macOS:
 cd windows-app && ./build.sh
 ```
 Runs the tests, publishes `windows-app/publish/CordMic.exe` (win-x64, self-contained, single file) and writes
-`dist/CordMic-Setup-<version>.exe`. The portable zip is the contents of `windows-app/publish/`.
+`dist/CordMic-Setup-<version>.exe` and `dist/CordMic-Portable-<version>.zip` (the contents of `windows-app/publish/`
+plus `portable.txt`, which marks a portable copy for the in-app updater).
+
+Settings renders: WinForms cannot run on Linux, so `tools/render/render_settings.py` draws labelled HTML/PNG renders
+of the Settings pages from the same catalog, strings and layout constants
+(`dotnet run --project windows-app/src/CordMic.Harness -- settings-json en > en.json`, then
+`python3 tools/render/render_settings.py en.json out/`). They are renders, not screenshots.
 
 ### Android app
 Requires JDK 17, Android SDK Platform 34 and Build-Tools 34, NDK 26.1.10909125 and CMake 3.22.1
@@ -530,8 +569,8 @@ official install.
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (189 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint |
-| Kotlin (46 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+| .NET (255 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI |
+| Kotlin (57 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 The release gates for noise reduction and Auto volume (DNSMOS, ESTOI, PESQ, LUFS) run on the shipping C# code through
 `tools/harness/` with data downloaded at test time; see [tools/harness/README.md](tools/harness/README.md).
@@ -571,6 +610,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 0.7.0 | New Windows Settings window (pages, help text, scrolling, keyboard, DPI), automatic background update downloads with one-click Update now, progress and Cancel, portable self-update with rollback, slimmer tray menu |
 | 0.6.0 | Pitch-based packet-loss concealment, resampling drift control, optional PC Studio noise reduction (RNNoise + WhisperGuard + LUFS Auto volume), silenced-mic warning, privacy-sensitive capture, move-closer hint |
 | 0.5.7 | Smoother Strong noise reduction (spectral floor, per-band gain smoothing, whisper and consonant protection); phone noise floor, gate, Auto volume gain and expander in the PC log |
 | 0.5.6 | Pre-gain gate and continuously tracked noise floor, floor-limited AGC makeup, pause expander, gain ramp; jitter-buffer underrun fades, overflow splices and an adaptive target |

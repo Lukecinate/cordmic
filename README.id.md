@@ -81,6 +81,13 @@ pratinjau desain panduan 0.4.
 |---|
 | ![Jendela sambung CordMic](docs/screenshots/windows-main.png) |
 
+| Pengaturan: Suara (render 0.7.0) | Pengaturan: Pembaruan (render 0.7.0, Inggris) |
+|---|---|
+| ![Jendela Pengaturan, halaman Suara (render)](docs/screenshots/windows-settings-sound-id-render.png) | ![Jendela Pengaturan, halaman Pembaruan (render)](docs/screenshots/windows-settings-updates-render.png) |
+
+Gambar Pengaturan adalah render dari `tools/render/render_settings.py` berdasarkan katalog, teks, dan konstanta tata
+letak aplikasi, dengan nilai contoh; bukan tangkapan layar aplikasi yang berjalan.
+
 | Panduan, streaming (pratinjau 0.4) | Panduan, menunggu (pratinjau 0.4) | Menu tray dan tooltip |
 |---|---|---|
 | ![Panduan Windows, streaming (pratinjau desain)](docs/screenshots/windows-wizard-streaming-id-preview.png) | ![Panduan Windows, menunggu (pratinjau desain)](docs/screenshots/windows-wizard-waiting-preview.png) | ![Tray Windows (pratinjau desain)](docs/screenshots/windows-tray-preview.png) |
@@ -156,37 +163,40 @@ rata-rata, dan buffer output Windows terukur), plus round-trip time dan packet l
 ### Jendela utama
 
 Klik dua kali ikon tray (atau **Buka CordMic**). Jendela berisi satu tombol bulat (terputus, mencari, tersambung,
-error), baris status dengan model HP dan delay sisi PC, baris **Detected:** dari HP (misalnya
-`Detected: SM-S721B · AAudio exclusive, 3 mics, front focus`), dan panel Pengaturan:
+error; bisa difokuskan dan ditekan dengan Enter atau Spasi), baris status dengan model HP dan delay sisi PC, serta
+tautan **Pengaturan**. Ikon roda gigi di header membuka jendela Pengaturan yang sama dan menampilkan titik teal bila
+pembaruan sudah diunduh dan siap. Esc menutup jendela, Ctrl+, membuka Pengaturan.
 
-| Pengaturan | Default | Catatan |
+### Jendela Pengaturan (0.7.0)
+
+Satu jendela dengan lima halaman di kiri. Setiap pengaturan punya label dengan bahasa sehari-hari dan satu baris
+penjelasan. Halaman bisa digulir bila jendela kecil, jendela dibuka paling besar 90% layar, dan tata letaknya
+mengikuti DPI jendela (100–200%). Keyboard: Tab / Shift+Tab antar pengaturan, tombol panah di dalam grup,
+Ctrl+Tab / Ctrl+Shift+Tab (atau Ctrl+PageDown / PageUp) antar halaman, Esc menutup.
+
+| Halaman | Pengaturan | Default |
 |---|---|---|
-| Perangkat output | Otomatis | Kabel virtual terbaik yang ditemukan (VB-CABLE A–D, VAC, VoiceMeeter), atau perangkat tertentu |
-| Mode output | Auto | *Auto* memilih periode stabil terpendek dan mencoba Exclusive hanya bila lebih pendek. *Latensi rendah* (shared, sekitar satu periode antre), *Stabil* (buffer Windows selalu penuh; untuk PC sibuk) atau *Exclusive* (WASAPI exclusive; CordMic memegang "CABLE Input" dan kembali ke Latensi rendah bila ditolak). Pilihan eksplisit tidak pernah ditimpa |
-| Latensi (jitter buffer) | Normal 10 ms | Low 5 / Normal 10 / Safe 20 ms, dinaikkan otomatis sesuai kebutuhan periode render (lihat [Arsitektur](#arsitektur--protokol)) |
-| Noise cancellation | Ringan | Mati / Ringan / Kuat (diterapkan di HP) |
-| Peredam bising Studio di PC | Mati | Mati / Seimbang / Prioritas bisikan / Maksimal, dijalankan di PC (lihat [Peredam bising Studio di PC](#peredam-bising-studio-di-pc-opsional)) |
-| Voice clarity | Aktif | EQ high-pass, low-shelf, dan presence (di HP) |
-| Volume otomatis | Aktif | AGC dengan gate menuju −18 dBFS (di HP) |
-| Fokus depan | Aktif | Meminta mic yang menghadap pengguna bila jalur capture mendukung |
-| Fokus depan (latensi lebih tinggi) | Mati | Memindahkan HP ke AudioRecord agar arah mic bisa berlaku di HP yang jalur AAudio-nya tidak bisa |
-| Gain mic | +6 dB | 0 sampai +24 dB, diterapkan di HP sebelum Volume otomatis |
-| Jalan saat Windows mulai | Mati | Juga ada di menu tray |
-| Pasang / Optimalkan VB-CABLE | – | Muncul bila belum ada kabel, atau format kabel belum optimal |
-| Periksa pembaruan, Pembaruan otomatis | Pembaruan otomatis mati | Lihat [Pembaruan](#pembaruan) |
-| Reset pengaturan audio | – | Mengembalikan default suara di atas di kedua sisi |
-| Buka log | – | Membuka folder log |
+| Koneksi | Status HP; Minta kode pairing (dengan Kode baru); Jalan saat Windows mulai; Bahasa (Otomatis, English, Bahasa Indonesia) | Pairing mengikuti pengaturan sebelumnya; Jalan saat Windows mulai mati; Otomatis |
+| Suara | Mikrofon virtual (Otomatis = kabel virtual terbaik yang ditemukan: VB-CABLE A–D, VAC, VoiceMeeter, atau perangkat tertentu); Pasang VB-CABLE (hanya bila belum ada kabel); Volume otomatis; Penguat mic HP 0 sampai +24 dB; **Jeda atau stabil**: Jeda terendah / Seimbang / Paling stabil, dengan jeda HP-ke-PC saat ini | Otomatis; Volume otomatis aktif; +6 dB; Seimbang |
+| Bising & suara | **Peredam bising**, satu pilihan: Mati, HP – ringan (disarankan), HP – kuat, Studio PC – seimbang / bisikan / maksimal (+40 ms, lihat [Peredam bising Studio di PC](#peredam-bising-studio-di-pc-opsional)); Kejelasan suara; Fokus depan; Mikrofon HP (info dari HP) | HP – ringan; Kejelasan suara aktif; Fokus depan aktif |
+| Pembaruan | Kartu pembaruan (status, progres, Batal, satu tombol utama); Unduh pembaruan otomatis; Pasang saat aku keluar dari CordMic; Halaman unduhan di GitHub | Unduh otomatis **aktif**; pasang saat keluar mati |
+| Lanjutan | Jitter buffer (Low 5 / Normal 10 / Safe 20 ms); Mode output Windows (Auto, Latensi rendah, Stabil, Exclusive); Fokus depan, mode kompatibel (AudioRecord, latensi lebih tinggi); Optimalkan VB-CABLE; Perbaiki prioritas jaringan HP; Mode mic diatur di HP; Dapatkan VB-CABLE; Buka log; Reset pengaturan audio | Normal; Auto; mati |
+
+*Jeda atau stabil* mengatur jitter buffer dan mode output sekaligus: Jeda terendah = Low + Auto, Seimbang =
+Normal + Auto, Paling stabil = Safe + Stabil. Bila kombinasi lain dipilih di Lanjutan, ketiganya tidak terpilih dan muncul catatan bahwa nilai khusus diatur di Lanjutan.
+*Mode output Auto* memilih periode stabil terpendek dan mencoba Exclusive hanya bila lebih pendek; pilihan eksplisit
+tidak pernah ditimpa. Pengaturan dari 0.6.x dimigrasikan saat pertama kali dibuka dan tidak ada yang hilang.
 
 Pengaturan suara yang diubah di sini langsung diterapkan ke HP, dan perubahan di HP muncul di sini. Kontrol yang
 sedang fokus, digeser, atau terbuka tidak ditimpa nilai yang masuk. Peringatan muncul bila suara tetap di bawah
-sekitar −40 dBFS setelah gain. Sejak 0.6.0 dua pemberitahuan lain bisa muncul di bawah pengaturan noise: *Dekatkan HP
-(sekitar 15 cm) agar suara lebih bersih* bila perkiraan rasio suara-terhadap-noise tetap di bawah 15 dB selama 10 detik
+sekitar −40 dBFS setelah gain. Di bawah Peredam bising bisa muncul dua pemberitahuan lain: *Dekatkan HP (sekitar
+15 cm) agar suara lebih bersih* bila perkiraan rasio suara-terhadap-noise tetap di bawah 15 dB selama 10 detik
 (hilang lagi di atas 18 dB selama 10 detik), dan peringatan bila Android melaporkan bahwa aplikasi lain membuat mic
 CordMic hening.
 
-Klik kanan ikon tray untuk **Perangkat output**, **Mode output**, **Jitter buffer**, **Mode mic (diatur di HP)**,
-**Buka CordMic**, **Perbaiki prioritas jaringan HP** (hanya muncul bila internet lewat HP; meminta UAC), **Buka log**,
-**Jalan saat Windows mulai**, **Language / Bahasa** (Otomatis, English, Bahasa Indonesia), dan **Keluar**.
+Klik kanan ikon tray untuk **Buka CordMic**, **Hubungkan / Putuskan**, **Pengaturan…**, **Periksa pembaruan**
+(tampil sebagai **● Pasang CordMic x.y.z** berwarna teal bila pembaruan siap), **Perbaiki prioritas jaringan HP**
+(hanya muncul bila internet lewat HP; meminta UAC), **Buka log**, dan **Keluar**.
 
 ### Pengaturan dan log
 
@@ -329,12 +339,34 @@ menampilkan bahwa HP belum mengonfirmasi bypass.
 
 ## Pembaruan
 
-Kedua aplikasi punya **Periksa pembaruan**, dan sakelar opsional **Pembaruan otomatis** (default mati) memeriksa saat
-aplikasi dibuka dan sekitar tiap enam jam. CordMic membaca GitHub Release terbaru `Lukecinate/cordmic` lewat HTTPS
-tanpa akun, memverifikasi file unduhan dengan `SHA256SUMS` rilis, dan tidak pernah memasang versi lebih lama. Android
-juga mewajibkan sertifikat penanda tangan APK sama dengan aplikasi terpasang lalu menyerahkan file ke installer sistem
-(Install diketuk sekali; "install unknown apps" mungkin diminta). Windows menjalankan setup terverifikasi dengan `/S`;
-UAC atau SmartScreen masih bisa muncul. Tidak ada data lain yang dikirim.
+Kedua aplikasi punya **Periksa pembaruan**. CordMic membaca GitHub Release terbaru `Lukecinate/cordmic` lewat HTTPS
+tanpa akun, memverifikasi file unduhan dengan `SHA256SUMS` rilis, dan tidak pernah memasang versi lebih lama. Tidak
+ada data lain yang dikirim.
+
+**Windows (0.7.0).** *Unduh pembaruan otomatis* aktif secara default (juga untuk pengguna lama, kecuali sengaja
+dimatikan di 0.6.1 atau lebih baru). CordMic memeriksa saat dibuka dan sekitar tiap enam jam, mengunduh versi baru di
+latar belakang dengan progres, memverifikasinya, lalu bertanya dulu: ikon tray menampilkan notifikasi, menu tray
+menampilkan **● Pasang CordMic x.y.z**, dan roda gigi menampilkan titik teal. Tidak ada yang dipasang tanpa klik.
+**Perbarui sekarang** di Pengaturan → Pembaruan mengunduh, memverifikasi, memasang, dan memulai ulang sekaligus;
+**Batal** menghentikan pemeriksaan atau unduhan. Bila *Pasang saat aku keluar dari CordMic* aktif, pembaruan yang
+siap dipasang saat kamu memilih Keluar di tray. Hanya satu pemeriksaan atau unduhan yang berjalan pada satu waktu.
+Unduhan disimpan di folder privat bernama acak (hanya bisa dibaca pengguna saat ini), dan checksum dihitung pada
+handle file terkunci yang sama yang kemudian dijalankan atau diekstrak.
+
+- *Salinan terpasang*: `CordMic-Setup-<versi>.exe` yang sudah diverifikasi dijalankan dengan `/S`; Windows meminta
+  izin sekali (UAC; SmartScreen juga bisa muncul karena installer belum ditandatangani Authenticode). Mic berhenti
+  sekitar 10 detik selama CordMic dimulai ulang.
+- *Salinan portabel* (folder dengan `portable.txt`, atau tanpa `Uninstall.exe`): `CordMic-Portable-<versi>.zip`
+  yang sudah diverifikasi diekstrak, lalu helper kecil (`CordMic.exe --apply-portable-update` dari versi baru)
+  menunggu CordMic keluar, mengganti file di tempat dengan cadangan, mengembalikan semuanya bila ada file yang gagal,
+  lalu membuka CordMic lagi. Tanpa permintaan izin. Bila folder tidak bisa ditulis (misalnya di Program Files),
+  CordMic memberi tahu dan menautkan halaman unduhan.
+- Pesan error memakai kalimat biasa (tidak ada internet, checksum tidak cocok, izin ditolak, folder tidak bisa
+  ditulis) dengan tautan ke halaman unduhan di GitHub.
+
+**Android.** Sakelar opsional **Pembaruan otomatis** (default mati) memeriksa saat aplikasi dibuka dan sekitar tiap
+enam jam. Android juga mewajibkan sertifikat penanda tangan APK sama dengan aplikasi terpasang lalu menyerahkan file
+ke installer sistem (Install diketuk sekali; "install unknown apps" mungkin diminta).
 
 ## Troubleshooting
 
@@ -393,8 +425,9 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
 
 - Audio hanya lewat link USB tethering ke PC di subnet lokal; CordMic tidak menyimpannya.
 - Pemeriksaan perangkat berjalan di HP. Hanya ringkasan kemampuan singkat dan nama model yang dikirim ke PC.
-- Tidak ada telemetri atau analitik. Permintaan internet hanya pemeriksaan pembaruan opsional (GitHub Releases) dan
-  unduhan VB-CABLE opsional dari vb-audio.com, keduanya lewat HTTPS.
+- Tidak ada telemetri atau analitik. Permintaan internet hanya pemeriksaan dan unduhan pembaruan (GitHub Releases;
+  di Windows otomatis secara default dan bisa dimatikan) serta unduhan VB-CABLE opsional dari vb-audio.com, semuanya
+  lewat HTTPS.
 - Aplikasi tray berjalan sebagai pengguna yang login. Pengubahan format VB-CABLE memakai mode helper ber-elevasi
   dengan perintah tetap; lihat [docs/SECURITY.md](docs/SECURITY.md) untuk apa yang diubah dan cara membatalkannya.
 
@@ -511,7 +544,13 @@ Perlu .NET 8 SDK, NSIS 3 (`makensis`), dan Python 3 (untuk test interop). Bisa d
 cd windows-app && ./build.sh
 ```
 Menjalankan test, mem-publish `windows-app/publish/CordMic.exe` (win-x64, self-contained, satu file) dan menulis
-`dist/CordMic-Setup-<versi>.exe`. Zip portable berisi isi `windows-app/publish/`.
+`dist/CordMic-Setup-<versi>.exe` serta `dist/CordMic-Portable-<versi>.zip` (isi `windows-app/publish/` ditambah
+`portable.txt`, penanda salinan portabel untuk updater di aplikasi).
+
+Render Pengaturan: WinForms tidak bisa berjalan di Linux, jadi `tools/render/render_settings.py` menggambar render
+HTML/PNG berlabel dari katalog, teks, dan konstanta tata letak yang sama
+(`dotnet run --project windows-app/src/CordMic.Harness -- settings-json id > id.json`, lalu
+`python3 tools/render/render_settings.py id.json out/`). Ini render, bukan tangkapan layar.
 
 ### Aplikasi Android
 Perlu JDK 17, Android SDK Platform 34 dan Build-Tools 34, NDK 26.1.10909125, dan CMake 3.22.1 (Android Studio atau
@@ -529,8 +568,8 @@ lokal ditandatangani kunci debug, dan updater di aplikasi akan menolaknya sebaga
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, UDP loopback (bersih dan lossy) |
-| .NET (189 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP |
-| Kotlin (46 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+| .NET (255 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200% |
+| Kotlin (57 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 Gerbang rilis untuk peredam noise dan Volume otomatis (DNSMOS, ESTOI, PESQ, LUFS) dijalankan pada kode C# yang dikirim
 melalui `tools/harness/` dengan data yang diunduh saat pengujian; lihat [tools/harness/README.md](tools/harness/README.md).
@@ -570,6 +609,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 0.7.0 | Jendela Pengaturan Windows baru (halaman, teks bantuan, bisa digulir, keyboard, DPI), unduhan pembaruan otomatis di latar belakang dengan Perbarui sekarang sekali klik, progres dan Batal, pembaruan mandiri versi portabel dengan rollback, menu tray lebih ringkas |
 | 0.6.0 | Penyamaran packet loss berbasis pitch, kontrol drift dengan resampler, peredam bising Studio di PC opsional (RNNoise + WhisperGuard + Volume otomatis LUFS), peringatan mic dibuat hening, capture privacy-sensitive, pemberitahuan dekatkan HP |
 | 0.5.7 | Peredam noise Kuat yang lebih halus (batas bawah spektral, penghalusan gain per pita, perlindungan bisikan dan konsonan); lantai noise, gate, gain Volume otomatis, dan expander HP tampil di log PC |
 | 0.5.6 | Gate sebelum gain dan lantai noise yang dilacak terus, makeup AGC dibatasi lantai, expander jeda, ramp gain; underrun jitter buffer memudar, sambungan overflow halus, dan target adaptif |
