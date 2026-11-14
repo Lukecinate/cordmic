@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using CordMic.Core;
 using CordMic.Core.Dsp;
+using CordMic.Core.Updates;
 
 namespace CordMic.App;
 
@@ -50,9 +51,11 @@ internal sealed class AppController : ApplicationContext
     private List<RenderDevice> _devices = new();
     private Health? _shownHealth;
     private MainForm? _window;
+    private SettingsForm? _settingsWindow;
+    private readonly UpdateCoordinator _updates;
+    private DateTime _nextAutoCheckEval = DateTime.MinValue;
 
-    private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miOutput = null!, _miJitter = null!, _miOutMode = null!,
-                              _miStartup = null!, _miFixRoute = null!;
+    private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miConnect = null!, _miUpdate = null!, _miFixRoute = null!;
 
     public AppStatus Status { get; private set; } = new(Health.Waiting, L.T("status.starting"), "", "CordMic");
     public StatsSnapshot? Stats { get; private set; }
@@ -68,8 +71,17 @@ internal sealed class AppController : ApplicationContext
     public bool DisplayedFrontFocus => SettingsPresentation.VisibleFrontFocus(_settings.FrontFocus);
     public bool DisplayedFrontFocusAr => _settings.FrontFocusAudioRecord;
     public bool DisplayedAutoUpdate => _settings.AutoUpdate;
+    public bool InstallOnQuit => _settings.InstallOnQuit;
     public bool SpeechLow => _rx?.Phone.SpeechLow == true;
-    public string UpdateCheckStatus { get; private set; } = "";
+    /// <summary>0.7.0 updater state for the Settings window and the tray.</summary>
+    public UpdateState Update => _updates.State;
+    public InstallKind InstallKind => _updates.Kind;
+    public DateTime? LastUpdateCheckUtc => _updates.LastCheckUtc ?? (_settings.LastUpdateCheckUtcTicks > 0 ? new DateTime(_settings.LastUpdateCheckUtcTicks, DateTimeKind.Utc) : null);
+    public NoiseChoice DisplayedNoiseChoice => SettingsChoices.Noise(DisplayedNoiseMode, _settings.StudioPreset);
+    public DelayChoice DisplayedDelay => SettingsChoices.Delay(_settings.Jitter, _settings.OutputMode);
+    public string Language => _settings.Language ?? L.Auto;
+    public string? OptimizeStatus => OptimizeHint;
+    public bool CarriesInternetViaPhone => _net.Current?.CarriesInternet == true;
     public string CurrentVersion
     {
         get
@@ -113,10 +125,19 @@ internal sealed class AppController : ApplicationContext
         _log = new FileLog(Paths.Log);
         var migrated = Migration.Run();
         _settings = AppSettings.Load(Paths.Settings, out var settingsProblem);
+        // 0.7.0: schema 1 -> 2 (automatic update downloads on, unless the log shows the user turned them off in 0.6.1+).
+        var schemaNote = _settings.MigrateSchema(() => AutoUpdateMigration.ExplicitOffSince061(Paths.Log + ".1", Paths.Log));
         ApplyLanguage();
         Log($"CordMic {Application.ProductVersion} start, exe={Paths.ExePath}");
         foreach (var m in migrated) Log(m);
         if (settingsProblem is not null) Log(settingsProblem);
+        if (schemaNote is not null) { Log(schemaNote); Save(); }
+
+        var kind = AppUpdater.DetectKind();
+        _updates = AppUpdater.Create(CurrentVersion, kind, () => _ui.Post(_ => Quit(), null), Log);
+        _updates.Changed += _ => _ui.Post(_ => OnUpdateChanged(), null);
+        _updates.ReadyInBackground += tag => _ui.Post(_ => OnUpdateReadyInBackground(tag), null);
+        Log("install kind: " + kind.ToString().ToLowerInvariant());
         RebuildPairingKey();
 
         _audio = new AudioEngine { Log = Log };
@@ -127,7 +148,7 @@ internal sealed class AppController : ApplicationContext
         _tray = new NotifyIcon { ContextMenuStrip = _menu, Text = "CordMic", Visible = true };
         _tray.Icon = IconFor(Health.Waiting);
         _tray.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowWizard(); };
-        _tray.BalloonTipClicked += (_, _) => { if (_staged is not null) _ = InstallStagedUpdateAsync(); };
+        _tray.BalloonTipClicked += (_, _) => { if (_updates.State.ReadyToInstall) _ = _updates.InstallStagedAsync(); };
 
         _timer = new System.Windows.Forms.Timer { Interval = 500 };
         _timer.Tick += (_, _) => Tick();
@@ -150,6 +171,11 @@ internal sealed class AppController : ApplicationContext
             EnsureOutput();
             UpdateStats();
             UpdateStatus();
+            if (DateTime.UtcNow >= _nextAutoCheckEval)
+            {
+                _nextAutoCheckEval = DateTime.UtcNow.AddMinutes(30); // a tray app runs for days: re-check every six hours
+                MaybeAutoCheckUpdates();
+            }
         }
         catch (Exception ex) { Log("tick error: " + ex); }
     }
@@ -422,83 +448,53 @@ internal sealed class AppController : ApplicationContext
         _miHeader.Text = st.Title;
         _miDetail.Text = st.Detail.Length > 90 ? st.Detail[..90] + "…" : st.Detail;
         _miFixRoute.Visible = a?.CarriesInternet == true;
+        var connectText = _armed ? L.T("menu.disconnect") : L.T("menu.connect");
+        if (_miConnect.Text != connectText) _miConnect.Text = connectText;
     }
 
     // ---------------------------------------------------------------- menu
 
     private ContextMenuStrip BuildMenu()
     {
-        var m = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = true, Font = Theme.Body, Renderer = new QuietMenuRenderer() };
+        // 0.7.0: a short tray menu. Every setting lives in the Settings window.
+        var m = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = false, Font = Theme.Body, Renderer = new QuietMenuRenderer() };
         _miHeader = new ToolStripMenuItem("CordMic") { Enabled = false, Font = Theme.Strong, Tag = "header" };
         _miDetail = new ToolStripMenuItem("") { Enabled = false, Tag = "detail" };
-        _miOutput = new ToolStripMenuItem(L.T("menu.output"));
-        _miOutput.DropDownOpening += (_, _) => FillOutputMenu();
-        _miOutput.DropDownItems.Add("…");
-        _miJitter = new ToolStripMenuItem(L.T("menu.jitter"));
-        foreach (var p in Enum.GetValues<JitterPreset>())
-        {
-            var it = new ToolStripMenuItem(Presets.Label(p)) { Tag = p };
-            it.Click += (_, _) => SetJitter((JitterPreset)it.Tag!);
-            _miJitter.DropDownItems.Add(it);
-        }
-        _miJitter.DropDownOpening += (_, _) =>
-        {
-            foreach (ToolStripMenuItem it in _miJitter.DropDownItems) it.Checked = (JitterPreset)it.Tag! == _settings.Jitter;
-        };
-        _miOutMode = new ToolStripMenuItem(L.T("menu.outmode"));
-        foreach (var om in OutputModes.All)
-        {
-            var it = new ToolStripMenuItem(OutputModes.Label(om)) { Tag = om };
-            it.Click += (_, _) => SetOutputMode((OutputMode)it.Tag!);
-            _miOutMode.DropDownItems.Add(it);
-        }
-        _miOutMode.DropDownOpening += (_, _) =>
-        {
-            foreach (ToolStripMenuItem it in _miOutMode.DropDownItems) it.Checked = (OutputMode)it.Tag! == _settings.OutputMode;
-        };
-        var miMode = new ToolStripMenuItem(L.T("menu.micMode"), null, (_, _) => ShowMicModeInfo());
-        var miWizard = new ToolStripMenuItem(L.T("menu.wizard"), null, (_, _) => ShowWizard());
+        _miConnect = new ToolStripMenuItem(_armed ? L.T("menu.disconnect") : L.T("menu.connect"), null, (_, _) => SetArmed(!_armed));
+        var miSettings = new ToolStripMenuItem(L.T("menu.settings"), null, (_, _) => ShowSettings(null));
+        _miUpdate = new ToolStripMenuItem(L.T("menu.checkUpdate"), null, (_, _) => OnTrayUpdateClicked());
+        var miOpen = new ToolStripMenuItem(L.T("menu.wizard"), null, (_, _) => ShowWizard());
         _miFixRoute = new ToolStripMenuItem(L.T("menu.fixRoute"), null, (_, _) => FixRoute()) { Visible = false };
         var miLog = new ToolStripMenuItem(L.T("menu.openLog"), null, (_, _) => OpenLog());
-        _miStartup = new ToolStripMenuItem(L.T("menu.startup"), null, (_, _) => ToggleStartup()) { CheckOnClick = false };
-        var miLang = new ToolStripMenuItem(L.T("menu.language"));
-        foreach (var (code, label) in new[] { (L.Auto, L.T("menu.language.auto")), (L.English, "English"), (L.Indonesian, "Bahasa Indonesia") })
-        {
-            var it = new ToolStripMenuItem(label) { Tag = code };
-            it.Click += (_, _) => SetLanguage((string)it.Tag!);
-            miLang.DropDownItems.Add(it);
-        }
-        miLang.DropDownOpening += (_, _) =>
-        {
-            foreach (ToolStripMenuItem it in miLang.DropDownItems) it.Checked = (string)it.Tag! == (_settings.Language ?? L.Auto);
-        };
-        var miQuit = new ToolStripMenuItem(L.T("menu.quit"), null, (_, _) => Quit());
-        m.Opening += (_, _) => { try { _miStartup.Checked = Startup.IsEnabled(); } catch (Exception) { } };
+        var miQuit = new ToolStripMenuItem(L.T("menu.quit"), null, (_, _) => _ = ExitFromTrayAsync());
+        m.Opening += (_, _) => RefreshTrayUpdateItem();
         m.Items.AddRange(new ToolStripItem[]
         {
             _miHeader, _miDetail, new ToolStripSeparator(),
-            _miOutput, _miOutMode, _miJitter, miMode, new ToolStripSeparator(),
-            miWizard, _miFixRoute, miLog, _miStartup, miLang, new ToolStripSeparator(), miQuit,
+            miOpen, _miConnect, miSettings, _miUpdate, _miFixRoute, miLog, new ToolStripSeparator(), miQuit,
         });
         return m;
     }
 
-    private void FillOutputMenu()
+    /// <summary>Tray item: "Check for updates", or "● Install CordMic x.y.z" (bold) once an update is ready.</summary>
+    private void RefreshTrayUpdateItem()
     {
-        RefreshDevices();
-        _miOutput.DropDownItems.Clear();
-        var auto = new ToolStripMenuItem(CableName is null ? L.T("menu.output.autoNone") : L.T("menu.output.auto", CableName))
-        { Checked = _settings.OutputDeviceId is null };
-        auto.Click += (_, _) => SetOutput(null);
-        _miOutput.DropDownItems.Add(auto);
-        _miOutput.DropDownItems.Add(new ToolStripSeparator());
-        foreach (var d in _devices.OrderBy(d => DeviceRules.VirtualCableRank(d.Name) is var r && r >= 0 ? r : 99).ThenBy(d => d.Name))
-        {
-            var mic = DeviceRules.MicNameFor(d.Name);
-            var it = new ToolStripMenuItem(mic is null ? d.Name : L.T("menu.output.micFor", d.Name, mic)) { Checked = _settings.OutputDeviceId == d.Id };
-            it.Click += (_, _) => SetOutput(d);
-            _miOutput.DropDownItems.Add(it);
-        }
+        if (_miUpdate is null) return;
+        var st = _updates.State;
+        string text = st.ReadyToInstall ? "\u25CF " + L.T("menu.updateReady", st.Tag)
+            : st.Busy ? L.T("menu.updating")
+            : L.T("menu.checkUpdate");
+        if (_miUpdate.Text != text) _miUpdate.Text = text;
+        _miUpdate.Font = st.ReadyToInstall ? Theme.Strong : Theme.Body;
+        _miUpdate.ForeColor = st.ReadyToInstall ? Theme.Accent : Theme.Ink;
+    }
+
+    private void OnTrayUpdateClicked()
+    {
+        var st = _updates.State;
+        if (st.ReadyToInstall) { _ = _updates.InstallStagedAsync(); return; }
+        ShowSettings(SettingsPage.Updates);
+        if (!st.Busy) _ = _updates.CheckAsync(download: _settings.AutoUpdate);
     }
 
     public void SetOutput(RenderDevice? d)
@@ -525,7 +521,7 @@ internal sealed class AppController : ApplicationContext
         L.Set(L.Resolve(_settings.Language, Native.OsUiLanguage()));
     }
 
-    private void SetLanguage(string code)
+    public void SetLanguage(string code)
     {
         _settings.Language = code;
         Save();
@@ -537,6 +533,12 @@ internal sealed class AppController : ApplicationContext
         old.Dispose();
         _shownHealth = null;
         if (_window is { IsDisposed: false }) { _window.Close(); ShowWizard(); }
+        if (_settingsWindow is { IsDisposed: false } sw)
+        {
+            // Deferred: this runs inside the language list's own event, so the old window must not close under it.
+            var page = sw.Page;
+            sw.BeginInvoke(() => { sw.Close(); ShowSettings(page); });
+        }
         UpdateStatus();
     }
 
@@ -690,11 +692,11 @@ internal sealed class AppController : ApplicationContext
         try { cts.Cancel(); } catch (ObjectDisposedException) { }
     }
 
-    private void ShowMicModeInfo() => MessageBox.Show(
+    public void ShowMicModeInfo() => MessageBox.Show(
         L.T("dlg.micMode.body"),
         L.T("dlg.micMode.title"), MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-    private void FixRoute()
+    public void FixRoute()
     {
         if (!File.Exists(Paths.MetricScript))
         {
@@ -717,10 +719,36 @@ internal sealed class AppController : ApplicationContext
         catch (Exception ex) { Log("open log failed: " + ex.Message); }
     }
 
-    private void ToggleStartup()
+    /// <summary>0.7.0: the one Settings window (pages), opened from the gear, the tray or the update notification.</summary>
+    public void ShowSettings(SettingsPage? page)
     {
-        try { Startup.Set(!Startup.IsEnabled()); Log("startup -> " + Startup.IsEnabled()); }
-        catch (Exception ex) { MessageBox.Show(L.T("dlg.startupFailed", ex.Message), "CordMic"); }
+        if (_settingsWindow is { IsDisposed: false } w)
+        {
+            if (page is { } pg) w.ShowPage(pg);
+            if (w.WindowState == FormWindowState.Minimized) w.WindowState = FormWindowState.Normal;
+            w.Activate();
+            return;
+        }
+        _settingsWindow = new SettingsForm(this, page ?? SettingsPage.Sound);
+        _settingsWindow.FormClosed += (_, _) => _settingsWindow = null;
+        _settingsWindow.Show();
+        _settingsWindow.Activate();
+    }
+
+    public void SetNoiseChoice(NoiseChoice c)
+    {
+        if (c == DisplayedNoiseChoice) return;
+        var (phone, studio) = SettingsChoices.Apply(c, _settings.NoiseMode);
+        if (phone != _settings.NoiseMode) SetNoiseMode(phone);
+        SetStudioPreset(studio);
+    }
+
+    public void SetDelayChoice(DelayChoice c)
+    {
+        if (c == DelayChoice.Custom || c == DisplayedDelay) return;
+        var (j, m) = SettingsChoices.Apply(c, _settings.Jitter, _settings.OutputMode);
+        SetJitter(j);
+        SetOutputMode(m);
     }
 
     public void ShowWizard()
@@ -852,7 +880,7 @@ internal sealed class AppController : ApplicationContext
         _settings.AutoUpdate = on;
         Save();
         Log("auto update -> " + (on ? "on" : "off"));
-        if (on) _ = CheckForUpdatesAsync(interactive: false);
+        if (on) MaybeAutoCheckUpdates();
     }
 
     public void ResetAudioSettings()
@@ -916,8 +944,8 @@ internal sealed class AppController : ApplicationContext
         _audio.Dispose();
         _rx?.Dispose();
         _net.Dispose();
-        _staged?.Dispose();
-        _staged = null;
+        _settingsWindow?.Close();
+        _updates.Dispose();
         CancelOptimizeCable();
         Log("quit");
         _log.Dispose();
@@ -1030,79 +1058,64 @@ internal sealed class AppController : ApplicationContext
         if (staleChanged) Save();
     }
 
-    private StagedSetup? _staged;
-    private bool _installing;
+    // ---------------------------------------------------------------- updates (0.7.0)
 
-    /// <summary>
-    /// Checks GitHub Releases. Interactive (the button): downloads, verifies and installs. Automatic (0.6.1, audit L10):
-    /// downloads and verifies in the background, then only asks with a notification; nothing elevates until the user
-    /// clicks it or the button.
-    /// </summary>
-    public async Task CheckForUpdatesAsync(bool interactive)
+    /// <summary>Check button: checks; when a newer version exists and automatic download is on, downloads and verifies it (no install).</summary>
+    public void CheckForUpdates() => _ = _updates.CheckAsync(download: _settings.AutoUpdate);
+
+    /// <summary>One click: download if needed, verify, install, restart.</summary>
+    public void UpdateNow() => _ = _updates.UpdateNowAsync();
+
+    public void CancelUpdate() => _updates.Cancel();
+
+    public void OpenReleasePage() => AppUpdater.OpenReleasePage(_updates.State.ReleasePage);
+
+    private void OnUpdateChanged()
     {
-        if (_installing) return;
-        try
+        var st = _updates.State;
+        if (st.Phase is UpdatePhase.UpToDate or UpdatePhase.Available or UpdatePhase.Ready && _updates.LastCheckUtc is { } t)
         {
-            if (interactive && _staged is { } ready && AppUpdate.IsNewer(ready.Tag, CurrentVersion))
-            {
-                await InstallStagedUpdateAsync().ConfigureAwait(true);
-                return;
-            }
-            UpdateCheckStatus = L.T("ui.update.checking");
-            var info = await UpdateClient.FetchLatestAsync().ConfigureAwait(true);
-            _settings.LastUpdateCheckUtcTicks = DateTime.UtcNow.Ticks;
-            Save();
-            if (!AppUpdate.IsNewer(info.Tag, CurrentVersion))
-            {
-                UpdateCheckStatus = L.T("ui.update.current", CurrentVersion);
-                return;
-            }
-            UpdateCheckStatus = L.T("ui.update.available", info.Tag);
-            if (!interactive && !_settings.AutoUpdate) return;
-            if (_staged is not null && _staged.Tag != info.Tag) { _staged.Dispose(); _staged = null; }
-            if (_staged is null)
-            {
-                _staged = await UpdateClient.DownloadVerifiedSetupAsync(info, CurrentVersion).ConfigureAwait(true);
-                Log($"update {info.Tag}: downloaded and verified");
-            }
-            if (interactive)
-            {
-                await InstallStagedUpdateAsync().ConfigureAwait(true);
-                return;
-            }
-            UpdateCheckStatus = L.T("ui.update.ready", info.Tag);
-            _tray.ShowBalloonTip(10000, "CordMic", L.T("balloon.update.ready", info.Tag), ToolTipIcon.Info);
+            if (_settings.LastUpdateCheckUtcTicks != t.Ticks) { _settings.LastUpdateCheckUtcTicks = t.Ticks; Save(); }
         }
-        catch (Exception ex)
-        {
-            UpdateCheckStatus = L.T("ui.update.failed", ex.Message);
-            Log("update: " + ex.Message);
-        }
+        RefreshTrayUpdateItem();
+        _window?.RefreshUpdateDot();
+        _settingsWindow?.RefreshNow();
     }
 
-    /// <summary>Launches the verified installer (UAC prompt) and quits; the installer starts CordMic again when done.</summary>
-    private async Task InstallStagedUpdateAsync()
+    private void OnUpdateReadyInBackground(string tag)
     {
-        if (_staged is not { } setup || _installing) return;
-        _installing = true;
-        try
+        RefreshTrayUpdateItem();
+        _tray.ShowBalloonTip(10000, "CordMic", L.T("balloon.update.ready2", tag), ToolTipIcon.Info);
+    }
+
+    /// <summary>Progress of the "Install VB-CABLE" button, shown under it.</summary>
+    public string CableInstallStatus { get; private set; } = "";
+
+    public void MaybeAutoCheckUpdates()
+    {
+        if (!_settings.AutoUpdate || _quitting) return;
+        var last = _settings.LastUpdateCheckUtcTicks <= 0 ? DateTime.MinValue : new DateTime(_settings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
+        if (DateTime.UtcNow - last < AppUpdate.MinCheckInterval) return;
+        _ = _updates.CheckAsync(download: true);
+    }
+
+    public void SetInstallOnQuit(bool on)
+    {
+        if (_settings.InstallOnQuit == on) return;
+        _settings.InstallOnQuit = on;
+        Save();
+        Log("install on quit -> " + (on ? "on" : "off"));
+    }
+
+    /// <summary>Tray Exit: with "Install when I exit" on and an update ready, start it first (the installer restarts CordMic).</summary>
+    public async Task ExitFromTrayAsync()
+    {
+        if (_settings.InstallOnQuit && _updates.State.ReadyToInstall && !_quitting)
         {
-            UpdateCheckStatus = L.T("ui.update.installing");
-            await UpdateClient.LaunchSilentAsync(setup).ConfigureAwait(true);
-            _staged = null;
-            Quit();
+            Log("exit: installing the downloaded update first");
+            await _updates.InstallStagedAsync().ConfigureAwait(true);
         }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
-        {
-            UpdateCheckStatus = L.T("ui.update.ready", setup.Tag);
-            Log("update: UAC declined; the update stays ready");
-        }
-        catch (Exception ex)
-        {
-            UpdateCheckStatus = L.T("ui.update.failed", ex.Message);
-            Log("update: " + ex.Message);
-        }
-        finally { _installing = false; }
+        Quit();
     }
 
     public async Task InstallVbCableAsync()
@@ -1111,34 +1124,26 @@ internal sealed class AppController : ApplicationContext
         {
             if (CableInstaller.LooksInstalled())
             {
-                UpdateCheckStatus = L.T("ui.cable.already");
+                CableInstallStatus = L.T("ui.cable.already");
                 return;
             }
-            UpdateCheckStatus = L.T("ui.cable.downloading");
+            CableInstallStatus = L.T("ui.cable.downloading");
             var staged = await CableInstaller.DownloadAndVerifyAsync().ConfigureAwait(true);
-            UpdateCheckStatus = L.T("ui.cable.launched");
+            CableInstallStatus = L.T("ui.cable.launched");
             Log("VB-CABLE official setup launched; a reboot may be required");
             await CableInstaller.RunSetupAsync(staged).ConfigureAwait(true);
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            UpdateCheckStatus = L.T("ui.cable.uacDeclined");
+            CableInstallStatus = L.T("ui.cable.uacDeclined");
             Log("VB-CABLE install: UAC declined");
         }
         catch (Exception ex)
         {
-            UpdateCheckStatus = L.T("ui.cable.failed", ex.Message);
+            CableInstallStatus = L.T("ui.cable.failed", ex.Message);
             Log("VB-CABLE install: " + ex.Message);
             try { Process.Start(new ProcessStartInfo(VbCable.PageUrl) { UseShellExecute = true }); } catch (Exception) { }
         }
-    }
-
-    public void MaybeAutoCheckUpdates()
-    {
-        if (!_settings.AutoUpdate) return;
-        var last = _settings.LastUpdateCheckUtcTicks <= 0 ? DateTime.MinValue : new DateTime(_settings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
-        if (DateTime.UtcNow - last < AppUpdate.MinCheckInterval) return;
-        _ = CheckForUpdatesAsync(interactive: false);
     }
 
     private void Save()

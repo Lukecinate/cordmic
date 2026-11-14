@@ -23,6 +23,9 @@ internal static class Program
             return CableHelper.Run(verb);
         }
 
+        // 0.7.0: portable self-update helper (runs from the unpacked new version, before the single-instance mutex).
+        if (CordMic.Core.Updates.PortableUpdateArgs.Mentions(args)) return PortableUpdateHelper.Run(args);
+
         bool tray = args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
         using var mutex = new Mutex(true, MutexName, out bool first);
         if (!first)

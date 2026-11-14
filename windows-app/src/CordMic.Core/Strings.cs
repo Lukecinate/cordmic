@@ -337,6 +337,10 @@ public static class L
         ["menu.updating"] = "Updating…",
         ["balloon.update.ready2"] = "CordMic {0} is ready. Click to install it.",
         ["ui.openSettings"] = "Settings",
+        ["set.update.retry"] = "Try again",
+        ["set.portable"] = "portable copy",
+        ["set.version"] = "CordMic {0}",
+        ["set.output.notCable"] = "This is not a virtual cable, so apps will not hear CordMic as a microphone.",
     };
 
     public static readonly IReadOnlyDictionary<string, string> Id = new Dictionary<string, string>
@@ -622,5 +626,9 @@ public static class L
         ["menu.updating"] = "Memperbarui…",
         ["balloon.update.ready2"] = "CordMic {0} siap. Klik untuk memasangnya.",
         ["ui.openSettings"] = "Pengaturan",
+        ["set.update.retry"] = "Coba lagi",
+        ["set.portable"] = "salinan portabel",
+        ["set.version"] = "CordMic {0}",
+        ["set.output.notCable"] = "Ini bukan kabel virtual, jadi aplikasi tidak akan mendengar CordMic sebagai mikrofon.",
     };
 }
