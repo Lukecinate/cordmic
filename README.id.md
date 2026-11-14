@@ -385,7 +385,7 @@ ke installer sistem (Install diketuk sekali; "install unknown apps" mungkin dimi
 | Desis di antara kata | Biarkan noise cancellation di Ringan atau Kuat (keduanya menurunkan jeda), turunkan Gain mic dan biarkan Volume otomatis bekerja. Pakai ambang voice activation game yang sedang. Kolom `floor` di log menunjukkan level latar HP (di atas sekitar −50 dBFS berarti ruangan bising atau Gain mic terlalu tinggi) |
 | Suara terlalu pelan | Dekatkan HP, naikkan Gain mic beberapa dB, dan biarkan Volume otomatis aktif. Peringatan muncul di bawah sekitar −40 dBFS |
 | Fokus depan "unsupported" | Jalur AAudio HP tidak punya API arah. Nyalakan *Fokus depan (latensi lebih tinggi)* untuk memakai AudioRecord, atau biarkan mati untuk latensi terendah |
-| Ping game naik setelah HP dicolok | *Perbaiki prioritas jaringan HP* di menu tray (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai administrator), atau matikan data seluler HP |
+| Ping game naik atau kuota HP terpakai setelah HP dicolok | *Berhenti memakai kuota HP…* di menu tray (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai administrator), atau matikan data seluler HP |
 | Discord tidak mendengar apa-apa | Perangkat input harus **CABLE Output** (bukan CABLE Input) |
 | Suara terlalu diproses atau terlambat | Pakai *Voice recognition* di HP. Dengan *Voice communication*, matikan noise suppression dan echo cancellation Discord |
 | Pemeriksaan pembaruan gagal | PC atau HP perlu akses internet lewat koneksi biasanya (bukan link tethering). File juga bisa diunduh dari halaman Releases |
@@ -396,6 +396,51 @@ Get-NetAdapter                                                  # find the phone
 Set-NetIPInterface -InterfaceAlias "Ethernet 3" -InterfaceMetric 9999
 Get-NetRoute 0.0.0.0/0                                          # the default route should use LAN/Wi-Fi
 ```
+
+### USB tethering tidak mau menyala (0.7.2)
+
+Sejak 0.7.2 jendela utama dan *Pengaturan → Koneksi → HP* menyebutkan apa yang terlihat oleh Windows di USB, dan log
+mencatatnya (`tether: …`, juga `tether adapter: none`):
+
+| Status | Arti | Coba |
+|---|---|---|
+| **Tethering USB mati** | HP ada di USB (mengisi daya atau transfer file) tetapi tanpa perangkat jaringan | Aktifkan Tethering USB (di bawah). Aplikasi HP menyebut HP hanya mengisi daya |
+| **Masalah driver jaringan HP** (kode N) | Windows menemukan perangkat tethering tetapi drivernya gagal | *Device Manager → Network adapters*: uninstall perangkat bertanda peringatan, cabut lalu colok lagi. Samsung: pasang *Samsung USB Driver for Mobile Phones* |
+| **Jaringan HP sedang disiapkan** | Adapter sudah ada tetapi belum punya alamat | Tunggu beberapa detik; bila tetap, matikan lalu nyalakan lagi Tethering USB |
+| **Tidak ada HP di USB** | Tidak ada HP yang terlihat di USB | Pakai kabel data, port lain (bukan hub), dan buka kunci HP |
+
+Menyalakan Tethering USB di Samsung (One UI):
+1. Biarkan HP **tidak terkunci** dan sambungkan dengan kabel data USB.
+2. **Pengaturan › Koneksi › Hotspot Seluler dan Tethering › Tethering USB**, atau tarik panel notifikasi dan ketuk
+   **notifikasi USB › Tethering USB**.
+3. HP lain: *Setelan › Jaringan & internet › Hotspot & tethering › Tethering USB*. Tombol *Buka setelan tethering* di
+   aplikasi HP mencoba membuka layar tethering langsung dan menampilkan jalur ini bila hanya pengaturan umum yang
+   terbuka.
+
+Tombolnya abu-abu tanpa kabel data. CordMic tidak pernah mengubah pengaturan USB HP dan tidak memerlukan USB debugging.
+Di HP, baris status menyebutkan apakah HP hanya mengisi daya (kabel tersambung, tethering mati), tidak
+mendeteksi kabel USB, atau tethering sedang dinyalakan.
+
+**Kuota data.** Tethering USB hanya membawa audio mikrofon. Sejak 0.7.2 tugas latar CordMic (berjalan sebagai SYSTEM,
+dipasang oleh setup) menyuruh Windows mengabaikan default route HP, menghapus `0.0.0.0/0` dan `::/0` di adapter
+tethering, dan mengarahkan DNS-nya ke `127.0.0.1`, sehingga internet PC, DNS, dan pemeriksaan pembaruan tetap lewat
+LAN/Wi-Fi dan tidak memakai kuota HP. Metric 9999 tetap dipakai sebagai lapis kedua. Bila Windows masih memakai
+internet lewat HP (versi portabel tanpa tugas itu, atau perubahan manual), jendela utama menampilkan **Kuota HP
+terpakai** dan log menulis `warning: Windows routes PC internet through the phone (mobile data)`; pakai menu tray
+**Berhenti memakai kuota HP…**. Aplikasi HP memeriksa pembaruan otomatis hanya di jaringan tanpa kuota (Wi-Fi). Untuk
+sengaja memakai internet HP di PC, buat file kosong `%ProgramData%\CordMic\allow-phone-internet` (administrator);
+tugas berikutnya mengembalikan DNS DHCP dan default route. Uninstall juga mengembalikannya.
+
+**Jendela Pengaturan tidak mau terbuka.** 0.7.0 dan 0.7.1 menutup jendela Pengaturan dengan error di sebagian PC;
+0.7.2 memperbaikinya dan, bila Pengaturan gagal lagi, mencatat `settings window failed: …` dan menampilkan pesan.
+`CordMic.exe --self-test-ui` membangun jendela utama dan Pengaturan pada skala 100/150/200% dalam bahasa Inggris dan
+Indonesia, lalu menulis `%LOCALAPPDATA%\CordMic\logs\ui-self-test.txt` (kode keluar 0 = lulus; tutup CordMic dulu).
+
+**Memperbarui dari 0.7.1.** Di 0.7.1, *Periksa pembaruan* di tray membuka Pengaturan dulu dan berhenti karena error
+yang sama, jadi 0.7.1 tidak bisa mengambil 0.7.2 sendiri kecuali pembaruan sudah terunduh. Pasang
+`CordMic-Setup-0.7.2.exe` dari halaman Releases di atas 0.7.1 (pengaturan tetap). Alternatif: ubah `"AutoUpdate": true`
+di `%APPDATA%\CordMic\settings.json`, jalankan ulang CordMic, lalu klik notifikasi atau menu tray *Pasang CordMic
+0.7.2* setelah selesai diunduh.
 
 Saat melaporkan masalah, lampirkan `cordmic.log` dan sebutkan model HP, baris **Detected:**, serta pengaturan yang
 dipakai. Jangan melampirkan rekaman suara di issue publik.
@@ -570,8 +615,8 @@ lokal ditandatangani kunci debug, dan updater di aplikasi akan menolaknya sebaga
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, UDP loopback (bersih dan lossy) |
-| .NET (291 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), test regresi 0.7.1 (race pasang/periksa, pemulihan pembaruan siap setelah restart, watchdog, pembersihan, jadwal monotonik, skala font per DPI), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200% |
-| Kotlin (57 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+| .NET (372 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), test regresi 0.7.1 (race pasang/periksa, pemulihan pembaruan siap setelah restart, watchdog, pembersihan, jadwal monotonik, skala font per DPI), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200%, test regresi 0.7.2 (gerbang layout dan urutan inisialisasi di semua form, tata letak halaman tanpa layar, diagnosis tethering dan panduannya, jalur pembaruan tray, routing khusus mic) |
+| Kotlin (65 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, status USB (hanya mengisi daya / tanpa kabel), cadangan layar tethering, pemeriksaan pembaruan di jaringan berkuota, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 Gerbang rilis untuk peredam noise dan Volume otomatis (DNSMOS, ESTOI, PESQ, LUFS) dijalankan pada kode C# yang dikirim
 melalui `tools/harness/` dengan data yang diunduh saat pengujian; lihat [tools/harness/README.md](tools/harness/README.md).
@@ -611,6 +656,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 0.7.2 | Crash jendela Pengaturan diperbaiki, status tethering dan panduan Samsung di PC dan HP, internet PC tidak pernah lewat kuota HP, self-test UI |
 | 0.7.1 | Teks mengikuti skala tiap monitor, pembaruan yang sudah diunduh tetap ada setelah restart, perbaikan dari audit updater dan jendela 0.7.0 |
 | 0.7.0 | Jendela Pengaturan Windows baru (halaman, teks bantuan, bisa digulir, keyboard, DPI), unduhan pembaruan otomatis di latar belakang dengan Perbarui sekarang sekali klik, progres dan Batal, pembaruan mandiri versi portabel dengan rollback, menu tray lebih ringkas |
 | 0.6.0 | Penyamaran packet loss berbasis pitch, kontrol drift dengan resampler, peredam bising Studio di PC opsional (RNNoise + WhisperGuard + Volume otomatis LUFS), peringatan mic dibuat hening, capture privacy-sensitive, pemberitahuan dekatkan HP |

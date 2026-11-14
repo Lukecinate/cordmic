@@ -2,6 +2,52 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] - 2026-11-14
+
+Fixes the Settings window crash of 0.7.0/0.7.1, explains on both devices why USB tethering is not up, and keeps the
+PC's internet off the phone's mobile data. Android `versionCode` is 21 / `versionName` 0.7.2. Wire version stays 1.
+The release APK is signed with the same key as 0.6.1–0.7.1. The Windows installer is not Authenticode-signed.
+
+### Fixed
+- **Settings window crashed on open** (0.7.0, 0.7.1) with a null reference: setting `AutoScroll` in the page
+  constructor ran a layout pass before the labels existed. Labels are created first and every layout handler in the
+  app is behind a `LayoutGate` (refused until the control is built and while a pass is running). The main window's
+  rebuild on a language or DPI change uses the same gate.
+- If the Settings window ever fails to open, CordMic logs `settings window failed: …` and shows a message instead
+  of closing.
+- **Tray "Check for updates" did nothing in 0.7.1** because it opened Settings first. The check now starts before the
+  window opens, and an available update is downloaded from the tray directly.
+- A Samsung "Mobile USB Composite Device" (phone charging or file transfer) is no longer mistaken for a tethering
+  device by the new diagnosis.
+
+### Added
+- **Tethering status (Windows).** A read-only USB scan (SetupAPI, no administrator rights) tells apart: phone on USB
+  with tethering off, tethering device with a driver error (with the Windows problem code), adapter without an
+  address yet, and nothing on USB. Shown in the main status line and in *Settings → Connection → Phone* with EN/ID
+  steps, including the Samsung path (*Settings › Connections › Mobile Hotspot and Tethering › USB tethering* or the
+  USB notification) and "keep the phone unlocked". The log records the state at start and on every change,
+  including `tether adapter: none`; no addresses are logged.
+- **USB state (Android).** The sticky `USB_STATE` broadcast tells apart *only charging* (cable connected, tethering
+  off), *no USB cable* and *tethering starting*; the status text names the exact menu path. *Open tethering
+  settings* tries `Settings$TetherSettingsActivity`, `TetherSettings`, wireless settings, then Settings, and shows
+  the path when only a general screen opened. CordMic still never changes the phone's USB settings.
+- **No mobile data through the PC.** The SYSTEM background task now sets *IgnoreDefaultRoutes* on the tether
+  adapter, removes its `0.0.0.0/0` and `::/0` routes and sets its DNS to `127.0.0.1` (metric 9999 kept), so the
+  PC's internet, DNS and update checks stay on LAN/Wi-Fi. If Windows still routes through the phone, the status shows
+  *Phone data in use* and the log a warning; the tray item is renamed *Stop using phone data…*. Opt-out file:
+  `%ProgramData%\CordMic\allow-phone-internet`. Uninstall restores the adapters' DNS and default routes.
+- Android automatic update checks run only on unmetered networks (manual checks still work).
+- `CordMic.exe --self-test-ui [--quiet]` builds the main and Settings windows at 100/150/200% in English and
+  Indonesian, writes `ui-self-test.txt` in the log folder and exits 0 (passed) or 1.
+- `docs/usb-transport-plan-0.8.0.md`: plan for an Android Open Accessory transport without tethering.
+
+### Tests
+- .NET: 372 (was 291; 81 new in `Release072Tests`: layout gate, init order and gating in every form, catalog rows, headless
+  page layout for every page at 96–192 DPI and three widths, tethering diagnosis cases and guidance in both
+  languages, tray update order, mic-only routing script, receiver subnet policy).
+- Kotlin: 65 (was 57; 8 new in `Fixes072Test`: USB state classification and broadcast extras, tethering screen order,
+  messages per state, Samsung path in both languages, metered update check, no USB function changes).
+
 ## [0.7.1] - 2026-11-14
 
 Windows patch release: fixes the two known limitations of 0.7.0 and every finding of an audit of the 0.7.0 code

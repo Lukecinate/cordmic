@@ -383,7 +383,7 @@ also requires the APK signing certificate to match the installed app and hands t
 | Hiss between words | Keep Noise cancellation on Light or Strong (both lower pauses), lower Mic gain and let Auto volume do the rest. Keep the game's voice-activation threshold moderate. The log's `floor` shows the phone's background level (above about −50 dBFS is a noisy room or a high Mic gain) |
 | Voice too quiet | Move closer, raise Mic gain a few dB, and leave Auto volume on. A warning appears below about −40 dBFS |
 | Front focus shows "unsupported" | The phone's AAudio path has no direction API. Turn on *Front focus (higher latency)* to use AudioRecord, or leave it off for the lowest latency |
-| Game ping rises after plugging in the phone | *Fix phone network priority* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator), or turn off mobile data on the phone |
+| Game ping rises or mobile data is used after plugging in the phone | *Stop using phone data…* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator), or turn off mobile data on the phone |
 | Discord hears nothing | The input device must be **CABLE Output** (not CABLE Input) |
 | Audio sounds over-processed or delayed | Use *Voice recognition* on the phone. With *Voice communication*, turn off Discord's noise suppression and echo cancellation |
 | Update check fails | The PC or phone needs internet access through its normal connection (not the tether link). Downloads can also be taken from the Releases page |
@@ -394,6 +394,50 @@ Get-NetAdapter                                                  # find the phone
 Set-NetIPInterface -InterfaceAlias "Ethernet 3" -InterfaceMetric 9999
 Get-NetRoute 0.0.0.0/0                                          # the default route should use LAN/Wi-Fi
 ```
+
+### USB tethering will not turn on (0.7.2)
+
+Since 0.7.2 the main window and *Settings → Connection → Phone* say what Windows sees on USB, and the log records it
+(`tether: …`, also `tether adapter: none`):
+
+| Status | Meaning | Try |
+|---|---|---|
+| **USB tethering is off** | The phone is on USB (charging or file transfer) but has no network device | Turn on USB tethering (below). The phone app says the phone is only charging |
+| **Phone network driver problem** (code N) | Windows found the tethering device but its driver failed | *Device Manager → Network adapters*: uninstall the device marked with a warning, unplug and plug in again. Samsung: install *Samsung USB Driver for Mobile Phones* |
+| **Phone network starting** | The adapter exists but has no address yet | Wait a few seconds; if it stays, turn USB tethering off and on |
+| **No phone on USB** | No phone is visible on USB | Use a data cable, another port (not a hub) and unlock the phone |
+
+Turning on USB tethering on Samsung (One UI):
+1. Keep the phone **unlocked** and connect it with a USB data cable.
+2. **Settings › Connections › Mobile Hotspot and Tethering › USB tethering**, or pull down the notification shade
+   and tap the **USB notification › USB tethering**.
+3. Other phones: *Settings › Network & internet › Hotspot & tethering › USB tethering*. The phone app's
+   *Open tethering settings* tries the tethering screen directly and shows this path when only general settings open.
+
+The toggle is grey without a data cable. CordMic never changes the phone's USB settings and needs no USB debugging.
+On the phone, the status line says whether the phone is only charging (cable connected, tethering off), sees no USB
+cable, or tethering is starting.
+
+**Mobile data.** USB tethering only carries the microphone audio. Since 0.7.2 the CordMic background task (running as
+SYSTEM, installed by the setup) tells Windows to ignore the phone's default route, removes `0.0.0.0/0` and `::/0` on
+the tether adapter and points its DNS to `127.0.0.1`, so the PC's internet, DNS and update checks stay on LAN/Wi-Fi
+and do not use the phone's data plan. The metric 9999 stays as a second line of defence. If Windows still routes
+through the phone (portable version without the task, or a manual change), the main window shows **Phone data in
+use** and the log says `warning: Windows routes PC internet through the phone (mobile data)`; use the tray item
+**Stop using phone data…**. The phone app checks for updates automatically only on unmetered networks (Wi-Fi). To
+let the PC use the phone's internet on purpose, create an empty file `%ProgramData%\CordMic\allow-phone-internet`
+(administrator); the next run of the task restores DHCP DNS and the default routes. Uninstalling restores them too.
+
+**Settings window does not open.** 0.7.0 and 0.7.1 closed the Settings window with an error on some PCs; 0.7.2
+fixes it and, if Settings ever fails again, logs `settings window failed: …` and shows a message instead of closing.
+`CordMic.exe --self-test-ui` builds the main and Settings windows at 100/150/200% scale in English and Indonesian
+and writes `%LOCALAPPDATA%\CordMic\logs\ui-self-test.txt` (exit code 0 = passed; close CordMic first).
+
+**Updating from 0.7.1.** In 0.7.1 *Check for updates* in the tray opens Settings first and stops with the same error,
+so 0.7.1 cannot fetch 0.7.2 by itself unless an update was already downloaded. Install `CordMic-Setup-0.7.2.exe`
+from the Releases page over 0.7.1 (settings are kept). Alternative: set `"AutoUpdate": true` in
+`%APPDATA%\CordMic\settings.json`, restart CordMic, and click the notification or the tray item *Install CordMic
+0.7.2* once it is downloaded.
 
 When reporting an issue, attach `cordmic.log` and mention the phone model, the **Detected:** line and the
 settings in use. Do not attach voice recordings to public issues.
@@ -571,8 +615,8 @@ official install.
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (291 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), 0.7.1 regression tests (install/check race, restore of a ready update after restart, watchdog, clean-up, monotonic schedule, font scale per DPI), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI |
-| Kotlin (57 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+| .NET (372 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), 0.7.1 regression tests (install/check race, restore of a ready update after restart, watchdog, clean-up, monotonic schedule, font scale per DPI), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI, 0.7.2 regression tests (layout gate and init order in every form, headless page layout, tethering diagnosis and guidance, tray update path, mic-only routing) |
+| Kotlin (65 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, USB state (charging only / no cable), tethering screen fallback, metered update check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 The release gates for noise reduction and Auto volume (DNSMOS, ESTOI, PESQ, LUFS) run on the shipping C# code through
 `tools/harness/` with data downloaded at test time; see [tools/harness/README.md](tools/harness/README.md).
@@ -612,6 +656,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 0.7.2 | Settings window crash fixed, tethering status and Samsung guidance on PC and phone, PC internet never routed through the phone's mobile data, UI self-test |
 | 0.7.1 | Text follows each monitor's scale, a downloaded update survives a restart, fixes from an audit of the 0.7.0 updater and windows |
 | 0.7.0 | New Windows Settings window (pages, help text, scrolling, keyboard, DPI), automatic background update downloads with one-click Update now, progress and Cancel, portable self-update with rollback, slimmer tray menu |
 | 0.6.0 | Pitch-based packet-loss concealment, resampling drift control, optional PC Studio noise reduction (RNNoise + WhisperGuard + LUFS Auto volume), silenced-mic warning, privacy-sensitive capture, move-closer hint |
