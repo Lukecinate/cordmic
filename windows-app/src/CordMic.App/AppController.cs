@@ -53,7 +53,12 @@ internal sealed class AppController : ApplicationContext
     private MainForm? _window;
     private SettingsForm? _settingsWindow;
     private readonly UpdateCoordinator _updates;
-    private DateTime _nextAutoCheckEval = DateTime.MinValue;
+    // Audit M5: re-evaluate the six-hour schedule every 30 minutes on a monotonic clock.
+    private readonly PeriodicGate _autoCheckGate = new(TimeSpan.FromMinutes(30));
+    private BalloonKind _balloon;
+    private PostCoalescer _updateUi = null!;
+    private Action<UpdateState>? _onUpdateChanged;
+    private Action<string>? _onUpdateReady;
 
     private ToolStripMenuItem _miHeader = null!, _miDetail = null!, _miConnect = null!, _miUpdate = null!, _miFixRoute = null!;
 
@@ -135,9 +140,15 @@ internal sealed class AppController : ApplicationContext
 
         var kind = AppUpdater.DetectKind();
         _updates = AppUpdater.Create(CurrentVersion, kind, () => _ui.Post(_ => Quit(), null), Log);
-        _updates.Changed += _ => _ui.Post(_ => OnUpdateChanged(), null);
-        _updates.ReadyInBackground += tag => _ui.Post(_ => OnUpdateReadyInBackground(tag), null);
+        // Audit L2: progress arrives every 256 KB; at most one UI refresh is queued at a time.
+        _updateUi = new PostCoalescer(a => _ui.Post(_ => a(), null), () => { if (!_quitting) OnUpdateChanged(); });
+        _onUpdateChanged = _ => _updateUi.Request();
+        _onUpdateReady = tag => _ui.Post(_ => OnUpdateReadyInBackground(tag), null);
+        _updates.Changed += _onUpdateChanged;
+        _updates.ReadyInBackground += _onUpdateReady;
         Log("install kind: " + kind.ToString().ToLowerInvariant());
+        if (kind == InstallKind.Portable)
+            _ = Task.Run(() => { int n = PortableSwap.CleanBackups(Paths.ExeDir); if (n > 0) Log($"portable: removed {n} old update backup folder(s)"); });
         RebuildPairingKey();
 
         _audio = new AudioEngine { Log = Log };
@@ -148,13 +159,16 @@ internal sealed class AppController : ApplicationContext
         _tray = new NotifyIcon { ContextMenuStrip = _menu, Text = "CordMic", Visible = true };
         _tray.Icon = IconFor(Health.Waiting);
         _tray.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowWizard(); };
-        _tray.BalloonTipClicked += (_, _) => { if (_updates.State.ReadyToInstall) _ = _updates.InstallStagedAsync(); };
+        _tray.BalloonTipClicked += (_, _) => OnBalloonClicked();
+        _tray.BalloonTipClosed += (_, _) => _balloon = BalloonKind.None;
 
         _timer = new System.Windows.Forms.Timer { Interval = 500 };
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
+        _autoCheckGate.TryEnter(); // the startup check below covers the first period
         Tick();
-        MaybeAutoCheckUpdates();
+        // Audit M8: offer an update verified in an earlier run right away; check now if due, or if it was unusable.
+        _ = _updates.StartupAsync(_settings.AutoUpdate, _settings.AutoUpdate && UpdateCheckDue());
 
         if (openWizard || !_settings.FirstRunDone) ShowWizard();
     }
@@ -171,11 +185,7 @@ internal sealed class AppController : ApplicationContext
             EnsureOutput();
             UpdateStats();
             UpdateStatus();
-            if (DateTime.UtcNow >= _nextAutoCheckEval)
-            {
-                _nextAutoCheckEval = DateTime.UtcNow.AddMinutes(30); // a tray app runs for days: re-check every six hours
-                MaybeAutoCheckUpdates();
-            }
+            if (_autoCheckGate.TryEnter()) MaybeAutoCheckUpdates(); // a tray app runs for days: re-check every six hours
         }
         catch (Exception ex) { Log("tick error: " + ex); }
     }
@@ -260,7 +270,7 @@ internal sealed class AppController : ApplicationContext
             Log($"output -> {want.Name} ({_audio.Describe})");
             UpdatePeriodHint();
             if (_settings.OutputMode == OutputMode.Exclusive && _audio.ActiveMode != OutputMode.Exclusive)
-                _tray.ShowBalloonTip(5000, "CordMic", L.T("outmode.fellBack", want.Name), ToolTipIcon.Info);
+                ShowBalloon(BalloonKind.Other, 5000, "CordMic", L.T("outmode.fellBack", want.Name), ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
@@ -342,7 +352,7 @@ internal sealed class AppController : ApplicationContext
         _peerSince = DateTime.MinValue;
         _lossWin.Clear();
         if (wasLong)
-            _tray.ShowBalloonTip(4000, L.T("balloon.lost.title"),
+            ShowBalloon(BalloonKind.Other, 4000, L.T("balloon.lost.title"),
                 _net.Current is null ? L.T("balloon.lost.noAdapter") : L.T("balloon.lost.adapter"),
                 ToolTipIcon.Warning);
     }
@@ -351,7 +361,7 @@ internal sealed class AppController : ApplicationContext
     {
         _studioFellBack = true;
         Log("studio: switched to phone noise cancellation for this session (" + why + ")");
-        _tray.ShowBalloonTip(5000, "CordMic", L.T("balloon.studio.fallback"), ToolTipIcon.Warning);
+        ShowBalloon(BalloonKind.Other, 5000, "CordMic", L.T("balloon.studio.fallback"), ToolTipIcon.Warning);
     }
 
     /// <summary>Persist the Studio auto-volume gain (the next session starts from it, spec §4).</summary>
@@ -945,6 +955,10 @@ internal sealed class AppController : ApplicationContext
         _rx?.Dispose();
         _net.Dispose();
         _settingsWindow?.Close();
+        // Audit M2: no updater callbacks after this point.
+        if (_onUpdateChanged is not null) _updates.Changed -= _onUpdateChanged;
+        if (_onUpdateReady is not null) _updates.ReadyInBackground -= _onUpdateReady;
+        _updates.Log = null;
         _updates.Dispose();
         CancelOptimizeCable();
         Log("quit");
@@ -1072,6 +1086,7 @@ internal sealed class AppController : ApplicationContext
 
     private void OnUpdateChanged()
     {
+        if (_quitting) return;
         var st = _updates.State;
         if (st.Phase is UpdatePhase.UpToDate or UpdatePhase.Available or UpdatePhase.Ready && _updates.LastCheckUtc is { } t)
         {
@@ -1084,8 +1099,24 @@ internal sealed class AppController : ApplicationContext
 
     private void OnUpdateReadyInBackground(string tag)
     {
+        if (_quitting) return;
         RefreshTrayUpdateItem();
-        _tray.ShowBalloonTip(10000, "CordMic", L.T("balloon.update.ready2", tag), ToolTipIcon.Info);
+        ShowBalloon(BalloonKind.UpdateReady, 10000, "CordMic", L.T("balloon.update.ready2", tag), ToolTipIcon.Info);
+    }
+
+    /// <summary>Audit M1: every balloon goes through here so a click is only treated as "install" for the update balloon.</summary>
+    private void ShowBalloon(BalloonKind kind, int ms, string title, string text, ToolTipIcon icon)
+    {
+        if (_quitting) return;
+        _balloon = kind;
+        _tray.ShowBalloonTip(ms, title, text, icon);
+    }
+
+    private void OnBalloonClicked()
+    {
+        var shown = _balloon;
+        _balloon = BalloonKind.None;
+        if (BalloonPolicy.InstallOnClick(shown, _updates.State.ReadyToInstall)) _ = _updates.InstallStagedAsync();
     }
 
     /// <summary>Progress of the "Install VB-CABLE" button, shown under it.</summary>
@@ -1093,11 +1124,11 @@ internal sealed class AppController : ApplicationContext
 
     public void MaybeAutoCheckUpdates()
     {
-        if (!_settings.AutoUpdate || _quitting) return;
-        var last = _settings.LastUpdateCheckUtcTicks <= 0 ? DateTime.MinValue : new DateTime(_settings.LastUpdateCheckUtcTicks, DateTimeKind.Utc);
-        if (DateTime.UtcNow - last < AppUpdate.MinCheckInterval) return;
+        if (!_settings.AutoUpdate || _quitting || !UpdateCheckDue()) return;
         _ = _updates.CheckAsync(download: true);
     }
+
+    private bool UpdateCheckDue() => UpdateSchedule.IsDue(_settings.LastUpdateCheckUtcTicks, DateTime.UtcNow, AppUpdate.MinCheckInterval);
 
     public void SetInstallOnQuit(bool on)
     {

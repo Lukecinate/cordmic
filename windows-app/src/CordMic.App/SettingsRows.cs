@@ -20,6 +20,8 @@ internal abstract class Row : DoubleBufferedPanel
     protected Row(SettingsForm f) { F = f; BackColor = Theme.Surface; Margin = Padding.Empty; }
 
     protected int Sx(int v) => F.Sx(v);
+    /// <summary>Fonts for the window's current DPI (rows are rebuilt when it changes).</summary>
+    protected FontSet Fonts => F.Fonts;
 
     public abstract int Arrange(int width);
 
@@ -65,6 +67,7 @@ internal abstract class Row : DoubleBufferedPanel
     protected Button MakeButton(string text, bool primary)
     {
         var b = primary ? Theme.Primary(text) : Theme.Secondary(text);
+        b.Font = primary ? Fonts.Strong : Fonts.Body;
         b.AutoSize = false;
         b.MinimumSize = Size.Empty;
         b.Padding = Padding.Empty;
@@ -81,7 +84,7 @@ internal abstract class Row : DoubleBufferedPanel
     {
         var l = new LinkLabel
         {
-            Text = text, Font = Theme.Body, AutoSize = false, UseMnemonic = false, BackColor = Color.Transparent,
+            Text = text, Font = Fonts.Body, AutoSize = false, UseMnemonic = false, BackColor = Color.Transparent,
             LinkColor = Theme.Accent, ActiveLinkColor = Theme.AccentHover, VisitedLinkColor = Theme.Accent,
             LinkBehavior = LinkBehavior.HoverUnderline, TabStop = true,
         };
@@ -186,9 +189,9 @@ internal sealed class ToggleRow : Row
     public ToggleRow(SettingsForm f, string title, string? help, Func<bool> get, Action<bool> set) : base(f)
     {
         _get = get;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _help = Lbl(Theme.Small, Theme.Muted, help);
-        _extra = Lbl(Theme.Body, Theme.Ink);
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
+        _extra = Lbl(Fonts.Body, Theme.Ink);
         _toggle = new ToggleSwitch(f) { AccessibleName = title, AccessibleDescription = help };
         _toggle.CheckedChanged += (_, _) => { if (!Suppress) set(_toggle.Checked); };
         _title.Click += (_, _) => { _toggle.Focus(); _toggle.Checked = !_toggle.Checked; };
@@ -239,9 +242,9 @@ internal sealed class ChoiceRow : Row
         Func<object?, object?, bool>? keyEquals = null, Action? onDropDown = null) : base(f)
     {
         _items = items; _get = get; _eq = keyEquals ?? Equals;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _help = Lbl(Theme.Small, Theme.Muted, help);
-        _combo = new PageComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Body, FlatStyle = FlatStyle.System, AccessibleName = title, AccessibleDescription = help };
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
+        _combo = new PageComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = Fonts.Body, FlatStyle = FlatStyle.System, AccessibleName = title, AccessibleDescription = help };
         _combo.SelectionChangeCommitted += (_, _) =>
         {
             if (Suppress || _combo.SelectedItem is not Item it) return;
@@ -311,10 +314,10 @@ internal sealed class SliderRow : Row
     public SliderRow(SettingsForm f, string title, string? help, int min, int max, Func<int> get, Action<int> set, Func<int, string> fmt) : base(f)
     {
         _get = get; _fmt = fmt;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _value = Lbl(Theme.Strong, Theme.Accent);
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _value = Lbl(Fonts.Strong, Theme.Accent);
         _value.TextAlign = ContentAlignment.TopRight;
-        _help = Lbl(Theme.Small, Theme.Muted, help);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
         _bar = new PageTrackBar { Minimum = min, Maximum = max, TickFrequency = 6, SmallChange = 1, LargeChange = 3, AutoSize = false, BackColor = Theme.Surface, AccessibleName = title, AccessibleDescription = help };
         _bar.ValueChanged += (_, _) =>
         {
@@ -323,7 +326,8 @@ internal sealed class SliderRow : Row
             _debounce.Stop(); _debounce.Start();
         };
         _debounce.Tick += (_, _) => { _debounce.Stop(); set(_bar.Value); };
-        Disposed += (_, _) => _debounce.Dispose();
+        // Audit L3: a change still waiting in the debounce is applied, not dropped, when the row goes away.
+        Disposed += (_, _) => { if (_debounce.Enabled) { _debounce.Stop(); try { set(_bar.Value); } catch (Exception) { } } _debounce.Dispose(); };
         Controls.AddRange(new Control[] { _title, _value, _bar, _help });
     }
 
@@ -362,16 +366,16 @@ internal sealed class SegmentedRow : Row
     public SegmentedRow(SettingsForm f, string title, string? help, List<(object, string)> options, Func<object> get, Action<object> set) : base(f)
     {
         _get = get;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _help = Lbl(Theme.Small, Theme.Muted, help);
-        _extra = Lbl(Theme.Small, Theme.Ink);
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
+        _extra = Lbl(Fonts.Small, Theme.Ink);
         Controls.AddRange(new Control[] { _title, _help, _extra });
         foreach (var (key, text) in options)
         {
             var rb = new RadioButton
             {
                 Text = text, Appearance = Appearance.Button, FlatStyle = FlatStyle.Flat, TextAlign = ContentAlignment.MiddleCenter,
-                Font = Theme.Body, BackColor = Theme.Surface, ForeColor = Theme.Ink, AutoSize = false, Cursor = Cursors.Hand,
+                Font = Fonts.Body, BackColor = Theme.Surface, ForeColor = Theme.Ink, AutoSize = false, Cursor = Cursors.Hand,
                 UseMnemonic = false, AccessibleName = title + ": " + text,
             };
             rb.FlatAppearance.BorderColor = Theme.Outline;
@@ -381,7 +385,7 @@ internal sealed class SegmentedRow : Row
             rb.CheckedChanged += (_, _) =>
             {
                 rb.FlatAppearance.BorderColor = rb.Checked ? Theme.Accent : Theme.Outline;
-                rb.Font = rb.Checked ? Theme.Strong : Theme.Body;
+                rb.Font = rb.Checked ? Fonts.Strong : Fonts.Body;
                 if (!Suppress && rb.Checked) set(k);
             };
             _buttons.Add((key, rb));
@@ -433,16 +437,16 @@ internal sealed class RadioRow : Row
     public RadioRow(SettingsForm f, string title, string? help, List<(object, string, string)> options, Func<object> get, Action<object> set) : base(f)
     {
         _get = get;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _help = Lbl(Theme.Small, Theme.Muted, help);
-        _note = Lbl(Theme.Small, Theme.Amber);
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
+        _note = Lbl(Fonts.Small, Theme.Amber);
         Controls.AddRange(new Control[] { _title, _help, _note });
         foreach (var (key, text, optHelp) in options)
         {
-            var rb = new RadioButton { Text = text, Font = Theme.Body, ForeColor = Theme.Ink, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false, AccessibleDescription = optHelp };
-            var hl = Lbl(Theme.Small, Theme.Muted, optHelp);
+            var rb = new RadioButton { Text = text, Font = Fonts.Body, ForeColor = Theme.Ink, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false, AccessibleDescription = optHelp };
+            var hl = Lbl(Fonts.Small, Theme.Muted, optHelp);
             var k = key;
-            rb.CheckedChanged += (_, _) => { rb.Font = rb.Checked ? Theme.Strong : Theme.Body; if (!Suppress && rb.Checked) set(k); };
+            rb.CheckedChanged += (_, _) => { rb.Font = rb.Checked ? Fonts.Strong : Fonts.Body; if (!Suppress && rb.Checked) set(k); };
             hl.Click += (_, _) => { rb.Focus(); rb.Checked = true; };
             _opts.Add((key, rb, hl));
             Controls.Add(rb);
@@ -458,7 +462,7 @@ internal sealed class RadioRow : Row
         int indent = Sx(24);
         foreach (var (_, rb, hl) in _opts)
         {
-            int rh = Math.Max(Sx(24), TextRenderer.MeasureText(rb.Text, Theme.Strong).Height + Sx(6));
+            int rh = Math.Max(Sx(24), TextRenderer.MeasureText(rb.Text, Fonts.Strong).Height + Sx(6));
             rb.SetBounds(0, y + Sx(4), width, rh);
             y = Place(hl, indent, rb.Bottom - Sx(2), width - indent);
         }
@@ -492,8 +496,8 @@ internal sealed class ButtonRow : Row
         _statusText = status;
         _button = MakeButton(text, primary: false);
         _button.AccessibleDescription = help;
-        _help = Lbl(Theme.Small, Theme.Muted, help);
-        _status = Lbl(Theme.Small, Theme.Ink);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
+        _status = Lbl(Fonts.Small, Theme.Ink);
         _button.Click += async (_, _) =>
         {
             try { await onClick(); }
@@ -530,7 +534,7 @@ internal sealed class LinkRow : Row
     {
         _link = MakeLink(text, onClick);
         _link.AccessibleDescription = help;
-        _help = Lbl(Theme.Small, Theme.Muted, help);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
         Controls.AddRange(new Control[] { _link, _help });
     }
 
@@ -550,10 +554,10 @@ internal sealed class StatusRow : Row
     public StatusRow(SettingsForm f, string title, string? help, Func<string?> line1, Func<string?> line2) : base(f)
     {
         _l1 = line1; _l2 = line2;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _line1 = Lbl(Theme.Body, Theme.Ink);
-        _line2 = Lbl(Theme.Small, Theme.Muted);
-        _help = Lbl(Theme.Small, Theme.Muted, help);
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _line1 = Lbl(Fonts.Body, Theme.Ink);
+        _line2 = Lbl(Fonts.Small, Theme.Muted);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
         Controls.AddRange(new Control[] { _title, _line1, _line2, _help });
     }
 
@@ -583,8 +587,8 @@ internal sealed class NoteRow : Row
     public NoteRow(SettingsForm f, string title, Func<string?> text, Func<Color> color) : base(f)
     {
         _get = text; _color = color;
-        _title = Lbl(Theme.Strong, Theme.Ink, title);
-        _text = Lbl(Theme.Body, Theme.Muted);
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _text = Lbl(Fonts.Body, Theme.Muted);
         Controls.AddRange(new Control[] { _title, _text });
         ShowWhen = () => !string.IsNullOrEmpty(_get());
     }
@@ -621,11 +625,11 @@ internal sealed class UpdateCardRow : Row
     public UpdateCardRow(SettingsForm f) : base(f)
     {
         var app = f.App;
-        _title = Lbl(Theme.Strong, Theme.Ink, L.T("set.update.card"));
-        _meta = Lbl(Theme.Small, Theme.Muted);
+        _title = Lbl(Fonts.Strong, Theme.Ink, L.T("set.update.card"));
+        _meta = Lbl(Fonts.Small, Theme.Muted);
         _meta.TextAlign = ContentAlignment.TopRight;
-        _status = Lbl(Theme.Body, Theme.Ink);
-        _note = Lbl(Theme.Small, Theme.Muted, L.T(app.InstallKind == InstallKind.Portable ? "set.update.notePortable" : "set.update.noteInstalled"));
+        _status = Lbl(Fonts.Body, Theme.Ink);
+        _note = Lbl(Fonts.Small, Theme.Muted, L.T(app.InstallKind == InstallKind.Portable ? "set.update.notePortable" : "set.update.noteInstalled"));
         _primary = MakeButton(L.T("set.update.check"), primary: true);
         _cancel = MakeButton(L.T("set.update.cancel"), primary: false);
         _page = MakeLink(L.T("set.releasePage") + " \u2197", app.OpenReleasePage);
@@ -816,12 +820,13 @@ internal sealed class StepStrip : Control
     private static readonly string[] Keys = { "set.update.step.download", "set.update.step.verify", "set.update.step.install", "set.update.step.restart" };
     private int _done, _active = -1;
     private bool _busy;
+    private FontSet Fonts => _f.Fonts;
 
     public StepStrip(SettingsForm f)
     {
         _f = f;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-        Font = Theme.Small;
+        Font = Fonts.Small;
     }
 
     /// <param name="state">(number of finished steps, index of the current step or -1)</param>
@@ -849,7 +854,7 @@ internal sealed class StepStrip : Control
                 g.DrawEllipse(p, x, cy, d, d);
             x += d + _f.Sx(6);
             string text = L.T(Keys[i]);
-            var font = active ? Theme.Strong : Theme.Small;
+            var font = active ? Fonts.Strong : Fonts.Small;
             var sz = TextRenderer.MeasureText(g, text, font, new Size(int.MaxValue, Height), TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, text, font, new Rectangle(x, 0, sz.Width + 2, Height), done || active ? Theme.Ink : Theme.Muted,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);

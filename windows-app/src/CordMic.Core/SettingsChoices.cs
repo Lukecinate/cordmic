@@ -115,7 +115,16 @@ public static class AutoUpdateMigration
         var lines = new List<string>();
         foreach (var p in paths)
         {
-            try { if (File.Exists(p)) lines.AddRange(File.ReadAllLines(p)); } catch (Exception) { }
+            try
+            {
+                if (!File.Exists(p)) continue;
+                // Audit L6: share read/write/delete, so a log that is open for writing can still be read.
+                using var fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var r = new StreamReader(fs);
+                string? line;
+                while ((line = r.ReadLine()) != null) lines.Add(line);
+            }
+            catch (Exception) { }
         }
         return ExplicitOffSince061(lines);
     }

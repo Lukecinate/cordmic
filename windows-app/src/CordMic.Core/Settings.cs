@@ -99,8 +99,12 @@ public sealed class AppSettings
         try
         {
             if (!File.Exists(path)) { why = "missing"; return false; }
-            s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Opts);
+            var text = File.ReadAllText(path);
+            s = JsonSerializer.Deserialize<AppSettings>(text, Opts);
             if (s is null) { why = "empty"; return false; }
+            // Audit L7: a file without "Version" predates the schema field; treat it as schema 1 so it is migrated.
+            using (var doc = JsonDocument.Parse(text))
+                if (doc.RootElement.ValueKind == JsonValueKind.Object && !doc.RootElement.TryGetProperty(nameof(Version), out _)) s.Version = 1;
             s.NormalizeAudio();
             if (!string.IsNullOrEmpty(s.PairingCode) && !Pairing.IsValidCode(s.PairingCode)) s.PairingCode = null;
             return true;

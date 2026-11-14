@@ -78,13 +78,16 @@ internal static class AppUpdater
 
         public async Task InstallAsync(StagedUpdate staged, CancellationToken ct)
         {
-            var newDir = Path.Combine(staged.Dir, "new");
+            // Audit M10: a fresh folder per attempt; a retry after a failed start must not collide with the last unpack.
+            var newDir = PortableSwap.NewUnpackDir(staged.Dir);
             try { await Task.Run(() => PortableSwap.ExtractVerified(staged.Handle, newDir), ct).ConfigureAwait(false); }
             catch (UpdateException) { throw; }
             catch (Exception e) { throw new UpdateException(UpdateError.InstallFailed, "could not unpack the update: " + e.Message, e); }
             var helper = Path.Combine(newDir, PortableSwap.ExeName);
             var psi = new ProcessStartInfo(helper) { UseShellExecute = false, WorkingDirectory = newDir };
-            foreach (var a in new PortableUpdateArgs(Paths.ExeDir, Environment.ProcessId).ToArgs()) psi.ArgumentList.Add(a);
+            long started;
+            using (var me = Process.GetCurrentProcess()) started = me.StartTime.ToUniversalTime().Ticks;
+            foreach (var a in new PortableUpdateArgs(Paths.ExeDir, Environment.ProcessId, started).ToArgs()) psi.ArgumentList.Add(a);
             try { using var p = Process.Start(psi) ?? throw new UpdateException(UpdateError.InstallFailed, "the update helper did not start"); }
             catch (UpdateException) { throw; }
             catch (Exception e) { throw new UpdateException(UpdateError.InstallFailed, e.Message, e); }
@@ -104,33 +107,59 @@ internal static class PortableUpdateHelper
     public static int Run(string[] args)
     {
         if (!PortableUpdateArgs.TryParse(args, out var a) || a is null) return 64;
-        using var log = new FileLog(Paths.Log, backgroundWriter: false);
+        int code;
+        bool restart = false;
+        var log = new FileLog(Paths.Log, backgroundWriter: false);
         void Log(string m) { try { log.Write(m); log.Flush(); } catch (Exception) { } }
         try
         {
-            if (a.WaitPid > 0)
-            {
-                try { using var old = Process.GetProcessById(a.WaitPid); if (!old.WaitForExit(60_000)) { Log("portable update: CordMic did not exit; update skipped"); return 3; } }
-                catch (ArgumentException) { } // already gone
-            }
-            var source = AppContext.BaseDirectory;
-            if (InstallMode.SamePath(source, a.TargetDir)) { Log("portable update: refusing to update a folder onto itself"); return 64; }
-            if (!File.Exists(Path.Combine(a.TargetDir, PortableSwap.ExeName))) { Log("portable update: target has no CordMic.exe; skipped"); return 4; }
-            var r = PortableSwap.Apply(source, a.TargetDir, Log);
-            Log(r.Outcome == SwapOutcome.Updated
-                ? $"portable update: done ({r.FilesReplaced} files)"
-                : $"portable update: rolled back ({r.Error})");
-            return r.Outcome == SwapOutcome.Updated ? 0 : 2;
+            (code, restart) = Apply(a, Log);
         }
-        catch (Exception e) { Log("portable update helper: " + e.Message); return 1; }
+        catch (Exception e) { Log("portable update helper: " + e.Message); code = 1; restart = true; }
         finally
+        {
+            // Audit L5: close the helper's log before the new CordMic starts writing to the same file.
+            try { log.Dispose(); } catch (Exception) { }
+        }
+        if (restart)
         {
             try
             {
                 var exe = Path.Combine(a.TargetDir, PortableSwap.ExeName);
-                if (File.Exists(exe)) Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = a.TargetDir });
+                if (File.Exists(exe)) Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = a.TargetDir })?.Dispose();
             }
-            catch (Exception e) { Log("portable update: could not start CordMic: " + e.Message); }
+            catch (Exception) { }
         }
+        return code;
+    }
+
+    private static (int Code, bool Restart) Apply(PortableUpdateArgs a, Action<string> log)
+    {
+        if (a.WaitPid > 0)
+        {
+            try
+            {
+                using var old = Process.GetProcessById(a.WaitPid);
+                // Audit M6: only wait if this PID is still the CordMic that started us (PIDs are reused).
+                bool same;
+                try { same = PortableUpdateArgs.IsSameProcess(a.StartedUtcTicks, old.StartTime); }
+                catch (Exception) { same = a.StartedUtcTicks <= 0; }
+                if (same && !old.WaitForExit(60_000)) { log("portable update: CordMic did not exit; update skipped"); return (3, false); }
+            }
+            catch (ArgumentException) { } // already gone
+            catch (InvalidOperationException) { }
+        }
+        var source = AppContext.BaseDirectory;
+        if (InstallMode.SamePath(source, a.TargetDir)) { log("portable update: refusing to update a folder onto itself"); return (64, false); }
+        var targetExe = Path.Combine(a.TargetDir, PortableSwap.ExeName);
+        if (!File.Exists(targetExe)) { log("portable update: target has no CordMic.exe; skipped"); return (4, false); }
+        if (!PortableSwap.WaitUntilWritable(targetExe, TimeSpan.FromSeconds(30)))
+        { log("portable update: CordMic.exe is still in use; update skipped"); return (3, true); }
+        PortableSwap.CleanBackups(a.TargetDir);
+        var r = PortableSwap.Apply(source, a.TargetDir, log);
+        log(r.Outcome == SwapOutcome.Updated
+            ? $"portable update: done ({r.FilesReplaced} files)"
+            : $"portable update: rolled back ({r.Error})");
+        return (r.Outcome == SwapOutcome.Updated ? 0 : 2, true);
     }
 }

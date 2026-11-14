@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using CordMic.Core;
 
 namespace CordMic.App;
 
@@ -88,6 +89,29 @@ internal static class Theme
     }
 
     public static readonly Font Body, Small, Strong, StateTitle, Title, Brand, StatValue;
+
+    /// <summary>
+    /// 0.7.1 (audit M7): fonts for a window at <paramref name="dpi"/>. At the system DPI these are the shared fonts
+    /// (not owned, never disposed); on a monitor with another scale they are new fonts sized
+    /// points × dpi / system DPI, owned by the set and disposed with it.
+    /// </summary>
+    public static FontSet FontsFor(int dpi)
+    {
+        int sys = Native.SystemDpi();
+        if (dpi <= 0 || dpi == sys) return new FontSet(Body, Small, Strong, StateTitle, Title, Brand, owned: false);
+        Font F(FontFamily fam, float pt) => new(fam, FontScale.Points(pt, dpi, sys));
+        return new FontSet(F(RegularFamily, 10.5f), F(RegularFamily, 9f), F(SemiBoldFamily, 10.5f), F(SemiBoldFamily, 13.5f),
+            F(SemiBoldFamily, 16f), F(SemiBoldFamily, 11.5f), owned: true);
+    }
+
+    private static Icon? _appIcon;
+    private static Image? _logo;
+
+    /// <summary>Audit M3: one shared window icon (forms do not dispose their Icon).</summary>
+    public static Icon SharedAppIcon() => _appIcon ??= AppIcon();
+
+    /// <summary>Audit M3: one shared logo bitmap (PictureBox does not dispose its Image).</summary>
+    public static Image? SharedLogo() => _logo ??= Logo();
 
     // ------------------------------------------------------------ controls
 
@@ -184,6 +208,27 @@ internal static class Theme
         p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
         p.CloseFigure();
         return p;
+    }
+}
+
+/// <summary>Fonts for one window DPI (see <see cref="Theme.FontsFor"/>).</summary>
+internal sealed class FontSet : IDisposable
+{
+    public Font Body { get; }
+    public Font Small { get; }
+    public Font Strong { get; }
+    public Font StateTitle { get; }
+    public Font Title { get; }
+    public Font Brand { get; }
+    private readonly bool _owned;
+
+    public FontSet(Font body, Font small, Font strong, Font stateTitle, Font title, Font brand, bool owned)
+    { Body = body; Small = small; Strong = strong; StateTitle = stateTitle; Title = title; Brand = brand; _owned = owned; }
+
+    public void Dispose()
+    {
+        if (!_owned) return;
+        foreach (var f in new[] { Body, Small, Strong, StateTitle, Title, Brand }) f.Dispose();
     }
 }
 

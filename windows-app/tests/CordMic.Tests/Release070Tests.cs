@@ -15,7 +15,7 @@ public class Release070Tests : IDisposable
 
     // ---- fake GitHub release server ----------------------------------------------------------------------------
 
-    private sealed class FakeServer : HttpMessageHandler
+    internal sealed class FakeServer : HttpMessageHandler
     {
         public readonly Dictionary<string, byte[]> Files = new();
         public string Tag = "v0.7.1";
@@ -64,7 +64,7 @@ public class Release070Tests : IDisposable
             $"{{\"name\":\"{name}\",\"size\":{size},\"browser_download_url\":\"https://example.test/dl/{name}\"}}";
     }
 
-    private sealed class SlowStream : MemoryStream
+    internal sealed class SlowStream : MemoryStream
     {
         private readonly TimeSpan _d;
         public SlowStream(byte[] b, TimeSpan d) : base(b) => _d = d;
@@ -75,7 +75,7 @@ public class Release070Tests : IDisposable
         }
     }
 
-    private sealed class FakeInstaller : IUpdateInstaller
+    internal sealed class FakeInstaller : IUpdateInstaller
     {
         public int Calls;
         public UpdateError? Throw;
@@ -91,10 +91,10 @@ public class Release070Tests : IDisposable
         }
     }
 
-    private static byte[] RandomBytes(int n, int seed) { var b = new byte[n]; new Random(seed).NextBytes(b); return b; }
-    private static string Hex(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
+    internal static byte[] RandomBytes(int n, int seed) { var b = new byte[n]; new Random(seed).NextBytes(b); return b; }
+    internal static string Hex(byte[] b) => Convert.ToHexString(SHA256.HashData(b)).ToLowerInvariant();
 
-    private static byte[] MakeZip(params (string name, string text)[] files)
+    internal static byte[] MakeZip(params (string name, string text)[] files)
     {
         using var ms = new MemoryStream();
         using (var z = new ZipArchive(ms, ZipArchiveMode.Create, true))
@@ -182,7 +182,7 @@ public class Release070Tests : IDisposable
         await Task.WhenAll(tasks);
         Assert.Equal(1, srv.LatestHits);
         Assert.Equal(1, srv.AssetHits);
-        Assert.Single(tasks.Distinct());
+        _ = Assert.Single(tasks.Distinct());
         Assert.Equal(UpdatePhase.Ready, c.State.Phase);
         // a check after the update is staged reuses it
         await c.CheckAsync(download: true);

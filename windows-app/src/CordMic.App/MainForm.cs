@@ -9,29 +9,83 @@ namespace CordMic.App;
 internal sealed class MainForm : Form
 {
     private readonly AppController _app;
-    private readonly ConnectOrb _orb;
-    private readonly Label _state, _detail;
-    private readonly Button _settingsBtn;
-    private readonly LinkLabel _settingsLink;
+    private ConnectOrb _orb = null!;
+    private Label _state = null!, _detail = null!;
+    private Button _settingsBtn = null!;
+    private LinkLabel _settingsLink = null!;
+    private ToolTip? _tip;
+    private Image? _gearGlyph;
     private readonly System.Windows.Forms.Timer _anim = new() { Interval = 32 };
+    private readonly DpiResources<FontSet> _fonts;
     private int _animTicks;
     private bool _dotShown;
 
     public MainForm(AppController app)
     {
         _app = app;
+        _fonts = new DpiResources<FontSet>(DeviceDpi, Theme.FontsFor);
         Text = "CordMic";
-        Icon = Theme.AppIcon();
-        Font = Theme.Body;
+        Icon = Theme.SharedAppIcon();
         BackColor = Theme.Background;
         ForeColor = Theme.Ink;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        AutoScaleDimensions = new SizeF(96, 96);
-        ClientSize = new Size(Sx(392), Sx(440));
+        // 0.7.1 (audit M7): every size comes from DeviceDpi and the fonts from a per-DPI set, so WinForms must not
+        // scale on top of that (AutoScaleMode.Dpi plus manual sizing could scale twice on a non-100% primary screen).
+        AutoScaleMode = AutoScaleMode.None;
         KeyPreview = true;
+        BuildUi();
+
+        _anim.Tick += (_, _) => { _orb.Advance(); if (++_animTicks % 8 == 0) RefreshFromApp(); };
+        Load += (_, _) =>
+        {
+            _fonts.Switch(DeviceDpi, _ => RebuildUi()); // created on a monitor whose DPI differs from the system's
+            LayoutHero(); RefreshFromApp(); _anim.Start(); _orb.Focus();
+        };
+        DpiChanged += (_, e) =>
+        {
+            var loc = e.SuggestedRectangle.Location;
+            _fonts.Switch(e.DeviceDpiNew, _ => RebuildUi());
+            Location = loc;
+        };
+        FormClosed += (_, _) => { _anim.Stop(); _anim.Dispose(); };
+        Resize += (_, _) => { if (_orb is not null) LayoutHero(); };
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing)
+        {
+            // Audit M3: the tooltip and the gear bitmap are owned here (Button/ToolTip do not dispose them).
+            _tip?.Dispose();
+            _gearGlyph?.Dispose();
+            _fonts.Dispose();
+        }
+    }
+
+    private void RebuildUi()
+    {
+        bool focused = _orb?.Focused == true;
+        SuspendLayout();
+        var old = Controls.Cast<Control>().ToList();
+        Controls.Clear();
+        foreach (var c in old) c.Dispose();
+        _tip?.Dispose(); _tip = null;
+        _gearGlyph?.Dispose(); _gearGlyph = null;
+        BuildUi();
+        ResumeLayout(true);
+        LayoutHero();
+        RefreshFromApp();
+        if (focused) _orb!.Focus();
+    }
+
+    private void BuildUi()
+    {
+        var fonts = _fonts.Current;
+        Font = fonts.Body;
+        ClientSize = new Size(Sx(392), Sx(440));
 
         double dpi = DeviceDpi;
         int headerH = HeaderLayout.Px(HeaderLayout.Height, dpi);
@@ -56,25 +110,26 @@ internal sealed class MainForm : Form
         int logoS = HeaderLayout.Px(HeaderLayout.LogoSize, dpi);
         var logo = new PictureBox
         {
-            Image = Theme.Logo(), SizeMode = PictureBoxSizeMode.Zoom,
+            Image = Theme.SharedLogo(), SizeMode = PictureBoxSizeMode.Zoom,
             Size = new Size(logoS, logoS), BackColor = Color.Transparent, TabStop = false,
             Margin = new Padding(0, 0, HeaderLayout.Px(HeaderLayout.LogoTitleGap, dpi), 0),
             Anchor = AnchorStyles.Left,
         };
         var brand = new Label
         {
-            Text = "CordMic", Font = Theme.Title, ForeColor = Theme.Ink, AutoSize = true,
+            Text = "CordMic", Font = fonts.Title, ForeColor = Theme.Ink, AutoSize = true,
             Margin = Padding.Empty, BackColor = Color.Transparent, Anchor = AnchorStyles.Left,
             UseMnemonic = false,
         };
         int gearS = HeaderLayout.Px(HeaderLayout.SettingsButton, dpi);
         int glyphS = HeaderLayout.Px(HeaderLayout.SettingsGlyph, dpi);
+        _gearGlyph = Theme.Glyph("settings", Theme.Muted, glyphS);
         _settingsBtn = new Button
         {
             Text = string.Empty, Size = new Size(gearS, gearS), MinimumSize = new Size(gearS, gearS),
             FlatStyle = FlatStyle.Flat, BackColor = Theme.Background, UseVisualStyleBackColor = false,
             Cursor = Cursors.Hand, Margin = Padding.Empty, Padding = Padding.Empty,
-            Image = Theme.Glyph("settings", Theme.Muted, glyphS),
+            Image = _gearGlyph,
             ImageAlign = ContentAlignment.MiddleCenter,
             AccessibleName = L.T("ui.settings"), AccessibleRole = AccessibleRole.PushButton,
             Anchor = AnchorStyles.None,
@@ -84,7 +139,8 @@ internal sealed class MainForm : Form
         _settingsBtn.FlatAppearance.MouseDownBackColor = Theme.Line;
         _settingsBtn.Click += (_, _) => _app.ShowSettings(null);
         _settingsBtn.Paint += (_, e) => PaintUpdateDot(e.Graphics);
-        new ToolTip().SetToolTip(_settingsBtn, L.T("ui.settings"));
+        _tip = new ToolTip();
+        _tip.SetToolTip(_settingsBtn, L.T("ui.settings"));
         header.Controls.Add(logo, 0, 0);
         header.Controls.Add(brand, 1, 0);
         header.Controls.Add(_settingsBtn, 2, 0);
@@ -95,17 +151,17 @@ internal sealed class MainForm : Form
 
         _state = new Label
         {
-            Font = Theme.Title, ForeColor = Theme.Ink, TextAlign = ContentAlignment.MiddleCenter,
+            Font = fonts.Title, ForeColor = Theme.Ink, TextAlign = ContentAlignment.MiddleCenter,
             AutoSize = false, Height = Sx(28), BackColor = Color.Transparent,
         };
         _detail = new Label
         {
-            Font = Theme.Body, ForeColor = Theme.Muted, TextAlign = ContentAlignment.TopCenter,
+            Font = fonts.Body, ForeColor = Theme.Muted, TextAlign = ContentAlignment.TopCenter,
             AutoSize = false, Height = Sx(48), BackColor = Color.Transparent,
         };
         _settingsLink = new LinkLabel
         {
-            Text = L.T("ui.openSettings"), Font = Theme.Body, LinkColor = Theme.Accent, ActiveLinkColor = Theme.AccentHover,
+            Text = L.T("ui.openSettings"), Font = fonts.Body, LinkColor = Theme.Accent, ActiveLinkColor = Theme.AccentHover,
             AutoSize = true, BackColor = Color.Transparent, TabStop = true,
         };
         _settingsLink.LinkClicked += (_, _) => _app.ShowSettings(null);
@@ -115,11 +171,7 @@ internal sealed class MainForm : Form
         Controls.Add(_state);
         Controls.Add(_detail);
         Controls.Add(_settingsLink);
-
-        _anim.Tick += (_, _) => { _orb.Advance(); if (++_animTicks % 8 == 0) RefreshFromApp(); };
-        Load += (_, _) => { LayoutHero(); RefreshFromApp(); _anim.Start(); _orb.Focus(); };
-        FormClosed += (_, _) => _anim.Dispose();
-        Resize += (_, _) => LayoutHero();
+        _dotShown = false;
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -287,11 +339,12 @@ internal sealed class ConnectOrb : Control
         };
         Color ink = solid ? Color.White : Theme.Accent;
         int gs = (int)(Width * 0.38);
-        if (_glyph is null || _glyphName != name + ink.ToArgb())
+        string key = name + ink.ToArgb() + "@" + gs;
+        if (_glyph is null || _glyphName != key)
         {
             _glyph?.Dispose();
             _glyph = Theme.Glyph(name, ink, gs);
-            _glyphName = name + ink.ToArgb();
+            _glyphName = key;
         }
         if (_glyph is not null) g.DrawImage(_glyph, (Width - gs) / 2, (Height - gs) / 2, gs, gs);
         if (Focused && ShowFocusCues)

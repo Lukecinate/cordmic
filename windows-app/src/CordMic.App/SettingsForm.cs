@@ -22,15 +22,19 @@ internal sealed class SettingsForm : Form
     private readonly PagePanel _content;
     private readonly System.Windows.Forms.Timer _refresh = new() { Interval = 500 };
     private SettingsPage _page;
+    private readonly DpiResources<FontSet> _fonts;
 
     public SettingsPage Page => _page;
+    /// <summary>Fonts for this window's current DPI (audit M7).</summary>
+    internal FontSet Fonts => _fonts.Current;
 
     public SettingsForm(AppController app, SettingsPage page)
     {
         _app = app;
+        _fonts = new DpiResources<FontSet>(DeviceDpi, Theme.FontsFor);
         Text = L.T("set.title");
-        Icon = Theme.AppIcon();
-        Font = Theme.Body;
+        Icon = Theme.SharedAppIcon();
+        Font = Fonts.Body;
         BackColor = Theme.Surface;
         ForeColor = Theme.Ink;
         AutoScaleMode = AutoScaleMode.None; // every position is computed from DeviceDpi in the layout passes below
@@ -50,7 +54,7 @@ internal sealed class SettingsForm : Form
         }
         _version = new Label
         {
-            Font = Theme.Small, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false,
+            Font = Fonts.Small, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false,
             Text = L.T("set.version", _app.CurrentVersion) + (_app.InstallKind == InstallKind.Portable ? "\n" + L.T("set.portable") : ""),
         };
         _nav.Controls.Add(_version);
@@ -61,9 +65,32 @@ internal sealed class SettingsForm : Form
         Controls.Add(_nav);
 
         _refresh.Tick += (_, _) => RefreshNow();
-        Load += (_, _) => { ApplyInitialSize(); ShowPage(page); _refresh.Start(); };
-        DpiChanged += (_, _) => { ApplyMinimum(); _nav.Width = Sx(SettingsLayout.NavWidth); _content.Rebuild(); };
-        FormClosed += (_, _) => _refresh.Dispose();
+        Load += (_, _) => { ApplyFonts(DeviceDpi, rebuild: false); ApplyInitialSize(); ShowPage(page); _refresh.Start(); };
+        // Audit M7: per-monitor DPI. Move to the rectangle Windows suggests, rebuild fonts for the new DPI (the old ones
+        // are disposed after every control switched), then lay everything out again.
+        DpiChanged += (_, e) =>
+        {
+            Bounds = e.SuggestedRectangle;
+            ApplyMinimum();
+            _nav.Width = Sx(SettingsLayout.NavWidth);
+            if (!ApplyFonts(e.DeviceDpiNew, rebuild: true)) _content.Rebuild();
+        };
+        FormClosed += (_, _) => { _refresh.Stop(); _refresh.Dispose(); };
+    }
+
+    private bool ApplyFonts(int dpi, bool rebuild) => _fonts.Switch(dpi, fs =>
+    {
+        Font = fs.Body;
+        _version.Font = fs.Small;
+        foreach (var it in _navItems) it.ApplyFonts();
+        if (rebuild) _content.Rebuild();
+        else _content.ApplyHeaderFonts();
+    });
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing) _fonts.Dispose();
     }
 
     internal int Sx(int logical) => SettingsLayout.Px(logical, DeviceDpi);
@@ -146,9 +173,9 @@ internal sealed class SettingsForm : Form
         {
             _f = f;
             AutoScroll = true;
-            _title = new Label { Font = Theme.Title, ForeColor = Theme.Ink, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false };
-            _lead = new Label { Font = Theme.Body, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false };
-            _keys = new Label { Font = Theme.Small, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false, Text = L.T("set.keys") };
+            _title = new Label { Font = f.Fonts.Title, ForeColor = Theme.Ink, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false };
+            _lead = new Label { Font = f.Fonts.Body, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false };
+            _keys = new Label { Font = f.Fonts.Small, ForeColor = Theme.Muted, BackColor = Color.Transparent, AutoSize = false, UseMnemonic = false, Text = L.T("set.keys") };
         }
 
         public void Show(SettingsPage p) { _page = p; Rebuild(); }
@@ -161,9 +188,17 @@ internal sealed class SettingsForm : Form
             AutoScrollPosition = new Point(0, Math.Max(0, y));
         }
 
+        public void ApplyHeaderFonts()
+        {
+            _title.Font = _f.Fonts.Title;
+            _lead.Font = _f.Fonts.Body;
+            _keys.Font = _f.Fonts.Small;
+        }
+
         public void Rebuild()
         {
             SuspendLayout();
+            ApplyHeaderFonts();
             foreach (var r in _rows) r.Dispose();
             _rows.Clear();
             Controls.Clear();
@@ -258,11 +293,12 @@ internal sealed class SettingsForm : Form
         {
             _f = f; Page = page; Text = text;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.Selectable, true);
-            TabStop = true; Cursor = Cursors.Hand; Font = Theme.Body;
+            TabStop = true; Cursor = Cursors.Hand; Font = f.Fonts.Body;
             AccessibleRole = AccessibleRole.PageTab; AccessibleName = text;
         }
 
-        public bool Selected { get => _selected; set { if (_selected == value) return; _selected = value; Font = value ? Theme.Strong : Theme.Body; Invalidate(); } }
+        public bool Selected { get => _selected; set { if (_selected == value) return; _selected = value; ApplyFonts(); } }
+        public void ApplyFonts() { Font = _selected ? _f.Fonts.Strong : _f.Fonts.Body; Invalidate(); }
         public bool Badge { get => _badge; set { if (_badge == value) return; _badge = value; AccessibleDescription = value ? L.T("menu.updateReady", _f.App.Update.Tag) : null; Invalidate(); } }
 
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }

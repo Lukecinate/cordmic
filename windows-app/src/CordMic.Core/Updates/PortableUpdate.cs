@@ -42,14 +42,28 @@ public static class InstallMode
     }
 }
 
-/// <summary>Arguments of the portable update helper (<c>CordMic.exe --apply-portable-update</c>).</summary>
-public sealed record PortableUpdateArgs(string TargetDir, int WaitPid)
+/// <summary>
+/// Arguments of the portable update helper (<c>CordMic.exe --apply-portable-update &lt;dir&gt; --pid N --started T</c>).
+/// <see cref="StartedUtcTicks"/> (0.7.1, audit M6) is the start time of the process to wait for, so a reused PID is
+/// not mistaken for CordMic; 0 means unknown (a 0.7.0 caller).
+/// </summary>
+public sealed record PortableUpdateArgs(string TargetDir, int WaitPid, long StartedUtcTicks = 0)
 {
     public const string Verb = "--apply-portable-update";
 
     public static bool Mentions(IReadOnlyList<string> args) => args.Any(a => a.Equals(Verb, StringComparison.OrdinalIgnoreCase));
 
-    public string[] ToArgs() => new[] { Verb, TargetDir, "--pid", WaitPid.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+    public string[] ToArgs()
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var a = new List<string> { Verb, TargetDir, "--pid", WaitPid.ToString(inv) };
+        if (StartedUtcTicks > 0) { a.Add("--started"); a.Add(StartedUtcTicks.ToString(inv)); }
+        return a.ToArray();
+    }
+
+    /// <summary>True when a process with the awaited PID is the one that was meant (start times within one second).</summary>
+    public static bool IsSameProcess(long expectedStartUtcTicks, DateTime actualStartUtc) =>
+        expectedStartUtcTicks <= 0 || Math.Abs(actualStartUtc.ToUniversalTime().Ticks - expectedStartUtcTicks) < TimeSpan.TicksPerSecond;
 
     public static bool TryParse(IReadOnlyList<string> args, out PortableUpdateArgs? parsed)
     {
@@ -60,9 +74,14 @@ public sealed record PortableUpdateArgs(string TargetDir, int WaitPid)
         var target = args[i + 1];
         if (string.IsNullOrWhiteSpace(target) || target.StartsWith("--", StringComparison.Ordinal) || !Path.IsPathFullyQualified(target)) return false;
         int pid = 0;
+        long started = 0;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
         for (int k = i + 2; k + 1 < args.Count; k++)
-            if (args[k].Equals("--pid", StringComparison.OrdinalIgnoreCase) && !int.TryParse(args[k + 1], out pid)) return false;
-        parsed = new PortableUpdateArgs(target, pid);
+        {
+            if (args[k].Equals("--pid", StringComparison.OrdinalIgnoreCase) && !int.TryParse(args[k + 1], System.Globalization.NumberStyles.None, inv, out pid)) return false;
+            if (args[k].Equals("--started", StringComparison.OrdinalIgnoreCase) && !long.TryParse(args[k + 1], System.Globalization.NumberStyles.None, inv, out started)) return false;
+        }
+        parsed = new PortableUpdateArgs(target, pid, started);
         return true;
     }
 }
@@ -102,12 +121,21 @@ public static class PortableSwap
                 var dst = Path.GetFullPath(Path.Combine(destDir, name.Replace('/', Path.DirectorySeparatorChar)));
                 if (!dst.StartsWith(root, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
                     throw new UpdateException(UpdateError.InstallFailed, "the update archive has an unsafe path: " + e.FullName);
-                total += e.Length;
-                if (total > maxTotalBytes) throw new UpdateException(UpdateError.TooLarge, "the update archive is too large");
+                if (total + e.Length > maxTotalBytes) throw new UpdateException(UpdateError.TooLarge, "the update archive is too large");
                 Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
                 using (var src = e.Open())
                 using (var fs = new FileStream(dst, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                    src.CopyTo(fs);
+                {
+                    // Audit L4: count the bytes actually written; the size in the zip header is only a claim.
+                    var buf = new byte[81920];
+                    int n;
+                    while ((n = src.Read(buf, 0, buf.Length)) > 0)
+                    {
+                        total += n;
+                        if (total > maxTotalBytes) throw new UpdateException(UpdateError.TooLarge, "the update archive is too large");
+                        fs.Write(buf, 0, n);
+                    }
+                }
                 files++;
             }
         }
@@ -174,6 +202,65 @@ public static class PortableSwap
         SecureFiles.TryDelete(backup);
         log?.Invoke($"portable update: replaced {replaced.Count} files, added {added.Count}");
         return new SwapResult(SwapOutcome.Updated, files.Count, null);
+    }
+
+    /// <summary>
+    /// 0.7.1 (audit M10): a new, not yet existing unpack folder inside the staging folder for each install attempt, so
+    /// a retry after a failed start never collides with files from the previous attempt.
+    /// </summary>
+    public static string NewUnpackDir(string stagedDir)
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            var d = Path.Combine(stagedDir, "new-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant());
+            if (!Directory.Exists(d) && !File.Exists(d)) return d;
+        }
+        throw new IOException("could not pick an unpack folder");
+    }
+
+    /// <summary>
+    /// 0.7.1 (audit M4/L8): removes <c>.update-backup-*</c> folders in a portable folder that are older than one hour
+    /// (or dated more than a day ahead). Returns how many were removed.
+    /// </summary>
+    public static int CleanBackups(string targetDir, DateTime? nowUtc = null)
+    {
+        int removed = 0;
+        try
+        {
+            var now = nowUtc ?? DateTime.UtcNow;
+            foreach (var d in Directory.GetDirectories(targetDir, BackupPrefix + "*"))
+            {
+                try
+                {
+                    if (new DirectoryInfo(d).Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                    if (UpdateEngine.IsStale(Directory.GetCreationTimeUtc(d), now)) { SecureFiles.TryDelete(d); if (!Directory.Exists(d)) removed++; }
+                }
+                catch (Exception) { }
+            }
+        }
+        catch (Exception) { }
+        return removed;
+    }
+
+    /// <summary>
+    /// Waits (bounded) until <paramref name="path"/> can be opened for writing with no sharing, i.e. the old CordMic
+    /// has really let go of it. Returns false after <paramref name="timeout"/>.
+    /// </summary>
+    public static bool WaitUntilWritable(string path, TimeSpan timeout, TimeSpan? poll = null)
+    {
+        var step = poll ?? TimeSpan.FromMilliseconds(250);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                return true;
+            }
+            catch (FileNotFoundException) { return true; }
+            catch (Exception) when (sw.Elapsed < timeout) { Thread.Sleep(step); }
+            catch (Exception) { return false; }
+        }
     }
 
     private static void TryDeleteIfEmpty(string dir)

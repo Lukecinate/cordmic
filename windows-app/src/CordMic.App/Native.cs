@@ -20,6 +20,20 @@ internal static partial class Native
     [DllImport("kernel32.dll")]
     private static extern ushort GetUserDefaultUILanguage();
 
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForSystem();
+
+    private static int _systemDpi;
+
+    /// <summary>System DPI (the DPI GDI+ uses to turn font points into pixels in this process); 96 if unknown.</summary>
+    public static int SystemDpi()
+    {
+        if (_systemDpi > 0) return _systemDpi;
+        int d = 96;
+        try { d = (int)GetDpiForSystem(); } catch (Exception) { }
+        return _systemDpi = d > 0 ? d : 96;
+    }
+
     /// <summary>Windows display language as a culture-like tag ("id" for Indonesian), independent of
     /// globalization-invariant mode. Falls back to CultureInfo.CurrentUICulture.</summary>
     public static string OsUiLanguage()

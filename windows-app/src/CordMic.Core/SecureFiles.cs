@@ -51,6 +51,40 @@ public static class SecureFiles
         di.Create(sec);
     }
 
+    /// <summary>
+    /// 0.7.1 (audit M8): true when <paramref name="dir"/> is still a private staging folder: not a reparse point, and on
+    /// Windows an ACL that does not inherit and allows only the current user, SYSTEM and Administrators (as written by
+    /// <see cref="CreatePrivateDirectory"/>); elsewhere no group or other permission bits.
+    /// </summary>
+    public static bool IsPrivateDirectory(string dir)
+    {
+        try
+        {
+            var di = new DirectoryInfo(dir);
+            if (!di.Exists || di.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+            if (OperatingSystem.IsWindows()) return IsPrivateAcl(di);
+            const UnixFileMode others = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+            return (File.GetUnixFileMode(dir) & others) == 0;
+        }
+        catch (Exception) { return false; }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsPrivateAcl(DirectoryInfo di)
+    {
+        var sec = di.GetAccessControl();
+        if (!sec.AreAccessRulesProtected) return false;
+        var allowed = new HashSet<SecurityIdentifier> { new(WellKnownSidType.LocalSystemSid, null), new(WellKnownSidType.BuiltinAdministratorsSid, null) };
+        if (WindowsIdentity.GetCurrent().User is { } me) allowed.Add(me);
+        foreach (FileSystemAccessRule r in sec.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+        {
+            if (r.AccessControlType != AccessControlType.Allow) continue;
+            if (r.IdentityReference is not SecurityIdentifier sid || !allowed.Contains(sid)) return false;
+        }
+        return true;
+    }
+
     /// <summary>Writes <paramref name="source"/> to a new file (fails if the name exists) and flushes it.</summary>
     public static async Task WriteNewAsync(string path, Stream source, CancellationToken ct = default)
     {
