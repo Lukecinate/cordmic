@@ -6,7 +6,9 @@ namespace CordMic.Core;
 
 public sealed class AppSettings
 {
-    public int Version { get; set; } = 1;
+    /// <summary>Settings schema. 2 = 0.7.0 (automatic update downloads on by default, install on quit).</summary>
+    public const int CurrentSchema = 2;
+    public int Version { get; set; } = CurrentSchema;
     public int Port { get; set; } = Protocol.DefaultPort;
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public JitterPreset Jitter { get; set; } = JitterPreset.Normal;
@@ -36,8 +38,14 @@ public sealed class AppSettings
     public bool FrontFocus { get; set; } = true;
     /// <summary>Use the AudioRecord path so front focus can actually be applied (AAudio has no direction API).</summary>
     public bool FrontFocusAudioRecord { get; set; }
-    /// <summary>Check GitHub Releases on launch and about every six hours. Off by default; the user still confirms install.</summary>
-    public bool AutoUpdate { get; set; }
+    /// <summary>
+    /// Check GitHub Releases on launch and about every six hours, and download and verify a newer version in the
+    /// background. 0.7.0: on by default (older files are migrated, see <see cref="MigrateSchema"/>). It never installs
+    /// without the user: they click Update now, the notification, or quit with <see cref="InstallOnQuit"/> on.
+    /// </summary>
+    public bool AutoUpdate { get; set; } = true;
+    /// <summary>0.7.0: install a downloaded, verified update when the user exits CordMic from the tray. Off by default.</summary>
+    public bool InstallOnQuit { get; set; }
     /// <summary>UTC ticks of the last completed update check (0 = never). Used to honour the six-hour spacing.</summary>
     public long LastUpdateCheckUtcTicks { get; set; }
     /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +6 on new installs; a saved value is left unchanged.</summary>
@@ -112,6 +120,29 @@ public sealed class AppSettings
             catch (Exception) { break; }
         }
         return path;
+    }
+
+    /// <summary>
+    /// Upgrades a file written by an older CordMic. Nothing is dropped: every saved value is kept, only defaults that
+    /// changed are applied. Schema 1 → 2 (0.7.0): automatic update downloads are turned on, unless
+    /// <paramref name="autoUpdateTurnedOffSince061"/> reports that the user switched them off in 0.6.1 or later
+    /// (0.6.x saved the same <c>false</c> for "never touched" and "turned off", so only the log can tell).
+    /// Returns a note for the log, or null when the file was current.
+    /// </summary>
+    public string? MigrateSchema(Func<bool>? autoUpdateTurnedOffSince061 = null)
+    {
+        if (Version >= CurrentSchema) return null;
+        int from = Version;
+        string note;
+        if (!AutoUpdate && autoUpdateTurnedOffSince061?.Invoke() == true)
+            note = "automatic update downloads stay off (turned off in 0.6.1 or later)";
+        else
+        {
+            note = AutoUpdate ? "automatic update downloads stay on" : "automatic update downloads turned on (0.7.0 default)";
+            AutoUpdate = true;
+        }
+        Version = CurrentSchema;
+        return $"settings schema {from} -> {CurrentSchema}: {note}";
     }
 
     /// <summary>Reconcile the older <see cref="NoiseCancellation"/> bool with <see cref="NoiseMode"/>.</summary>

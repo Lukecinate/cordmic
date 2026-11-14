@@ -91,14 +91,36 @@ public static class AppUpdate
         string? SetupName,
         string? SetupUrl,
         string? SumsUrl,
-        IReadOnlyDictionary<string, string> AssetUrls);
+        IReadOnlyDictionary<string, string> AssetUrls)
+    {
+        /// <summary>0.7.0: portable zip (<c>CordMic-Portable-&lt;version&gt;.zip</c>), used by a portable copy to update itself.</summary>
+        public string? PortableName { get; init; }
+        public string? PortableUrl { get; init; }
+        /// <summary>Release page, shown when an update cannot be installed automatically.</summary>
+        public string? HtmlUrl { get; init; }
+        /// <summary>Asset sizes in bytes from the release metadata (progress fallback and size guard).</summary>
+        public IReadOnlyDictionary<string, long>? AssetSizes { get; init; }
+    }
+
+    /// <summary>Release page used as the fallback whenever an automatic update is not possible.</summary>
+    public const string ReleasesPageUrl = "https://github.com/Lukecinate/cordmic/releases/latest";
+
+    /// <summary>Installer asset name a release must carry for <paramref name="version"/>.</summary>
+    public static string SetupAssetName(string version) => $"CordMic-Setup-{Bare(version)}.exe";
+
+    /// <summary>Portable zip asset name a release must carry for <paramref name="version"/> (0.7.0+ portable updates).</summary>
+    public static string PortableAssetName(string version) => $"CordMic-Portable-{Bare(version)}.zip";
+
+    private static string Bare(string v) => SemVer.TryParse(v, out var s) ? s.ToString() : v.TrimStart('v', 'V');
 
     public static ReleaseInfo ParseLatestJson(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         string tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
+        string? html = root.TryGetProperty("html_url", out var h) && h.ValueKind == JsonValueKind.String ? h.GetString() : null;
         var urls = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
         {
             foreach (var a in assets.EnumerateArray())
@@ -106,7 +128,10 @@ public static class AppUpdate
                 var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
                 var url = a.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
                 if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(url))
+                {
                     urls[name] = url;
+                    if (a.TryGetProperty("size", out var sz) && sz.ValueKind == JsonValueKind.Number && sz.TryGetInt64(out var len)) sizes[name] = len;
+                }
             }
         }
         string? Name(Func<string, bool> pred) => urls.Keys.FirstOrDefault(pred);
@@ -116,7 +141,18 @@ public static class AppUpdate
                               && n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
         var sums = Name(n => n.Equals("SHA256SUMS", StringComparison.OrdinalIgnoreCase)
                              || n.StartsWith("SHA256SUMS", StringComparison.OrdinalIgnoreCase));
-        return new ReleaseInfo(tag, apk, Url(apk), setup, Url(setup), Url(sums), urls);
+        // Prefer the asset whose name carries the release version; fall back to any matching name.
+        var exactSetup = tag.Length > 0 ? SetupAssetName(tag) : null;
+        if (exactSetup != null && urls.ContainsKey(exactSetup)) setup = exactSetup;
+        var portable = tag.Length > 0 && urls.ContainsKey(PortableAssetName(tag))
+            ? PortableAssetName(tag)
+            : Name(n => n.StartsWith("CordMic-Portable-", StringComparison.OrdinalIgnoreCase) && n.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+        return new ReleaseInfo(tag, apk, Url(apk), setup, Url(setup), Url(sums), urls)
+        {
+            PortableName = portable, PortableUrl = Url(portable),
+            HtmlUrl = html != null && html.StartsWith("https://github.com/", StringComparison.Ordinal) ? html : ReleasesPageUrl,
+            AssetSizes = sizes,
+        };
     }
 
     /// <summary>
