@@ -819,8 +819,8 @@ public sealed class Receiver : IDisposable
 
     private void PingLoop()
     {
-        var probeEvery = TimeSpan.FromSeconds(1);
-        var lastProbe = DateTime.MinValue;
+        const long probeEveryMs = 1000;
+        long lastProbeMs = Environment.TickCount64 - probeEveryMs;
         var buf = new byte[256];
         EndPoint from = new IPEndPoint(IPAddress.Any, 0);
         long interval = (long)(_pingInterval * Stopwatch.Frequency);
@@ -882,9 +882,9 @@ public sealed class Receiver : IDisposable
                 }
                 else Send(_pingPkt, peer);
             }
-            else if (DateTime.UtcNow - lastProbe >= probeEvery)
+            else if (Environment.TickCount64 - lastProbeMs >= probeEveryMs)
             {
-                lastProbe = DateTime.UtcNow;
+                lastProbeMs = Environment.TickCount64;
                 foreach (var p in _probes) Send(Protocol.Encode(Protocol.THello, 0, NowUs()), p);
             }
         }

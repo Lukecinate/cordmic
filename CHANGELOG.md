@@ -20,6 +20,17 @@ existing tethering path until hardware gate G-M1 is decided.
   USB tethering until hardware gate G-M1 is decided; USB and MIDI routes stay behind a local
   experimental opt-in (default off). Unsigned catalogs are never installed.
 
+### Added
+- M2 USB transport seam: length-prefixed frames with CRC32C, resync after header or CRC
+  errors, a simulated pipe, and a fault-matrix, fuzz and short soak suite. The 30-minute fuzz
+  and 8-hour soak stay optional (`CORDMIC_FUZZ_MS`, `CORDMIC_SOAK_MS`) for nightly runs; default
+  CI covers the same fault classes in a shorter window.
+
+### Fixed
+- Discovery HELLO probes in the UDP receiver now use `Environment.TickCount64` for the 1 s
+  interval, so a wall-clock jump cannot fire a probe storm.
+
+
 
 ## [0.8.0-beta.1] - 2026-11-21
 
