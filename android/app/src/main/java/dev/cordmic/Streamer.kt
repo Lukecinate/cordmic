@@ -13,6 +13,7 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import dev.cordmic.usb.TransportSink
 
 /** Captures 5 ms frames and sends them over UDP to the PC on the USB-tethering link. */
 class Streamer(context: Context, private val cfg: Config) {
@@ -42,6 +43,8 @@ class Streamer(context: Context, private val cfg: Config) {
 
     @Volatile private var running = false
     @Volatile private var sock: DatagramSocket? = null
+    /** Accessory (or test) sink; when open, audio is framed and sent here instead of UDP. */
+    @Volatile var usbSink: TransportSink? = null
     @Volatile private var target: InetSocketAddress? = null
     @Volatile private var lastHeard = 0L
     /** Connection state shown by the app and the notification. */
@@ -132,6 +135,9 @@ class Streamer(context: Context, private val cfg: Config) {
             Protocol.writeHeader(b, Protocol.T_BYE, 0, 0, 0, 0)
             s.send(DatagramPacket(b, b.size, t))
         } catch (_: Exception) {}
+        try { usbSink?.sendBye() } catch (_: Exception) {}
+        try { usbSink?.close() } catch (_: Exception) {}
+        usbSink = null
         sock?.close(); sock = null
         ctlThread?.join(1000)
         state = State.STOPPED; targetAddress = null
@@ -328,27 +334,37 @@ class Streamer(context: Context, private val cfg: Config) {
             peak.accumulateAndGet(p) { a, b -> if (a > b) a else b }
             val now = SystemClock.elapsedRealtime()
             if (now - lastStats > 1000) { lastStats = now; engineStats = engine.stats() }
-            val s = sock ?: if (now - lastSockTry > 1000) { lastSockTry = now; ensureSocket() } else null
-            if (s == null) { state = State.WAITING_TETHER; targetAddress = null; continue }
+            val usb = usbSink
+            val usbUp = usb != null && usb.isOpen
+            val s = if (usbUp) null else (sock ?: if (now - lastSockTry > 1000) { lastSockTry = now; ensureSocket() } else null)
+            if (!usbUp && s == null) { state = State.WAITING_TETHER; targetAddress = null; continue }
             val auto = cfg.manualHost.isNullOrBlank()
             if (auto && target != null && now - lastHeard > 3000) { target = null; Log.i(TAG, "PC timeout, rediscover") }
             val t = target
-            if (t == null) {
+            if (!usbUp && t == null) {
                 state = State.SEARCHING; targetAddress = null
-                if (now - lastDiscover > 500) { lastDiscover = now; sendDiscover(s) }
+                if (now - lastDiscover > 500) { lastDiscover = now; sendDiscover(s!!) }
                 continue
             }
             flags = Protocol.flags(1, 0, noiseCancellation, agc = agc, aaudio = engine.name == "AAudio")
             Protocol.writeHeader(buf, Protocol.T_AUDIO, seq++, nowUs(), n, flags)
+            if (usbUp) {
+                val body = Protocol.HEADER_SIZE + n * 2
+                if (usb!!.send(buf, 0, body, now)) {
+                    state = State.STREAMING
+                }
+                continue
+            }
+            val udp = s ?: continue
             pkt.setData(buf, 0, Protocol.HEADER_SIZE + n * 2)
             pkt.socketAddress = t
             try {
-                s.send(pkt); sent++
+                udp.send(pkt); sent++
                 targetAddress = t; state = State.STREAMING
             } catch (e: Exception) { // cable unplugged / tethering off: rebuild socket
                 sendErrors++
                 Log.w(TAG, "send: $e")
-                s.close(); sock = null
+                udp.close(); sock = null
                 if (auto) target = null
             }
         }

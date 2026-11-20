@@ -126,4 +126,8 @@
     <string name="notif_streaming_text">Sending to %1$s</string>
     <string name="notif_mic_failed_text">Another app may be using the microphone.</string>
     <string name="state_mic_silenced_msg">Another app is using the microphone, so Android is sending silence. Close that app to resume.</string>
+
+    <string name="status_usb_streaming">Connected to the PC by USB</string>
+    <string name="status_usb_approve">Allow CordMic on this phone</string>
+    <string name="status_usb_lost">USB link lost, reconnecting</string>
 </resources>

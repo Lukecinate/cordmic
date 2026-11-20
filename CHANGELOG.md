@@ -30,6 +30,13 @@ existing tethering path until hardware gate G-M1 is decided.
 - Discovery HELLO probes in the UDP receiver now use `Environment.TickCount64` for the 1 s
   interval, so a wall-clock jump cannot fire a probe storm.
 
+### Added
+- M3 Android accessory endpoint: USB frame codec matching the PC engine, `AccessoryLink`
+  (bounded queue, 40 ms audio drop, 250 ms keepalive, BYE on stop), an accessory intent
+  filter, and status strings (EN/ID). Accessory is used when the system attaches it; Auto
+  on the PC still stays on tethering until G-M1. MIDI is not in the production app.
+
+
 
 
 ## [0.8.0-beta.1] - 2026-11-21

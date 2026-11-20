@@ -17,6 +17,8 @@ import android.os.PowerManager
 
 /** Foreground service (type=microphone) that keeps streaming with the screen off / app in background. */
 class MicService : Service() {
+    private var accessoryLink: dev.cordmic.usb.AccessoryLink? = null
+
     private var streamer: Streamer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -43,7 +45,10 @@ class MicService : Service() {
         if (intent?.action == ACTION_STOP) {
             shutdown("notification"); return START_NOT_STICKY
         }
-        if (streamer != null) return START_STICKY
+        if (streamer != null) {
+            maybeAttachAccessory(intent)
+            return START_STICKY
+        }
         createChannel()
         // Android 14 (API 34) requires the type; mic FGS must be started while the app is visible.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -78,6 +83,7 @@ class MicService : Service() {
             pairingCode = Pairing.normalize(intent?.getStringExtra(EXTRA_PAIR_CODE)),
         )
         streamer = Streamer(applicationContext, cfg).also { current = it; it.start() }
+        maybeAttachAccessory(intent)
         handler.post(ticker)
         // Not sticky: Android 14 forbids restarting a microphone FGS from the background.
         return START_NOT_STICKY
@@ -95,6 +101,8 @@ class MicService : Service() {
     private fun shutdown(reason: String) {
         android.util.Log.i("CordMic", "service stop: $reason")
         handler.removeCallbacks(ticker)
+        try { accessoryLink?.close() } catch (_: Exception) {}
+        accessoryLink = null
         streamer?.stop(reason); streamer = null; current = null
         wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -142,8 +150,34 @@ class MicService : Service() {
         return b.build()
     }
 
+
+    @Suppress("DEPRECATION")
+    private fun maybeAttachAccessory(intent: Intent?) {
+        val acc = intent?.getParcelableExtra<android.hardware.usb.UsbAccessory>(android.hardware.usb.UsbManager.EXTRA_ACCESSORY)
+            ?: return
+        if (accessoryLink?.isOpen == true) return
+        try {
+            val usb = getSystemService(android.hardware.usb.UsbManager::class.java) ?: return
+            if (!usb.hasPermission(acc)) return
+            val pfd = usb.openAccessory(acc) ?: return
+            val link = dev.cordmic.usb.AccessoryLink(
+                pfd.fileDescriptor.let { java.io.FileInputStream(it) },
+                java.io.FileOutputStream(pfd.fileDescriptor),
+                pfd,
+                onLinkLost = { r -> android.util.Log.i("CordMic", "accessory lost: $r") },
+            )
+            link.start()
+            accessoryLink = link
+            streamer?.usbSink = link
+            android.util.Log.i("CordMic", "accessory link opened")
+        } catch (e: Exception) {
+            android.util.Log.w("CordMic", "accessory open failed: $e")
+        }
+    }
+
     companion object {
         const val ACTION_STOP = "dev.cordmic.STOP"
+        const val ACTION_ACCESSORY = "dev.cordmic.ACCESSORY"
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_PRESET = "preset"
