@@ -36,6 +36,12 @@ existing tethering path until hardware gate G-M1 is decided.
   filter, and status strings (EN/ID). Accessory is used when the system attaches it; Auto
   on the PC still stays on tethering until G-M1. MIDI is not in the production app.
 
+### Added
+- M4 AOA handshake (requests 51–53 with timeouts) and WinUSB pipe policy defaults, tested
+  against a simulated control channel and device watcher. Real WinUSB I/O and the 30-minute
+  stream remain PENDING-HARDWARE (`docs/PENDING-HARDWARE-M4.md`).
+
+
 
 
 
