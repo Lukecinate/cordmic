@@ -65,6 +65,22 @@ public sealed class AppSettings
     /// <summary>0.8.0: learned jitter target and drift, at most 32 phones, LRU. Keys never contain raw identifiers.</summary>
     public List<PhoneLinkSeed> PhoneSeeds { get; set; } = new();
 
+    /// <summary>
+    /// G-M1 is not decided. When false (default), Auto stays on USB tethering even if
+    /// <see cref="UsbConnectionMode"/> is Auto. Local testers may set this, or create
+    /// %ProgramData%\CordMic\enable-experimental-usb.
+    /// </summary>
+    public bool EnableExperimentalUsbRoutes { get; set; }
+
+    /// <summary>Separate opt-in for route 1b (USB MIDI). Default false until G-M1 enables it.</summary>
+    public bool EnableExperimentalMidiRoute { get; set; }
+
+    /// <summary>Kill switch: no USB engine work beyond the 0.7.2 read-only probe.</summary>
+    public bool UsbEngineOff { get; set; }
+
+    /// <summary>auto (default), usb, or tether. See <see cref="Usb.UsbConnectionModeName"/>.</summary>
+    public string UsbConnectionMode { get; set; } = Usb.UsbConnectionModeName.Auto;
+
     private static readonly JsonSerializerOptions Opts = new() { WriteIndented = true };
 
     public static AppSettings Load(string path) => Load(path, out _);
@@ -111,6 +127,7 @@ public sealed class AppSettings
                 if (doc.RootElement.ValueKind == JsonValueKind.Object && !doc.RootElement.TryGetProperty(nameof(Version), out _)) s.Version = 1;
             s.NormalizeAudio();
             s.NormalizePhoneSeeds();
+            s.NormalizeUsb();
             if (!string.IsNullOrEmpty(s.PairingCode) && !Pairing.IsValidCode(s.PairingCode)) s.PairingCode = null;
             return true;
         }
@@ -186,6 +203,13 @@ public sealed class AppSettings
         PhoneSeeds = kept;
         if (PhoneSeedSalt is { Length: > 0 } && (PhoneSeedSalt.Length != 32 || PhoneSeedSalt.Any(c => !char.IsAsciiHexDigit(c))))
             PhoneSeedSalt = null;
+    }
+
+
+    /// <summary>Clamp USB mode names; leave experimental flags as stored (default false).</summary>
+    public void NormalizeUsb()
+    {
+        UsbConnectionMode = Usb.UsbConnectionModeName.Normalize(UsbConnectionMode);
     }
 
     public void ResetAudioDefaults()

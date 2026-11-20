@@ -14,6 +14,13 @@ existing tethering path until hardware gate G-M1 is decided.
   busy-waits to the 10 ms pull cadence and retries only when the test thread itself was late,
   so a loaded machine is not counted as a processor failure.
 
+### Added
+- M1 probe tools and a read-only USB catalog report (`cordmic-usbprobe`, `cordmic-midiprobe`),
+  an INF-only accessory binding for review, and `docs/PENDING-HARDWARE-M1.md`. Auto still uses
+  USB tethering until hardware gate G-M1 is decided; USB and MIDI routes stay behind a local
+  experimental opt-in (default off). Unsigned catalogs are never installed.
+
+
 ## [0.8.0-beta.1] - 2026-11-21
 
 Pre-release of the 0.8.0 M0 field fixes. This is not the latest stable release: 0.7.2 stays current

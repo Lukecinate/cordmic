@@ -1,0 +1,48 @@
+; CordMic accessory binding (INF-only, MIT).
+; Binds Microsoft's inbox winusb.sys to the Android Open Accessory device IDs only:
+;   USB\VID_18D1&PID_2D00
+;   USB\VID_18D1&PID_2D01&MI_00
+; This package does not replace MTP, RNDIS/NCM, or any other Windows driver, and it
+; contains no kernel code of ours.
+;
+; Install only through CordMic's elevated helper after the catalog signature is
+; trusted. Never use test-signing, a self-signed root, or turn off Secure Boot,
+; Memory Integrity, or driver signature enforcement.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = USBDevice
+ClassGuid   = {88BAE032-5A81-49F0-BC3D-A4FF138216D6}
+Provider    = %ProviderName%
+DriverVer   = 11/21/2026,0.8.0.0
+CatalogFile = cordmic-accessory.cat
+PnpLockdown = 1
+
+[Manufacturer]
+%ProviderName% = Devices,NTamd64,NTarm64
+
+[Devices.NTamd64]
+%DeviceName% = USB_Install, USB\VID_18D1&PID_2D00
+%DeviceName% = USB_Install, USB\VID_18D1&PID_2D01&MI_00
+
+[Devices.NTarm64]
+%DeviceName% = USB_Install, USB\VID_18D1&PID_2D00
+%DeviceName% = USB_Install, USB\VID_18D1&PID_2D01&MI_00
+
+[USB_Install]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[USB_Install.Services]
+Include = winusb.inf
+Needs   = WINUSB.NT.Services
+
+[USB_Install.HW]
+AddReg = DevInterface_AddReg
+
+[DevInterface_AddReg]
+HKR,,DeviceInterfaceGUIDs,0x00010000,"{A3C9C3B7-8D41-4E6E-9B2F-0C0D8C0C0D80}"
+
+[Strings]
+ProviderName = "CordMic contributors"
+DeviceName   = "CordMic Accessory"
