@@ -20,6 +20,7 @@ rm -rf publish
 dotnet publish src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained \
   -p:PublishSingleFile=true -p:SourceRevisionId=$REV -o publish
 VERSION_NUMERIC=${VERSION%%-*}
+mkdir -p ../dist
 (cd installer && makensis -V2 -DVERSION=$VERSION -DVERSION_NUMERIC=$VERSION_NUMERIC cordmic.nsi)
 # Portable zip: the same publish folder plus the portable marker, files at the zip root (the updater expects
 # CordMic.exe there and the asset name CordMic-Portable-<ver>.zip).

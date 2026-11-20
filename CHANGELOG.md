@@ -2,6 +2,18 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - unreleased
+
+Work after 0.8.0-beta.1. This is not a release. Wire version stays 1. USB Auto routes stay on the
+existing tethering path until hardware gate G-M1 is decided.
+
+### Fixed
+- `windows-app/build.sh` creates `dist/` before NSIS runs, so a clean tree no longer fails with
+  "Can't open output file".
+- The Studio processor delivery test keeps the same miss threshold (at most one miss in 3 s) but
+  busy-waits to the 10 ms pull cadence and retries only when the test thread itself was late,
+  so a loaded machine is not counted as a processor failure.
+
 ## [0.8.0-beta.1] - 2026-11-21
 
 Pre-release of the 0.8.0 M0 field fixes. This is not the latest stable release: 0.7.2 stays current

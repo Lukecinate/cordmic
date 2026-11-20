@@ -261,28 +261,74 @@ public class StudioTests
     public void StudioProcessorDeliversAudioWithoutMisses()
     {
         if (!Rn()) return;
+        // Keep the miss threshold tight (≤ 1). Retries only when this thread itself
+        // failed to pull on a 10 ms cadence (machine load), which is not a processor miss.
+        const int retries = 5;
+        for (int attempt = 1; attempt <= retries; attempt++)
+        {
+            var trial = RunStudioCadenceTrial();
+            _out.WriteLine($"attempt {attempt}: misses {trial.Misses}, latePulls {trial.LatePulls}, maxLate {trial.MaxLateMs:F2} ms, energy {trial.Energy:G4}, fell {trial.Fell}");
+            if (!trial.CadenceHeld)
+                continue;
+            Assert.False(trial.Fell);
+            Assert.True(trial.Energy > 0);
+            Assert.True(trial.Misses <= 1, $"processor misses {trial.Misses} while pulls stayed on cadence");
+            return;
+        }
+        Assert.Fail("test thread could not keep a 10 ms pull cadence after 5 attempts; no processor verdict");
+    }
+
+    private readonly record struct StudioCadenceTrial(long Misses, int LatePulls, double MaxLateMs, double Energy, bool Fell, bool CadenceHeld);
+
+    /// <summary>Busy-wait near each 10 ms deadline so Sleep overshoot is not counted as a processor miss.</summary>
+    private static void WaitUntilMs(Stopwatch sw, double targetMs)
+    {
+        while (true)
+        {
+            double left = targetMs - sw.Elapsed.TotalMilliseconds;
+            if (left <= 0) return;
+            if (left > 2) Thread.Sleep(1);
+            else Thread.SpinWait(80);
+        }
+    }
+
+    private StudioCadenceTrial RunStudioCadenceTrial()
+    {
         var v = Voice(Fs * 4, 0.05);
         int pos = 0;
         void Pull(Span<byte> dst)
         {
             for (int i = 0; i < dst.Length / 2; i++) { short s = (short)(v[pos++ % v.Length] * 32767); dst[2 * i] = (byte)s; dst[2 * i + 1] = (byte)(s >> 8); }
         }
-        using var sp = new StudioProcessor(new StudioChain(StudioPreset.Balanced, false), Pull, 10);
-        bool fell = false; sp.FellBack += _ => fell = true;
-        var buf = new byte[480 * 2];
-        Thread.Sleep(50);
-        double energy = 0;
-        var sw = Stopwatch.StartNew();
-        for (int k = 0; k < 300; k++)
+        var prev = Thread.CurrentThread.Priority;
+        try
         {
-            while (sw.Elapsed.TotalMilliseconds < k * 10) Thread.Sleep(1);
-            sp.Pull(buf);
-            for (int i = 0; i < 480; i++) { short s = (short)(buf[2 * i] | (buf[2 * i + 1] << 8)); energy += s * (double)s; }
+            try { Thread.CurrentThread.Priority = ThreadPriority.Highest; } catch (Exception) { }
+            using var sp = new StudioProcessor(new StudioChain(StudioPreset.Balanced, false), Pull, 10);
+            bool fell = false; sp.FellBack += _ => fell = true;
+            var buf = new byte[480 * 2];
+            Thread.Sleep(50);
+            double energy = 0;
+            int latePulls = 0;
+            double maxLate = 0;
+            var sw = Stopwatch.StartNew();
+            for (int k = 0; k < 300; k++)
+            {
+                WaitUntilMs(sw, k * 10);
+                double lateMs = sw.Elapsed.TotalMilliseconds - k * 10;
+                if (lateMs > maxLate) maxLate = lateMs;
+                if (lateMs > 2) latePulls++;
+                sp.Pull(buf);
+                for (int i = 0; i < 480; i++) { short sam = (short)(buf[2 * i] | (buf[2 * i + 1] << 8)); energy += sam * (double)sam; }
+            }
+            // Cadence held if almost every pull started within 2 ms of its deadline.
+            bool held = latePulls <= 2 && maxLate <= 8;
+            return new StudioCadenceTrial(sp.Misses, latePulls, maxLate, energy, fell, held);
         }
-        _out.WriteLine($"processor misses {sp.Misses}, cpu {sp.TakeCpu()}");
-        Assert.False(fell);
-        Assert.True(energy > 0);
-        Assert.True(sp.Misses <= 1);
+        finally
+        {
+            try { Thread.CurrentThread.Priority = prev; } catch (Exception) { }
+        }
     }
 
     [Fact]
