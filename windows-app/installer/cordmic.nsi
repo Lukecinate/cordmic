@@ -1,4 +1,4 @@
-; CordMic installer (NSIS 3, Unicode). Build:  makensis -V2 -DVERSION=x.y.z cordmic.nsi
+; CordMic installer (NSIS 3, Unicode). Build:  makensis -V2 -DVERSION=x.y.z [-DVERSION_NUMERIC=x.y.z] cordmic.nsi
 ; Input: ../publish (dotnet publish win-x64 single-file) and tools/*.ps1
 
 Unicode true
@@ -8,6 +8,10 @@ SetCompressorDictSize 64
 !define APPNAME   "CordMic"
 !ifndef VERSION
   !define VERSION "0.5.5"
+!endif
+; VIProductVersion must be four numeric parts. Pre-release labels (0.8.0-beta.1) stay in VERSION / DisplayVersion.
+!ifndef VERSION_NUMERIC
+  !define VERSION_NUMERIC "0.5.5"
 !endif
 !define PUBLISHER "CordMic contributors"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CordMic"
@@ -26,7 +30,7 @@ BrandingText "CordMic ${VERSION}"
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${VERSION_NUMERIC}.0"
 VIAddVersionKey /LANG=0 "ProductName" "CordMic"
 VIAddVersionKey /LANG=0 "FileDescription" "CordMic Setup"
 VIAddVersionKey /LANG=0 "FileVersion" "${VERSION}"

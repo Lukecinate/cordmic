@@ -40,7 +40,7 @@ object UpdateInstaller {
     fun fetchOffer(currentVersion: String): Result<Offer?> = runCatching {
         val json = httpGet(AppUpdate.LATEST_API) ?: error("update check failed")
         val info = AppUpdate.parseLatestJson(json)
-        if (!AppUpdate.isNewer(info.tag, currentVersion)) return@runCatching null
+        if (!AppUpdate.shouldOffer(info, currentVersion)) return@runCatching null
         if (AppUpdate.isDowngrade(info.tag, currentVersion)) error("refusing to downgrade to ${info.tag}")
         val apkUrl = info.apkUrl ?: error("release has no APK")
         val apkName = info.apkName ?: error("release has no APK name")

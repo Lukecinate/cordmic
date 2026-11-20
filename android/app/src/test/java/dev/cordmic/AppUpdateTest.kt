@@ -42,3 +42,36 @@ class AppUpdateTest {
         assertEquals("https://example.test/sums", info.sumsUrl)
     }
 }
+
+    @Test fun preReleaseOrdering() {
+        assertTrue(AppUpdate.isNewer("0.8.0-beta.1", "0.7.2"))
+        assertTrue(AppUpdate.isNewer("0.8.0", "0.8.0-beta.1"))
+        assertFalse(AppUpdate.isNewer("0.8.0-beta.1", "0.8.0"))
+        assertTrue(AppUpdate.isNewer("0.8.0-beta.2", "0.8.0-beta.1"))
+        assertFalse(AppUpdate.isNewer("v0.8.0-beta.1+abc", "0.8.0-beta.1"))
+        assertFalse(AppUpdate.isNewer("1.0.0-beta.2", "1.0.0-beta.11"))
+        assertFalse(AppUpdate.isNewer("1.0.0-rc.1", "1.0.0"))
+        val v = AppUpdate.SemVer.parse("v0.8.0-beta.1")!!
+        assertTrue(v.isPrerelease)
+        assertEquals("0.8.0-beta.1", v.toString())
+    }
+
+    @Test fun shouldOffer_ignoresPrereleases() {
+        val beta = AppUpdate.parseLatestJson(
+            """{"tag_name":"v0.8.0-beta.1","prerelease":true,"draft":false,"assets":[]}"""
+        )
+        assertTrue(beta.prerelease)
+        assertFalse(AppUpdate.shouldOffer(beta, "0.7.2"))
+        assertFalse(AppUpdate.shouldOffer(beta, "0.8.0-beta.1"))
+        val byTag = AppUpdate.parseLatestJson("""{"tag_name":"v0.8.0-beta.1","assets":[]}""")
+        assertFalse(byTag.prerelease)
+        assertFalse(AppUpdate.shouldOffer(byTag, "0.7.2"))
+        val draft = AppUpdate.parseLatestJson("""{"tag_name":"v0.8.0","draft":true,"assets":[]}""")
+        assertTrue(draft.draft)
+        assertFalse(AppUpdate.shouldOffer(draft, "0.7.2"))
+        val stable = AppUpdate.parseLatestJson("""{"tag_name":"v0.8.0","prerelease":false,"assets":[]}""")
+        assertTrue(AppUpdate.shouldOffer(stable, "0.7.2"))
+        assertTrue(AppUpdate.shouldOffer(stable, "0.8.0-beta.1"))
+        assertFalse(AppUpdate.shouldOffer(stable, "0.8.0"))
+    }
+}

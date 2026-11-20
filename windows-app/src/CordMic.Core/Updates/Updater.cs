@@ -142,7 +142,7 @@ public sealed class UpdateEngine
     public async Task<StagedUpdate> DownloadAsync(AppUpdate.ReleaseInfo info, InstallKind kind, IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
     {
         if (AppUpdate.IsDowngrade(info.Tag, CurrentVersion)) throw new UpdateException(UpdateError.Downgrade, "refusing to downgrade to " + info.Tag);
-        if (!AppUpdate.IsNewer(info.Tag, CurrentVersion)) throw new UpdateException(UpdateError.Downgrade, "already up to date (" + CurrentVersion + ")");
+        if (!AppUpdate.ShouldOffer(info, CurrentVersion)) throw new UpdateException(UpdateError.Downgrade, "already up to date (" + CurrentVersion + ")");
         var (name, url) = AssetFor(info, kind);
         if (string.IsNullOrEmpty(info.SumsUrl)) throw new UpdateException(UpdateError.NoAsset, "release has no SHA256SUMS");
         long? listed = info.AssetSizes is { } sz && sz.TryGetValue(name, out var l) ? l : null;
@@ -528,7 +528,7 @@ public sealed class UpdateCoordinator : IDisposable
             var info = await _engine.FetchLatestAsync(ct).ConfigureAwait(false);
             lock (_gate) { _lastCheckUtc = DateTime.UtcNow; _lastPage = info.HtmlUrl ?? AppUpdate.ReleasesPageUrl; }
             tag = info.Tag;
-            if (!AppUpdate.IsNewer(info.Tag, _engine.CurrentVersion))
+            if (!AppUpdate.ShouldOffer(info, _engine.CurrentVersion))
             {
                 DropStaged();
                 Set(new UpdateState(UpdatePhase.UpToDate, info.Tag, ReleasePage: Page));

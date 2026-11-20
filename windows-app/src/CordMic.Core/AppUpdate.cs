@@ -15,23 +15,38 @@ public static class AppUpdate
     public const string UserAgent = "CordMic-Updater";
     public static readonly TimeSpan MinCheckInterval = TimeSpan.FromHours(6);
 
-    public readonly record struct SemVer(int Major, int Minor, int Patch) : IComparable<SemVer>
+    public readonly record struct SemVer(int Major, int Minor, int Patch, string Pre = "") : IComparable<SemVer>
     {
+        public bool IsPrerelease => Pre.Length > 0;
+
         public static bool TryParse(string? raw, out SemVer v)
         {
             v = default;
             if (string.IsNullOrWhiteSpace(raw)) return false;
             var s = raw.Trim();
             if (s.StartsWith("v", StringComparison.OrdinalIgnoreCase)) s = s[1..];
-            int cut = 0;
-            while (cut < s.Length && (char.IsDigit(s[cut]) || s[cut] == '.')) cut++;
-            s = cut > 0 ? s[..cut] : "";
+            int plus = s.IndexOf('+');
+            if (plus >= 0) s = s[..plus]; // SemVer build metadata is ignored
+            string pre = "";
+            int dash = s.IndexOf('-');
+            if (dash >= 0)
+            {
+                pre = s[(dash + 1)..];
+                s = s[..dash];
+                if (pre.Length == 0) return false;
+                foreach (var id in pre.Split('.'))
+                {
+                    if (id.Length == 0) return false;
+                    foreach (char ch in id)
+                        if (!(char.IsAsciiLetterOrDigit(ch) || ch == '-')) return false;
+                }
+            }
             var p = s.Split('.', StringSplitOptions.RemoveEmptyEntries);
             if (p.Length < 2) return false;
             if (!int.TryParse(p[0], out int a) || !int.TryParse(p[1], out int b)) return false;
             int c = 0;
             if (p.Length >= 3 && !int.TryParse(p[2], out c)) return false;
-            v = new SemVer(a, b, c);
+            v = new SemVer(a, b, c, pre);
             return true;
         }
 
@@ -40,10 +55,50 @@ public static class AppUpdate
             int d = Major.CompareTo(other.Major);
             if (d != 0) return d;
             d = Minor.CompareTo(other.Minor);
-            return d != 0 ? d : Patch.CompareTo(other.Patch);
+            if (d != 0) return d;
+            d = Patch.CompareTo(other.Patch);
+            if (d != 0) return d;
+            if (!IsPrerelease && !other.IsPrerelease) return 0;
+            if (!IsPrerelease) return 1;  // 1.0.0 > 1.0.0-beta
+            if (!other.IsPrerelease) return -1;
+            return ComparePre(Pre, other.Pre);
         }
 
-        public override string ToString() => $"{Major}.{Minor}.{Patch}";
+        /// <summary>Numeric identifiers compare numerically; a numeric id is less than a non-numeric one; a longer list wins if the common prefix matches.</summary>
+        static int ComparePre(string a, string b)
+        {
+            var aa = a.Split('.');
+            var bb = b.Split('.');
+            int n = Math.Min(aa.Length, bb.Length);
+            for (int i = 0; i < n; i++)
+            {
+                bool an = IsNumericId(aa[i]), bn = IsNumericId(bb[i]);
+                if (an && bn)
+                {
+                    int c = long.Parse(aa[i], System.Globalization.CultureInfo.InvariantCulture)
+                        .CompareTo(long.Parse(bb[i], System.Globalization.CultureInfo.InvariantCulture));
+                    if (c != 0) return c;
+                }
+                else if (an) return -1;
+                else if (bn) return 1;
+                else
+                {
+                    int c = string.CompareOrdinal(aa[i], bb[i]);
+                    if (c != 0) return c;
+                }
+            }
+            return aa.Length.CompareTo(bb.Length);
+        }
+
+        static bool IsNumericId(string id)
+        {
+            if (id.Length == 0) return false;
+            foreach (char c in id) if (!char.IsAsciiDigit(c)) return false;
+            return true;
+        }
+
+        public override string ToString() =>
+            string.IsNullOrEmpty(Pre) ? $"{Major}.{Minor}.{Patch}" : $"{Major}.{Minor}.{Patch}-{Pre}";
     }
 
     public static int CompareVersions(string a, string b) =>
@@ -52,6 +107,29 @@ public static class AppUpdate
     public static bool IsNewer(string candidate, string current) => CompareVersions(candidate, current) > 0;
 
     public static bool IsDowngrade(string candidate, string current) => CompareVersions(candidate, current) < 0;
+
+    /// <summary>True when the tag or <c>prerelease</c> flag marks a GitHub pre-release (auto-update must ignore it).</summary>
+    public static bool IsPrereleaseRelease(string? tag, bool prereleaseFlag = false) =>
+        prereleaseFlag || (SemVer.TryParse(tag, out var v) && v.IsPrerelease);
+
+    /// <summary>
+    /// Whether the auto-updater may offer this release. GitHub <c>/releases/latest</c> already omits pre-releases;
+    /// this is the in-app guard if a pre-release JSON is ever supplied, and it keeps a stable install from jumping
+    /// to a pre-release tag such as 0.8.0-beta.1 (which must not be treated as 0.8.0).
+    /// </summary>
+    public static bool ShouldOffer(ReleaseInfo info, string currentVersion)
+    {
+        if (info.Draft || IsPrereleaseRelease(info.Tag, info.Prerelease)) return false;
+        return IsNewer(info.Tag, currentVersion);
+    }
+
+    /// <summary>Label for the running app: informational version (including -beta.N, without +build) when present.</summary>
+    public static string DisplayVersion(string? informational, Version? assembly)
+    {
+        if (SemVer.TryParse(informational, out var v)) return v.ToString();
+        if (assembly is not null) return $"{assembly.Major}.{assembly.Minor}.{assembly.Build}";
+        return "";
+    }
 
     public static Dictionary<string, string> ParseSha256Sums(string text)
     {
@@ -100,6 +178,10 @@ public static class AppUpdate
         public string? HtmlUrl { get; init; }
         /// <summary>Asset sizes in bytes from the release metadata (progress fallback and size guard).</summary>
         public IReadOnlyDictionary<string, long>? AssetSizes { get; init; }
+        /// <summary>GitHub <c>prerelease</c> flag. Auto-update must not offer these.</summary>
+        public bool Prerelease { get; init; }
+        /// <summary>GitHub <c>draft</c> flag. Auto-update must not offer these.</summary>
+        public bool Draft { get; init; }
     }
 
     /// <summary>Release page used as the fallback whenever an automatic update is not possible.</summary>
@@ -119,6 +201,8 @@ public static class AppUpdate
         var root = doc.RootElement;
         string tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
         string? html = root.TryGetProperty("html_url", out var h) && h.ValueKind == JsonValueKind.String ? h.GetString() : null;
+        bool prerelease = root.TryGetProperty("prerelease", out var preEl) && preEl.ValueKind == JsonValueKind.True;
+        bool draft = root.TryGetProperty("draft", out var draftEl) && draftEl.ValueKind == JsonValueKind.True;
         var urls = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
@@ -152,6 +236,8 @@ public static class AppUpdate
             PortableName = portable, PortableUrl = Url(portable),
             HtmlUrl = html != null && html.StartsWith("https://github.com/", StringComparison.Ordinal) ? html : ReleasesPageUrl,
             AssetSizes = sizes,
+            Prerelease = prerelease,
+            Draft = draft,
         };
     }
 

@@ -68,4 +68,79 @@ public class AppUpdateTests
         Assert.Equal("https://example.test/sums", info.SumsUrl);
         Assert.Equal("CordMic-Setup-0.5.5.exe", info.SetupName);
     }
+
+
+    [Theory]
+    [InlineData("0.8.0-beta.1", "0.7.2", true)]
+    [InlineData("0.8.0", "0.8.0-beta.1", true)]
+    [InlineData("0.8.0-beta.1", "0.8.0", false)]
+    [InlineData("0.8.0-beta.2", "0.8.0-beta.1", true)]
+    [InlineData("0.8.0-beta.1", "0.8.0-beta.1", false)]
+    [InlineData("v0.8.0-beta.1+abc", "0.8.0-beta.1", false)]
+    [InlineData("1.0.0-alpha", "1.0.0-alpha.1", false)]
+    [InlineData("1.0.0-alpha.1", "1.0.0-alpha", true)]
+    [InlineData("1.0.0-alpha.beta", "1.0.0-beta", false)]
+    [InlineData("1.0.0-beta.2", "1.0.0-beta.11", false)]
+    [InlineData("1.0.0-rc.1", "1.0.0", false)]
+    public void SemVer_PreReleaseOrdering(string cand, string cur, bool newer)
+    {
+        Assert.Equal(newer, AppUpdate.IsNewer(cand, cur));
+        Assert.True(AppUpdate.SemVer.TryParse(cand, out _));
+        Assert.True(AppUpdate.SemVer.TryParse(cur, out _));
+    }
+
+    [Fact]
+    public void SemVer_DoesNotTreatBetaAsTheStableVersion()
+    {
+        Assert.True(AppUpdate.SemVer.TryParse("v0.8.0-beta.1", out var v));
+        Assert.True(v.IsPrerelease);
+        Assert.Equal("0.8.0-beta.1", v.ToString());
+        Assert.Equal(0, v.Major);
+        Assert.Equal(8, v.Minor);
+        Assert.Equal(0, v.Patch);
+        Assert.True(AppUpdate.IsNewer("0.8.0", "0.8.0-beta.1"));
+        Assert.False(AppUpdate.IsNewer("0.8.0-beta.1", "0.8.0"));
+        Assert.Equal("CordMic-Setup-0.8.0-beta.1.exe", AppUpdate.SetupAssetName("v0.8.0-beta.1"));
+        Assert.Equal("CordMic-Portable-0.8.0-beta.1.zip", AppUpdate.PortableAssetName("0.8.0-beta.1"));
+        Assert.Equal("CordMic-Setup-0.7.2.exe", AppUpdate.SetupAssetName("v0.7.2"));
+    }
+
+    [Fact]
+    public void ShouldOffer_IgnoresPrereleasesAndDraftsSoStableUsersStayOnLatest()
+    {
+        const string beta = """
+            {
+              "tag_name": "v0.8.0-beta.1",
+              "prerelease": true,
+              "draft": false,
+              "assets": [
+                {"name": "CordMic-Setup-0.8.0-beta.1.exe", "browser_download_url": "https://example.test/setup"}
+              ]
+            }
+            """;
+        var info = AppUpdate.ParseLatestJson(beta);
+        Assert.True(info.Prerelease);
+        Assert.False(info.Draft);
+        Assert.False(AppUpdate.ShouldOffer(info, "0.7.2"));
+        Assert.False(AppUpdate.ShouldOffer(info, "0.8.0-beta.1"));
+        var byTag = AppUpdate.ParseLatestJson("""{"tag_name":"v0.8.0-beta.1","assets":[]}""");
+        Assert.False(byTag.Prerelease);
+        Assert.False(AppUpdate.ShouldOffer(byTag, "0.7.2"));
+        var draft = AppUpdate.ParseLatestJson("""{"tag_name":"v0.8.0","draft":true,"assets":[]}""");
+        Assert.True(draft.Draft);
+        Assert.False(AppUpdate.ShouldOffer(draft, "0.7.2"));
+        var stable = AppUpdate.ParseLatestJson("""{"tag_name":"v0.8.0","prerelease":false,"assets":[]}""");
+        Assert.True(AppUpdate.ShouldOffer(stable, "0.7.2"));
+        Assert.True(AppUpdate.ShouldOffer(stable, "0.8.0-beta.1"));
+        Assert.False(AppUpdate.ShouldOffer(stable, "0.8.0"));
+        Assert.False(AppUpdate.ShouldOffer(stable, "0.8.1"));
+    }
+
+    [Fact]
+    public void DisplayVersion_KeepsPreReleaseLabelAndDropsBuildMetadata()
+    {
+        Assert.Equal("0.8.0-beta.1", AppUpdate.DisplayVersion("0.8.0-beta.1+abc123", new Version(0, 8, 0, 0)));
+        Assert.Equal("0.7.2", AppUpdate.DisplayVersion("0.7.2", new Version(0, 7, 2, 0)));
+        Assert.Equal("0.7.2", AppUpdate.DisplayVersion(null, new Version(0, 7, 2, 0)));
+    }
 }

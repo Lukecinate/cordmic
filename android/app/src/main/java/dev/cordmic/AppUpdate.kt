@@ -11,25 +11,60 @@ object AppUpdate {
     const val USER_AGENT = "CordMic-Updater"
     const val MIN_CHECK_MS = 6L * 60 * 60 * 1000
 
-    data class SemVer(val major: Int, val minor: Int, val patch: Int) : Comparable<SemVer> {
+    data class SemVer(val major: Int, val minor: Int, val patch: Int, val pre: String = "") : Comparable<SemVer> {
+        val isPrerelease: Boolean get() = pre.isNotEmpty()
         override fun compareTo(other: SemVer): Int {
             val a = major.compareTo(other.major); if (a != 0) return a
-            val b = minor.compareTo(other.minor); return if (b != 0) b else patch.compareTo(other.patch)
+            val b = minor.compareTo(other.minor); if (b != 0) return b
+            val c = patch.compareTo(other.patch); if (c != 0) return c
+            if (!isPrerelease && !other.isPrerelease) return 0
+            if (!isPrerelease) return 1
+            if (!other.isPrerelease) return -1
+            return comparePre(pre, other.pre)
         }
-        override fun toString() = "$major.$minor.$patch"
+        override fun toString() = if (pre.isEmpty()) "$major.$minor.$patch" else "$major.$minor.$patch-$pre"
 
         companion object {
             fun parse(raw: String?): SemVer? {
                 if (raw.isNullOrBlank()) return null
                 var s = raw.trim()
                 if (s.startsWith("v") || s.startsWith("V")) s = s.substring(1)
-                val cut = s.indexOfFirst { !it.isDigit() && it != '.' }.let { if (it < 0) s.length else it }
-                val parts = s.substring(0, cut).split('.').filter { it.isNotEmpty() }
+                val plus = s.indexOf('+')
+                if (plus >= 0) s = s.substring(0, plus)
+                var pre = ""
+                val dash = s.indexOf('-')
+                if (dash >= 0) {
+                    pre = s.substring(dash + 1)
+                    s = s.substring(0, dash)
+                    if (pre.isEmpty()) return null
+                    for (id in pre.split('.')) {
+                        if (id.isEmpty() || id.any { it !in '0'..'9' && it !in 'a'..'z' && it !in 'A'..'Z' && it != '-' }) return null
+                    }
+                }
+                val parts = s.split('.').filter { it.isNotEmpty() }
                 if (parts.size < 2) return null
                 val a = parts[0].toIntOrNull() ?: return null
                 val b = parts[1].toIntOrNull() ?: return null
                 val c = if (parts.size >= 3) parts[2].toIntOrNull() ?: 0 else 0
-                return SemVer(a, b, c)
+                return SemVer(a, b, c, pre)
+            }
+
+            private fun comparePre(a: String, b: String): Int {
+                val aa = a.split('.')
+                val bb = b.split('.')
+                val n = minOf(aa.size, bb.size)
+                for (i in 0 until n) {
+                    val an = aa[i].all { it.isDigit() } && aa[i].isNotEmpty()
+                    val bn = bb[i].all { it.isDigit() } && bb[i].isNotEmpty()
+                    val c = when {
+                        an && bn -> aa[i].toLong().compareTo(bb[i].toLong())
+                        an -> -1
+                        bn -> 1
+                        else -> aa[i].compareTo(bb[i])
+                    }
+                    if (c != 0) return c
+                }
+                return aa.size.compareTo(bb.size)
             }
         }
     }
@@ -42,6 +77,15 @@ object AppUpdate {
 
     fun isNewer(candidate: String, current: String) = compareVersions(candidate, current) > 0
     fun isDowngrade(candidate: String, current: String) = compareVersions(candidate, current) < 0
+
+    fun isPrereleaseRelease(tag: String?, prereleaseFlag: Boolean = false): Boolean =
+        prereleaseFlag || (SemVer.parse(tag)?.isPrerelease == true)
+
+    /** Auto-update may offer this release. Pre-releases and drafts are ignored. */
+    fun shouldOffer(info: ReleaseInfo, currentVersion: String): Boolean {
+        if (info.draft || isPrereleaseRelease(info.tag, info.prerelease)) return false
+        return isNewer(info.tag, currentVersion)
+    }
 
     fun parseSha256Sums(text: String): Map<String, String> {
         val d = LinkedHashMap<String, String>()
@@ -76,10 +120,14 @@ object AppUpdate {
         val setupUrl: String?,
         val sumsUrl: String?,
         val assetUrls: Map<String, String>,
+        val prerelease: Boolean = false,
+        val draft: Boolean = false,
     )
 
     fun parseLatestJson(json: String): ReleaseInfo {
         val tag = jsonString(json, "tag_name") ?: ""
+        val prerelease = jsonBool(json, "prerelease")
+        val draft = jsonBool(json, "draft")
         val urls = LinkedHashMap<String, String>()
         val start = json.indexOf("\"assets\"")
         val slice = if (start >= 0) json.substring(start) else json

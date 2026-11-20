@@ -104,8 +104,11 @@ internal sealed class AppController : ApplicationContext
     {
         get
         {
-            var v = typeof(AppController).Assembly.GetName().Version;
-            return v is null ? "0.5.5" : $"{v.Major}.{v.Minor}.{v.Build}";
+            var asm = typeof(AppController).Assembly;
+            var info = asm.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
+            var label = AppUpdate.DisplayVersion(info, asm.GetName().Version);
+            return string.IsNullOrEmpty(label) ? "0.5.5" : label;
         }
     }
     public int DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
