@@ -41,6 +41,21 @@ existing tethering path until hardware gate G-M1 is decided.
   against a simulated control channel and device watcher. Real WinUSB I/O and the 30-minute
   stream remain PENDING-HARDWARE (`docs/PENDING-HARDWARE-M4.md`).
 
+### Added
+- M5 route controller for Auto safety: a ready tethering path is left alone, USB is attempted
+  at most once per plug-in, a failure after START asks for a replug then falls back, and a
+  phone is skipped after three failed sessions (cleared by Try USB again). Automatic still
+  uses USB tethering until hardware gate G-M1 is decided; USB stays behind a local experimental
+  opt-in (Settings, or `%ProgramData%\CordMic\enable-experimental-usb`). The kill switch is
+  in Settings, `--no-usb-engine`, and `%ProgramData%\CordMic\disable-usb-engine`.
+- Settings → Connection: USB mode (Automatic stays on tethering; USB is labelled experimental),
+  Turn off the USB engine, Try USB again, Set up USB connection, and Copy sanitized diagnostics
+  (IP addresses and Windows user names removed; voice recordings are never included).
+- Audio quality gates are config-driven and marked provisional until the widened bench and at
+  least three recordings of five minutes or more are collected. The aligned latency budget is
+  median ≤ tethering + 2 ms and p95 ≤ tethering + 10 ms; “replug needed” is a beta-exit failure
+  (target 0 in 30 armed sessions; more than 1 blocks the gate).
+
 
 
 

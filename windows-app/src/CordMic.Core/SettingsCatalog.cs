@@ -35,6 +35,13 @@ public static class SettingsCatalog
         {
             new("phone", SettingKind.Status, "set.phone", "set.phone.help"),
             new("phoneData", SettingKind.Status, "set.phoneData", "set.phoneData.help"),
+            new("usbStatus", SettingKind.Status, "set.usbStatus", "set.usbMode.help"),
+            new("usbMode", SettingKind.Choice, "set.usbMode", "set.usbMode.help",
+                new[] { "set.usbMode.auto", "set.usbMode.usb", "set.usbMode.tether" }),
+            new("usbEngineOff", SettingKind.Toggle, "set.usbEngineOff", "set.usbEngineOff.help"),
+            new("usbRetry", SettingKind.Button, "set.usbRetry", "set.usbRetry.help"),
+            new("usbSetup", SettingKind.Button, "set.usbSetup", "set.usbSetup.help"),
+            new("copyDiagnostics", SettingKind.Button, "set.copyDiagnostics", "set.copyDiagnostics.help"),
             new("fixRoute", SettingKind.Button, "set.fixRoute", "set.fixRoute.help"),
             new("pairing", SettingKind.Toggle, "set.pairing", "set.pairing.help"),
             new("startup", SettingKind.Toggle, "set.startup", "set.startup.help"),

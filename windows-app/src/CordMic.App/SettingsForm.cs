@@ -516,6 +516,25 @@ internal static class RowFactory
                     ShowWhen = () => app.CableFound || app.CableNeedsOptimize || app.OptimizeRunning,
                     Caption = () => app.OptimizeRunning ? L.T("ui.cable.optimizeCancel") : L.T("ui.cable.optimize"),
                 };
+            case "usbStatus":
+                return new StatusRow(f, T(item.LabelKey), H(item), () => app.UsbStatusText, () => L.T("set.usbMode.help"));
+            case "usbMode":
+                return new ChoiceRow(f, T(item.LabelKey), H(item),
+                    () => new List<(object, string)>
+                    {
+                        (CordMic.Core.Usb.UsbConnectionModeName.Auto, L.T("set.usbMode.auto")),
+                        (CordMic.Core.Usb.UsbConnectionModeName.UsbOnly, L.T("set.usbMode.usb")),
+                        (CordMic.Core.Usb.UsbConnectionModeName.TetherOnly, L.T("set.usbMode.tether")),
+                    },
+                    () => app.UsbConnectionMode, k => app.SetUsbConnectionMode((string)k));
+            case "usbEngineOff":
+                return new ToggleRow(f, T(item.LabelKey), H(item), () => app.UsbEngineOff, v => app.SetUsbEngineOff(v));
+            case "usbRetry":
+                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.TryUsbAgain(); return Task.CompletedTask; }, () => null);
+            case "usbSetup":
+                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.UsbSetup(); return Task.CompletedTask; }, () => null);
+            case "copyDiagnostics":
+                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.CopySanitizedDiagnostics(); return Task.CompletedTask; }, () => null);
             case "fixRoute":
                 return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.FixRoute(); return Task.CompletedTask; }, () => null)
                 { CanClick = () => app.HasTetherAdapter, DisabledHint = () => L.T("menu.fixRoute.off") };

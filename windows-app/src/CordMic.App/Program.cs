@@ -26,6 +26,8 @@ internal static class Program
         // 0.7.0: portable self-update helper (runs from the unpacked new version, before the single-instance mutex).
         if (CordMic.Core.Updates.PortableUpdateArgs.Mentions(args)) return PortableUpdateHelper.Run(args);
 
+        if (args.Any(a => a.Equals("--no-usb-engine", StringComparison.OrdinalIgnoreCase)))
+            AppController.CliNoUsbEngine = true;
         bool tray = args.Any(a => a.Equals("--tray", StringComparison.OrdinalIgnoreCase));
         bool selfTest = args.Any(a => a.Equals(UiSelfTest.Arg, StringComparison.OrdinalIgnoreCase));
         using var mutex = new Mutex(true, MutexName, out bool first);

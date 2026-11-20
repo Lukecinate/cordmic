@@ -864,6 +864,78 @@ internal sealed class AppController : ApplicationContext
         catch (Exception ex) { Log("open log failed: " + ex.Message); }
     }
 
+    public static bool CliNoUsbEngine { get; set; }
+
+    public string UsbConnectionMode => CordMic.Core.Usb.UsbConnectionModeName.Normalize(_settings.UsbConnectionMode);
+    public bool UsbEngineOff => _settings.UsbEngineOff || CliNoUsbEngine || File.Exists(ProgramDataFile(CordMic.Core.Usb.UsbEngineGate.DisableFileName));
+    public bool ExperimentalUsb =>
+        CordMic.Core.Usb.UsbEngineGate.UsbRoutesAllowed(_settings, CliNoUsbEngine,
+            File.Exists(ProgramDataFile(CordMic.Core.Usb.UsbEngineGate.DisableFileName)),
+            File.Exists(ProgramDataFile(CordMic.Core.Usb.UsbEngineGate.ExperimentalFileName)));
+
+    public string UsbStatusText
+    {
+        get
+        {
+            if (UsbEngineOff) return L.T("set.usbEngineOff");
+            if (!ExperimentalUsb) return L.T("status.usb.experimental");
+            return L.T("set.usbMode.auto");
+        }
+    }
+
+    public void SetUsbConnectionMode(string mode)
+    {
+        _settings.UsbConnectionMode = CordMic.Core.Usb.UsbConnectionModeName.Normalize(mode);
+        if (CordMic.Core.Usb.UsbConnectionModeName.IsUsbOnly(_settings.UsbConnectionMode))
+            _settings.EnableExperimentalUsbRoutes = true;
+        Save();
+        Log("usb mode -> " + _settings.UsbConnectionMode);
+    }
+
+    public void SetUsbEngineOff(bool on)
+    {
+        _settings.UsbEngineOff = on;
+        Save();
+        Log("usb engine off -> " + on);
+    }
+
+    public void TryUsbAgain()
+    {
+        _settings.EnableExperimentalUsbRoutes = true;
+        Save();
+        Log("usb: try again (blocklist cleared locally when the route controller is wired)");
+    }
+
+    public void UsbSetup()
+    {
+        // M7 will run the elevated verb only after a trusted catalog exists.
+        MessageBox.Show(L.T("status.usb.experimental"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    public void CopySanitizedDiagnostics()
+    {
+        try
+        {
+            var lines = File.Exists(Paths.Log) ? File.ReadAllLines(Paths.Log) : Array.Empty<string>();
+            string text = CordMic.Core.Usb.SanitizedDiagnostics.Build(
+                CurrentVersion,
+                Environment.OSVersion.VersionString,
+                lines,
+                Array.Empty<string>(),
+                "mode=" + UsbConnectionMode + " experimental=" + ExperimentalUsb + " engineOff=" + UsbEngineOff);
+            Clipboard.SetText(text);
+            MessageBox.Show(L.T("set.copyDiagnostics.done"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            Log("copy diagnostics failed: " + ex.Message);
+        }
+    }
+
+    private static string ProgramDataFile(string name) =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "CordMic", name);
+
+
     /// <summary>0.7.0: the one Settings window (pages), opened from the gear, the tray or the update notification.</summary>
     public void ShowSettings(SettingsPage? page)
     {
