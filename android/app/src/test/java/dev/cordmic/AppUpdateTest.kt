@@ -41,7 +41,6 @@ class AppUpdateTest {
         assertEquals("https://example.test/apk", info.apkUrl)
         assertEquals("https://example.test/sums", info.sumsUrl)
     }
-}
 
     @Test fun preReleaseOrdering() {
         assertTrue(AppUpdate.isNewer("0.8.0-beta.1", "0.7.2"))

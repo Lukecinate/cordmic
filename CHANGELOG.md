@@ -2,9 +2,12 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.8.0] - unreleased
+## [0.8.0-beta.1] - 2026-11-21
 
-Milestone M0 (0.7.2 field fixes). There is no separate 0.7.3. Wire version stays 1. This is not a release.
+Pre-release of the 0.8.0 M0 field fixes. This is not the latest stable release: 0.7.2 stays current
+for automatic updates. Install only if you want to test these fixes. Wire version stays 1.
+Android `versionCode` is 22 / `versionName` 0.8.0-beta.1. The release APK is signed with the same
+key as 0.6.1–0.7.2. The Windows installer is not Authenticode-signed.
 
 ### Fixed
 - **Orb double-click and click-while-searching stopped listening.** A second click within 600 ms, and a
@@ -17,8 +20,11 @@ Milestone M0 (0.7.2 field fixes). There is no separate 0.7.3. Wire version stays
   phones, LRU) and used to start the next session (target 10–40 ms, drift ±1,000 ppm). In the first 60 seconds
   the target rises after two underruns in 30 seconds. The log records `seed: target=…, drift=…ppm (from history|default)`.
 - Trailing spaces in USB and adapter names are trimmed before they are logged or shown.
-- *Stop using phone data…* is disabled, with “Connect the phone with USB tethering first”, when no tether
+- *Stop using phone data…* is disabled, with "Connect the phone with USB tethering first", when no tether
   adapter is present, so it no longer prompts for elevation with nothing to fix. The script logs `no tether adapter`.
+- The auto-updater ignores GitHub pre-releases (the `prerelease` and `draft` flags, and tags such as
+  `0.8.0-beta.1`). It no longer treats a pre-release tag as the matching stable version, so a later 0.8.0
+  stable release can still be offered.
 
 ### Added
 - **Self-verified mic-only protection** on the PC: without administrator rights the app reads

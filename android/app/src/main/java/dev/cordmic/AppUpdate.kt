@@ -146,12 +146,18 @@ object AppUpdate {
         val apk = urls.keys.firstOrNull { it.endsWith(".apk", ignoreCase = true) }
         val setup = urls.keys.firstOrNull { it.startsWith("CordMic-Setup-", ignoreCase = true) && it.endsWith(".exe", ignoreCase = true) }
         val sums = urls.keys.firstOrNull { it.equals("SHA256SUMS", ignoreCase = true) || it.startsWith("SHA256SUMS") }
-        return ReleaseInfo(tag, apk, urls[apk], setup, urls[setup], urls[sums], urls)
+        return ReleaseInfo(tag, apk, urls[apk], setup, urls[setup], urls[sums], urls, prerelease, draft)
     }
 
     private fun jsonString(json: String, key: String): String? {
         val m = Regex("\"" + Regex.escape(key) + "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\"").find(json)
         return m?.groupValues?.get(1)
+    }
+
+
+    private fun jsonBool(json: String, key: String): Boolean {
+        val m = Regex("\"" + Regex.escape(key) + "\"\\s*:\\s*(true|false)").find(json)
+        return m?.groupValues?.get(1) == "true"
     }
 
     fun hashForAsset(sums: Map<String, String>, assetName: String): String? {

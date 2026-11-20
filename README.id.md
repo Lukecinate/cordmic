@@ -9,7 +9,7 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi saat ini: **0.6.0** ([changelog](CHANGELOG.md), [unduhan](https://github.com/Lukecinate/cordmic/releases/latest)).
+Versi stabil saat ini: **0.7.2**. Pra-rilis **0.8.0-beta.1** ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 - **Hanya kabel.** HP muncul sebagai adapter jaringan kabel (RNDIS/NCM). Audio tidak lewat Wi-Fi atau internet.
 - **Latensi rendah.** PCM 48 kHz mono dalam paket 5 ms, capture AAudio eksklusif bila diizinkan HP, jitter buffer

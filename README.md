@@ -9,7 +9,7 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 cleans up the voice, streams it to a Windows tray app, and the tray app plays it into a virtual audio cable that
 Discord, Zoom, OBS and games can select as a microphone.
 
-Current version: **0.6.0** ([changelog](CHANGELOG.md), [downloads](https://github.com/Lukecinate/cordmic/releases/latest)).
+Current stable version: **0.7.2**. A pre-release, **0.8.0-beta.1**, is on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and is not offered by automatic updates ([changelog](CHANGELOG.md), [latest stable](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 - **Cable only.** The phone appears as a wired network adapter (RNDIS/NCM). Audio never uses Wi-Fi or the internet.
 - **Low latency.** 48 kHz mono PCM in 5 ms packets, AAudio exclusive capture where the phone grants it, a
