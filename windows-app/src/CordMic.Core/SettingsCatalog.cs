@@ -34,6 +34,8 @@ public static class SettingsCatalog
         SettingsPage.Connection => new SettingItem[]
         {
             new("phone", SettingKind.Status, "set.phone", "set.phone.help"),
+            new("phoneData", SettingKind.Status, "set.phoneData", "set.phoneData.help"),
+            new("fixRoute", SettingKind.Button, "set.fixRoute", "set.fixRoute.help"),
             new("pairing", SettingKind.Toggle, "set.pairing", "set.pairing.help"),
             new("startup", SettingKind.Toggle, "set.startup", "set.startup.help"),
             new("language", SettingKind.Choice, "set.language", "set.language.help",
@@ -70,7 +72,6 @@ public static class SettingsCatalog
             new("outMode", SettingKind.Choice, "set.outMode", "set.outMode.help"),
             new("frontFocusAr", SettingKind.Toggle, "set.frontFocusAr", "set.frontFocusAr.help"),
             new("optimizeCable", SettingKind.Button, "ui.cable.optimize", "set.optimizeCable.help"),
-            new("fixRoute", SettingKind.Button, "set.fixRoute", "set.fixRoute.help"),
             new("micMode", SettingKind.Link, "set.micMode"),
             new("getCable", SettingKind.Link, "ui.getCable"),
             new("openLog", SettingKind.Link, "ui.logs"),

@@ -91,7 +91,12 @@ public static class TetherDiagnosis
         || (d.IsNetClass && DeviceRules.IsTetheringAdapter(d.Description, d.FriendlyName))
         || (d.IsNetClass && VendorId(d) is { } v && PhoneVendorIds.Contains(v));
 
-    static string? Name(UsbDeviceInfo d) => string.IsNullOrWhiteSpace(d.FriendlyName) ? d.Description : d.FriendlyName;
+    static string? Name(UsbDeviceInfo d)
+    {
+        string n = DeviceNames.Clean(string.IsNullOrWhiteSpace(d.FriendlyName) ? d.Description : d.FriendlyName);
+        return n.Length == 0 ? null : n;
+    }
+    static string? CleanName(string? n) { n = DeviceNames.Clean(n); return n.Length == 0 ? null : n; }
 
     /// <summary>
     /// Combines adapters and USB devices into one answer. Order matters: a working adapter wins; then an adapter that is
@@ -100,12 +105,12 @@ public static class TetherDiagnosis
     public static TetherDiagnosisResult Diagnose(IReadOnlyList<TetherAdapterInfo> adapters, IReadOnlyList<UsbDeviceInfo>? usb)
     {
         var ready = adapters.FirstOrDefault(a => a.Up && a.HasIpv4);
-        if (ready is not null) return new(TetherLink.Ready, ready.Description);
+        if (ready is not null) return new(TetherLink.Ready, CleanName(ready.Description));
         var devices = usb ?? Array.Empty<UsbDeviceInfo>();
         var broken = devices.FirstOrDefault(d => IsTetherDevice(d) && d.ProblemCode != 0);
         if (broken is not null) return new(TetherLink.DriverProblem, Name(broken), broken.ProblemCode);
         var starting = adapters.FirstOrDefault();
-        if (starting is not null) return new(TetherLink.Starting, starting.Description);
+        if (starting is not null) return new(TetherLink.Starting, CleanName(starting.Description));
         var tether = devices.FirstOrDefault(d => IsTetherDevice(d));
         if (tether is not null) return new(TetherLink.Starting, Name(tether)); // device present, adapter not created yet
         var phone = devices.FirstOrDefault(IsPhone);

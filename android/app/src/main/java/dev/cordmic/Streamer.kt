@@ -77,6 +77,7 @@ class Streamer(context: Context, private val cfg: Config) {
     @Volatile private var reopenEngine = false
     @Volatile private var peerSync = false
     @Volatile private var wantDiag = false
+    @Volatile private var wantPhoneKey = false
     val sync = SyncClock()
     val detectedSummary: String get() = DeviceProbe.summary
     private val platformNs = PlatformNs()
@@ -118,7 +119,8 @@ class Streamer(context: Context, private val cfg: Config) {
         ctlThread = Thread(::controlLoop, "cordmic-ctl").apply { isDaemon = true; start() }
     }
 
-    fun stop() {
+    fun stop(reason: String = "stop") {
+        Log.i(TAG, "stop reason: $reason")
         running = false
         audioThread?.join(1000)
         // A capture read blocked in the driver can outlive the join. The next session then waits for this thread to
@@ -359,6 +361,7 @@ class Streamer(context: Context, private val cfg: Config) {
         if (payload != null) {
             peerSync = true
             wantDiag = payload.wantDiag
+            wantPhoneKey = payload.wantPhoneKey
             if (pcStudio != payload.studio) Log.i(TAG, if (payload.studio) "PC Studio on: sending raw capture" else "PC Studio off")
             pcStudio = payload.studio
             fun take(field: SyncField, apply: () -> Unit) {
@@ -441,6 +444,7 @@ class Streamer(context: Context, private val cfg: Config) {
                             voiceClarity = voiceClarity,
                             diag = if (peerSync && wantDiag) voice.diagnostics.copy(
                                 silenced = micSilenced, studioBypass = pcStudio, nsSuspected = nsSuspected) else null,
+                            installId = if (peerSync && wantPhoneKey) InstallId.get(ctx) else null,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

@@ -2,6 +2,33 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - unreleased
+
+Milestone M0 (0.7.2 field fixes). There is no separate 0.7.3. Wire version stays 1. This is not a release.
+
+### Fixed
+- **Orb double-click and click-while-searching stopped listening.** A second click within 600 ms, and a
+  `DoubleClick`, is ignored. While the PC is still searching for the phone, a click opens the tethering steps
+  instead of stopping. If listening was stopped while no phone was present, CordMic listens again when the
+  phone becomes ready. An explicit stop while already streaming is left alone. Every change is logged with
+  its source (`listen on (orb)`, `listen off (tray)`, `listen on (auto: phone ready)`).
+- **Early-session underruns and drift on a known phone.** The last converged jitter target and clock drift are
+  remembered per phone (model plus a salted hash of an install id; the raw id is never stored; at most 32
+  phones, LRU) and used to start the next session (target 10–40 ms, drift ±1,000 ppm). In the first 60 seconds
+  the target rises after two underruns in 30 seconds. The log records `seed: target=…, drift=…ppm (from history|default)`.
+- Trailing spaces in USB and adapter names are trimmed before they are logged or shown.
+- *Stop using phone data…* is disabled, with “Connect the phone with USB tethering first”, when no tether
+  adapter is present, so it no longer prompts for elevation with nothing to fix. The script logs `no tether adapter`.
+
+### Added
+- **Self-verified mic-only protection** on the PC: without administrator rights the app reads
+  `IgnoreDefaultRoutes` and the metric (IPv4 and IPv6), default routes `0.0.0.0/0` and `::/0` on the tether
+  interface, DNS on that interface, and the best IPv4 and IPv6 interface. *Settings → Connection* shows
+  *Phone data: blocked* or *Phone data: not blocked* with the failing item. The log records
+  `mic-only: ignoreDefault=…, defaultRoutes=…, dns=…, metric=…` on change.
+- The Android app sends BYE when the task is swiped away or the service is destroyed, and logs the stop reason
+  (`task-removed`, `destroy`, `notification`, `stop`).
+
 ## [0.7.2] - 2026-11-14
 
 Fixes the Settings window crash of 0.7.0/0.7.1, explains on both devices why USB tethering is not up, and keeps the

@@ -172,6 +172,9 @@ public sealed class JitterBuffer : IFloatSource
     public bool AdaptiveTarget { get; set; }
     public const int MaxExtraPackets = 3;
     public const double AdaptWindowSec = 10;
+    /// <summary>0.8.0 M0: in the first <see cref="EarlyAdaptDurationSec"/> seconds, two underruns in this window raise the target.</summary>
+    public const double EarlyAdaptWindowSec = 30;
+    public const double EarlyAdaptDurationSec = 60;
     public const double CalmSec = 60;
     /// <summary>Packets currently added to the target by the adaptive control.</summary>
     public int ExtraPackets { get { lock (_lock) return _extraPackets; } }
@@ -613,7 +616,8 @@ public sealed class JitterBuffer : IFloatSource
     private void NoteUnderrunLocked()
     {
         long now = _clockFrames;
-        long window = (long)(AdaptWindowSec * SampleRate);
+        bool early = now < (long)(EarlyAdaptDurationSec * SampleRate);
+        long window = (long)((early ? EarlyAdaptWindowSec : AdaptWindowSec) * SampleRate);
         if (AdaptiveTarget && _extraPackets < MaxExtraPackets
             && now - _lastUnderrunAt <= window && now - _lastRaiseAt >= SampleRate)
         {
@@ -622,6 +626,32 @@ public sealed class JitterBuffer : IFloatSource
         }
         _lastUnderrunAt = now;
         _calmSince = now;
+    }
+
+    /// <summary>
+    /// 0.8.0 M0: start from a learned target (packet count, already clamped by the caller) and a learned
+    /// clock offset. Does not clear the buffer or reset playout. Safe to call once after the first packets.
+    /// </summary>
+    public bool Seed(int targetPackets, double driftPpm)
+    {
+        if (targetPackets < 1) return false;
+        lock (_lock)
+        {
+            int extra = Math.Clamp(targetPackets - BaseTarget, 0, MaxExtraPackets);
+            // When the learned target is above BaseTarget + MaxExtra, raise the base so we actually start there.
+            if (targetPackets > BaseTarget + MaxExtraPackets)
+            {
+                int raised = targetPackets - MaxExtraPackets;
+                int grow = raised - BaseTarget;
+                BaseTarget = raised;
+                _baseMax += grow;
+                _baseHigh += grow;
+                extra = MaxExtraPackets;
+            }
+            _extraPackets = extra;
+            if (RsOn) _dc.Seed(driftPpm);
+            return true;
+        }
     }
 
     private void AdaptCalmLocked()

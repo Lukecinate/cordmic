@@ -22,6 +22,7 @@ internal sealed class MainForm : Form
     // 0.7.2: BuildUi sets ClientSize, which raises Resize while the old controls are already disposed and the new ones
     // not yet created. LayoutHero is refused until the controls exist.
     private LayoutGate _gate = new();
+    private long _lastOrbTicks;
 
     public MainForm(AppController app)
     {
@@ -151,6 +152,7 @@ internal sealed class MainForm : Form
 
         _orb = new ConnectOrb { Size = new Size(Sx(168), Sx(168)), TabStop = true, AccessibleRole = AccessibleRole.PushButton };
         _orb.Click += (_, _) => OnOrb();
+        _orb.DoubleClick += (_, _) => { /* 0.8.0 M0: ignored; debounce already drops the second Click */ };
         _orb.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Space) { OnOrb(); e.Handled = true; } };
 
         _state = new Label
@@ -223,13 +225,28 @@ internal sealed class MainForm : Form
 
     private void OnOrb()
     {
-        switch (Face())
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (ListenPolicy.IsDebounced(now, _lastOrbTicks, System.Diagnostics.Stopwatch.Frequency))
+            return;
+        _lastOrbTicks = now;
+        var face = Face();
+        var act = ListenPolicy.Click(_app.Armed, face == ConnectFace.Searching, face == ConnectFace.Error, _app.Stats?.Peer is not null);
+        switch (act)
         {
-            case ConnectFace.Disconnected: _app.SetArmed(true); break;
-            case ConnectFace.Error: _app.RetryConnect(); break;
-            default: _app.SetArmed(false); break;
+            case OrbAction.Listen: _app.SetArmed(true, ListenSource.Orb); break;
+            case OrbAction.Stop: _app.SetArmed(false, ListenSource.Orb); break;
+            case OrbAction.Retry: _app.RetryConnect(); break;
+            case OrbAction.ShowGuidance: ShowTetherGuidance(); break;
         }
         RefreshFromApp();
+    }
+
+    private void ShowTetherGuidance()
+    {
+        string body = _app.Status.Help ?? _app.Status.Detail;
+        if (string.IsNullOrWhiteSpace(body)) body = L.T("status.tether.steps");
+        _app.Log("tether guidance shown (orb)");
+        MessageBox.Show(this, body, _app.Status.Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private ConnectFace Face()

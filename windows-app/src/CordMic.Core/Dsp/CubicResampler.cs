@@ -94,6 +94,20 @@ public sealed class DriftController
 
     public void Reset() { _fillF = Target; _integ = 0; Ratio = 1.0; _init = false; }
 
+    /// <summary>
+    /// Start the ratio at a learned clock offset (ppm) so the first minute does not have to re-discover it.
+    /// The integrator is pre-loaded so a zero fill-error holds the seeded ratio. Clamped to ±Limit (1000 ppm).
+    /// </summary>
+    public void Seed(double ppm)
+    {
+        if (!double.IsFinite(ppm)) ppm = 0;
+        double r = Math.Clamp(1.0 + ppm * 1e-6, 1.0 - Limit, 1.0 + Limit);
+        Ratio = r;
+        _integ = _ki > 0 ? (r - 1.0) / _ki : 0;
+        _fillF = Target;
+        _init = true;
+    }
+
     /// <summary>One 10 ms update (matches the reference vectors).</summary>
     public double Update(double fill) => Update(fill, 0.01);
 

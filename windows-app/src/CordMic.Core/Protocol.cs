@@ -190,7 +190,7 @@ public static class LinkControl
     /// bits 4–7 mic count 0–15. Older readers still see AAudio from flags bit 2.
     /// Flags bit 5 is front-focus requested/on.
     /// </summary>
-    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off, bool frontFocus = false, int dirCode = 0, int micCount = 0, bool frontFocusAudioRecord = false, bool speechLow = false, FieldRev[]? sync = null, bool voiceClarity = true, PhoneDiag? diag = null)
+    public static int WritePong(Span<byte> dst, bool noiseCancellation, bool agc, bool aaudio, bool exclusive, bool lowLatency, int gainDb, string? deviceName = null, NoiseMode mode = NoiseMode.Off, bool frontFocus = false, int dirCode = 0, int micCount = 0, bool frontFocusAudioRecord = false, bool speechLow = false, FieldRev[]? sync = null, bool voiceClarity = true, PhoneDiag? diag = null, byte[]? installId = null)
     {
         if (dst.Length < Size) throw new ArgumentException("buffer too small", nameof(dst));
         dst[0] = Magic;
@@ -224,6 +224,8 @@ public static class LinkControl
             if (voiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
             SettingsSync.Write(dst.Slice(used, SettingsSync.Size), flags2, sync);
             used += SettingsSync.Size;
+            if (installId is { Length: PhoneIdBlock.IdLength } && dst.Length - used >= PhoneIdBlock.Size)
+                used += PhoneIdBlock.Write(dst.Slice(used), installId);
         }
         return used;
     }
@@ -237,11 +239,12 @@ public static class LinkControl
         bool syncCapable = false, frontAr = false, speechLow = false, voiceClarity = true;
         FieldRev[]? revs = null;
         PhoneDiag? diag = null;
+        byte[]? installId = null;
         if (src.Length > Size)
         {
             var after = src[Size..];
             int n = after.Length;
-            if (SettingsSync.TryReadTrailing(after, out var flags2, out var got, out int nameLen))
+            if (SettingsSync.TryReadTrailing(after, out var flags2, out var got, out int nameLen, out installId))
             {
                 syncCapable = true;
                 revs = got;
@@ -262,7 +265,7 @@ public static class LinkControl
             {
                 while (n > 0 && after[n - 1] == 0) n--;
             }
-            if (n > 0) name = System.Text.Encoding.UTF8.GetString(after[..n]).Trim();
+            if (n > 0) name = DeviceNames.Clean(System.Text.Encoding.UTF8.GetString(after[..n]));
             if (name.Length > 40) name = name[..40];
         }
         int stored = (f >> 6) & 3;
@@ -272,13 +275,13 @@ public static class LinkControl
         int mics = (packed >> 4) & 15;
         phone = new PhoneLink(true, (f & 1) != 0, (f & 2) != 0, (f & 4) != 0 || (packed & 3) == 1,
             (f & 8) != 0, (f & 16) != 0, Math.Clamp((int)src[2], 0, VoiceChain.MaxGainDb), name, ncMode, stored,
-            (f & 32) != 0, dirCode, mics, frontAr, speechLow, syncCapable, revs, voiceClarity, diag);
+            (f & 32) != 0, dirCode, mics, frontAr, speechLow, syncCapable, revs, voiceClarity, diag, installId);
         return true;
     }
 }
 
 /// <summary>What the phone last reported about its capture path and voice chain. <see cref="Known"/> is false for a 0.4.2 peer.</summary>
-public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0, bool FrontFocus = false, int DirCode = 0, int MicCount = 0, bool FrontFocusAudioRecord = false, bool SpeechLow = false, bool SyncCapable = false, FieldRev[]? SyncRevs = null, bool VoiceClarity = true, PhoneDiag? Diag = null)
+public readonly record struct PhoneLink(bool Known, bool NoiseCancellation, bool Agc, bool AAudio, bool Exclusive, bool LowLatency, int GainDb, string Name = "", NoiseMode Noise = NoiseMode.Off, int NoiseBits = 0, bool FrontFocus = false, int DirCode = 0, int MicCount = 0, bool FrontFocusAudioRecord = false, bool SpeechLow = false, bool SyncCapable = false, FieldRev[]? SyncRevs = null, bool VoiceClarity = true, PhoneDiag? Diag = null, byte[]? InstallId = null)
 {
     public string Mode =>
         !Known ? "?" :

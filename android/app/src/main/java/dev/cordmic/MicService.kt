@@ -41,7 +41,7 @@ class MicService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            shutdown(); return START_NOT_STICKY
+            shutdown("notification"); return START_NOT_STICKY
         }
         if (streamer != null) return START_STICKY
         createChannel()
@@ -92,16 +92,22 @@ class MicService : Service() {
         wakeRenewedAt = now
     }
 
-    private fun shutdown() {
+    private fun shutdown(reason: String) {
+        android.util.Log.i("CordMic", "service stop: $reason")
         handler.removeCallbacks(ticker)
-        streamer?.stop(); streamer = null; current = null
+        streamer?.stop(reason); streamer = null; current = null
         wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        shutdown("task-removed")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
-        if (streamer != null) shutdown()
+        if (streamer != null) shutdown("destroy")
         super.onDestroy()
     }
 

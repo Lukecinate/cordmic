@@ -392,6 +392,15 @@ internal class DoubleBufferedPanel : Panel
 /// <summary>Builds the control for one catalog item and binds it to <see cref="AppController"/>.</summary>
 internal static class RowFactory
 {
+    static string PhoneDataDetail(AppController app)
+    {
+        if (!app.HasTetherAdapter) return L.T("status.dataFail.noAdapter");
+        if (!app.MicOnly.HasAdapter) return L.T("status.dataUnknown.detail");
+        if (app.MicOnly.Blocked) return L.T("status.dataBlocked.detail");
+        string gap = MicOnlySnapshot.GapKey(app.MicOnly.Gap);
+        string item = string.IsNullOrEmpty(gap) ? L.T("status.dataFail.ignoreDefault") : L.T(gap);
+        return L.T("status.dataNotBlocked.detail", item);
+    }
     public static Row? Create(SettingsForm f, SettingItem item)
     {
         var app = f.App;
@@ -402,6 +411,17 @@ internal static class RowFactory
             // Connection
             case "phone":
                 return new StatusRow(f, T(item.LabelKey), H(item), () => app.Status.Title, () => app.Status.Detail) { Guidance = () => app.Status.Help };
+            case "phoneData":
+                return new StatusRow(f, T(item.LabelKey), H(item),
+                    () => !app.HasTetherAdapter ? L.T("menu.fixRoute.off")
+                        : app.MicOnly.Blocked ? L.T("status.dataBlocked")
+                        : L.T("status.dataNotBlocked"),
+                    () => PhoneDataDetail(app))
+                {
+                    LineColor = () => !app.HasTetherAdapter ? Theme.Muted
+                        : app.MicOnly.Blocked ? Theme.Accent
+                        : Theme.Amber,
+                };
             case "pairing":
                 return new ToggleRow(f, T(item.LabelKey), H(item), () => app.PairingEnabled, v => app.SetPairing(v))
                 {
@@ -497,7 +517,8 @@ internal static class RowFactory
                     Caption = () => app.OptimizeRunning ? L.T("ui.cable.optimizeCancel") : L.T("ui.cable.optimize"),
                 };
             case "fixRoute":
-                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.FixRoute(); return Task.CompletedTask; }, () => null);
+                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.FixRoute(); return Task.CompletedTask; }, () => null)
+                { CanClick = () => app.HasTetherAdapter, DisabledHint = () => L.T("menu.fixRoute.off") };
             case "micMode":
                 return new LinkRow(f, T(item.LabelKey), null, app.ShowMicModeInfo);
             case "getCable":

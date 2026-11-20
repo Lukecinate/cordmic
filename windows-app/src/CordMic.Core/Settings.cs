@@ -60,6 +60,10 @@ public sealed class AppSettings
     /// accepted without a code.
     /// </summary>
     public string? PairingCode { get; set; }
+    /// <summary>0.8.0: 16-byte salt (32 hex chars) used to hash a phone's install id. Generated on first use.</summary>
+    public string? PhoneSeedSalt { get; set; }
+    /// <summary>0.8.0: learned jitter target and drift, at most 32 phones, LRU. Keys never contain raw identifiers.</summary>
+    public List<PhoneLinkSeed> PhoneSeeds { get; set; } = new();
 
     private static readonly JsonSerializerOptions Opts = new() { WriteIndented = true };
 
@@ -106,6 +110,7 @@ public sealed class AppSettings
             using (var doc = JsonDocument.Parse(text))
                 if (doc.RootElement.ValueKind == JsonValueKind.Object && !doc.RootElement.TryGetProperty(nameof(Version), out _)) s.Version = 1;
             s.NormalizeAudio();
+            s.NormalizePhoneSeeds();
             if (!string.IsNullOrEmpty(s.PairingCode) && !Pairing.IsValidCode(s.PairingCode)) s.PairingCode = null;
             return true;
         }
@@ -158,6 +163,29 @@ public sealed class AppSettings
         if (!Enum.IsDefined(StudioPreset)) StudioPreset = CordMic.Core.Dsp.StudioPreset.Off;
         if (double.IsNaN(StudioAgcGainDb) || double.IsInfinity(StudioAgcGainDb)) StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
         StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.ClampSaved(StudioAgcGainDb); // 0.6.2: persisted start gain ≤ +15 dB
+    }
+
+    /// <summary>Drop bad seed entries, clamp values, keep at most 32. Raw identifier-looking keys are rejected.</summary>
+    public void NormalizePhoneSeeds()
+    {
+        PhoneSeeds ??= new List<PhoneLinkSeed>();
+        var kept = new List<PhoneLinkSeed>();
+        foreach (var s in PhoneSeeds)
+        {
+            if (s is null || string.IsNullOrWhiteSpace(s.Key)) continue;
+            if (s.Key.Length > 80) continue;
+            // Keys are "model:hash" or "model-only:model". Reject anything that looks like a raw UUID.
+            if (s.Key.Count(c => c == '-') >= 4) continue;
+            s.TargetMs = PhoneLinkHistory.ClampTargetMs(s.TargetMs);
+            s.DriftPpm = PhoneLinkHistory.ClampPpm(s.DriftPpm);
+            s.Confidence = PhoneLinkHistory.ClampConfidence(s.Confidence);
+            kept.Add(s);
+        }
+        if (kept.Count > PhoneLinkHistory.MaxPhones)
+            kept = kept.OrderByDescending(x => x.LastUsedUtcTicks).Take(PhoneLinkHistory.MaxPhones).ToList();
+        PhoneSeeds = kept;
+        if (PhoneSeedSalt is { Length: > 0 } && (PhoneSeedSalt.Length != 32 || PhoneSeedSalt.Any(c => !char.IsAsciiHexDigit(c))))
+            PhoneSeedSalt = null;
     }
 
     public void ResetAudioDefaults()

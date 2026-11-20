@@ -41,6 +41,10 @@ internal sealed class AppController : ApplicationContext
     private string? _loggedPeriodHint;
 
     private bool _armed = true;
+    /// <summary>0.8.0 M0: user stopped listening while no phone was streaming, so we listen again when one is ready.</summary>
+    private bool _disarmedWhileIdle;
+    private string? _lastMicOnlyLog;
+    private bool _phoneSeedSaved;
     private Receiver? _rx;
     private string? _rxError;
     private DateTime _nextRxTry = DateTime.MinValue;
@@ -62,6 +66,8 @@ internal sealed class AppController : ApplicationContext
     private string? _lastTetherLog;
     private bool _lastViaPhone;
     public TetherDiagnosisResult Tether { get; private set; } = new(TetherLink.NothingOnUsb);
+    public MicOnlySnapshot MicOnly { get; private set; } = new(false, null, null, null, null, 0, 0, null, false, false, false);
+    public bool HasTetherAdapter => _net.Current is not null || _net.Candidates.Count > 0;
     private BalloonKind _balloon;
     private PostCoalescer _updateUi = null!;
     private Action<UpdateState>? _onUpdateChanged;
@@ -355,7 +361,9 @@ internal sealed class AppController : ApplicationContext
 
     private void OnPeerChanged(IPEndPoint? p)
     {
-        if (p is not null) { _peerSince = DateTime.UtcNow; return; }
+        if (p is not null) { _peerSince = DateTime.UtcNow; _phoneSeedSaved = false; return; }
+        MaybeSavePhoneSeed(force: true);
+        _phoneSeedSaved = false;
         bool wasLong = _peerSince != DateTime.MinValue && DateTime.UtcNow - _peerSince > TimeSpan.FromSeconds(5);
         _peerSince = DateTime.MinValue;
         _lossWin.Clear();
@@ -385,12 +393,52 @@ internal sealed class AppController : ApplicationContext
         Save();
     }
 
+    private void EnsurePhoneSeedSalt()
+    {
+        if (!string.IsNullOrEmpty(_settings.PhoneSeedSalt) && _settings.PhoneSeedSalt.Length == 32) return;
+        _settings.PhoneSeedSalt = PhoneLinkHistory.NewSalt();
+        Save();
+    }
+
+    private void MaybeApplyPhoneSeed()
+    {
+        if (_rx is not { } rx || rx.PhoneSeedApplied || rx.Peer is null || !rx.Phone.Known) return;
+        EnsurePhoneSeedSalt();
+        string key = PhoneLinkHistory.Key(rx.Phone.Name, rx.Phone.InstallId, _settings.PhoneSeedSalt);
+        var hist = PhoneLinkHistory.Find(_settings.PhoneSeeds, key);
+        if (hist is null) rx.ApplyPhoneSeed(rx.EffectiveJitterMs, 0, false, 0);
+        else rx.ApplyPhoneSeed(hist.TargetMs, hist.DriftPpm, true, hist.Confidence);
+    }
+
+    private void MaybeSavePhoneSeed(bool force)
+    {
+        if (_rx is not { } rx || rx.Peer is null || rx.PeerSinceTicks == 0) return;
+        if (_phoneSeedSaved && !force) return;
+        double sec = (Stopwatch.GetTimestamp() - rx.PeerSinceTicks) * 1.0 / Stopwatch.Frequency;
+        if (sec < PhoneLinkHistory.MinStreamSecToSave) return;
+        EnsurePhoneSeedSalt();
+        string key = PhoneLinkHistory.Key(rx.Phone.Name, rx.Phone.InstallId, _settings.PhoneSeedSalt);
+        if (string.IsNullOrEmpty(key)) return;
+        var seed = new PhoneLinkSeed
+        {
+            Key = key,
+            TargetMs = rx.EffectiveJitterMs,
+            DriftPpm = double.IsFinite(rx.DriftPpm) ? rx.DriftPpm : 0,
+            Confidence = PhoneLinkHistory.ConfidenceFromDuration(sec),
+        };
+        _settings.PhoneSeeds = PhoneLinkHistory.Upsert(_settings.PhoneSeeds, seed, DateTime.UtcNow.Ticks);
+        _phoneSeedSaved = true;
+        Save();
+    }
+
     private void UpdateStats()
     {
         if (_rx is null) { Stats = null; return; }
         var s = _rx.Snapshot();
         Stats = s;
         AbsorbPhoneEcho(s.Phone);
+        MaybeApplyPhoneSeed();
+        MaybeSavePhoneSeed(force: false);
         SaveStudioGain(force: false);
         var now = DateTime.UtcNow;
         _lossWin.Enqueue((now, s.Expected, s.Lost));
@@ -446,7 +494,7 @@ internal sealed class AppController : ApplicationContext
             });
         }
         var t = TetherDiagnosis.Diagnose(_net.Candidates, connected ? null : _usbDevices);
-        if (connected && t.Link != TetherLink.Ready) t = new TetherDiagnosisResult(TetherLink.Ready, _net.Current!.Description);
+        if (connected && t.Link != TetherLink.Ready) t = new TetherDiagnosisResult(TetherLink.Ready, DeviceNames.Clean(_net.Current!.Description));
         Tether = t;
         var line = t.LogLine();
         if (line != _lastTetherLog)
@@ -455,6 +503,25 @@ internal sealed class AppController : ApplicationContext
             if (!connected && _usbDevices is null && t.Link == TetherLink.NothingOnUsb) return;
             _lastTetherLog = line;
             Log("tether: " + line);
+        }
+        UpdateMicOnly(viaPhone);
+        if (ListenPolicy.ShouldAutoRelisten(_disarmedWhileIdle, t.Link == TetherLink.Ready, _armed))
+            SetArmed(true, ListenSource.AutoPhoneReady);
+    }
+
+    private void UpdateMicOnly(bool viaPhone)
+    {
+        MicOnlySnapshot snap;
+        if (_net.Current is { } a)
+            snap = RouteProtection.Read(a.IfIndex, viaPhone);
+        else
+            snap = new MicOnlySnapshot(false, null, null, null, null, 0, 0, null, false, false, false);
+        MicOnly = snap;
+        var line = snap.LogLine();
+        if (line != _lastMicOnlyLog)
+        {
+            _lastMicOnlyLog = line;
+            Log(line);
         }
     }
 
@@ -510,7 +577,9 @@ internal sealed class AppController : ApplicationContext
         if (_tray.Text != tt) _tray.Text = tt;
         _miHeader.Text = st.Title;
         _miDetail.Text = st.Detail.Length > 90 ? st.Detail[..90] + "…" : st.Detail;
-        _miFixRoute.Visible = a?.CarriesInternet == true;
+        _miFixRoute.Visible = true;
+        _miFixRoute.Enabled = HasTetherAdapter;
+        _miFixRoute.Text = HasTetherAdapter ? L.T("menu.fixRoute") : L.T("menu.fixRoute.off");
         var connectText = _armed ? L.T("menu.disconnect") : L.T("menu.connect");
         if (_miConnect.Text != connectText) _miConnect.Text = connectText;
     }
@@ -523,7 +592,7 @@ internal sealed class AppController : ApplicationContext
         var m = new ContextMenuStrip { ShowImageMargin = false, ShowCheckMargin = false, Font = Theme.Body, Renderer = new QuietMenuRenderer() };
         _miHeader = new ToolStripMenuItem("CordMic") { Enabled = false, Font = Theme.Strong, Tag = "header" };
         _miDetail = new ToolStripMenuItem("") { Enabled = false, Tag = "detail" };
-        _miConnect = new ToolStripMenuItem(_armed ? L.T("menu.disconnect") : L.T("menu.connect"), null, (_, _) => SetArmed(!_armed));
+        _miConnect = new ToolStripMenuItem(_armed ? L.T("menu.disconnect") : L.T("menu.connect"), null, (_, _) => SetArmed(!_armed, ListenSource.Tray));
         var miSettings = new ToolStripMenuItem(L.T("menu.settings"), null, (_, _) => ShowSettings(null));
         _miUpdate = new ToolStripMenuItem(L.T("menu.checkUpdate"), null, (_, _) => OnTrayUpdateClicked());
         var miOpen = new ToolStripMenuItem(L.T("menu.wizard"), null, (_, _) => ShowWizard());
@@ -765,6 +834,12 @@ internal sealed class AppController : ApplicationContext
 
     public void FixRoute()
     {
+        if (!HasTetherAdapter)
+        {
+            Log("route fix skipped: no tether adapter");
+            MessageBox.Show(L.T("menu.fixRoute.off"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         if (!File.Exists(Paths.MetricScript))
         {
             MessageBox.Show(L.T("dlg.noScript"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -846,15 +921,17 @@ internal sealed class AppController : ApplicationContext
         _window.Activate();
     }
 
-    public void SetArmed(bool on)
+    public void SetArmed(bool on, ListenSource src = ListenSource.Other)
     {
         if (_armed == on)
         {
             if (on) { _nextRxTry = DateTime.MinValue; _nextAudioTry = DateTime.MinValue; Tick(); }
             return;
         }
+        if (!on) _disarmedWhileIdle = Stats?.Peer is null && Tether.Link != TetherLink.Ready;
+        else _disarmedWhileIdle = false;
         _armed = on;
-        Log(on ? "connect" : "disconnect");
+        Log(ListenPolicy.LogLine(on, src));
         if (!on) { _audio.Stop(); _rx?.Dispose(); _rx = null; Stats = null; }
         else { _nextRxTry = DateTime.MinValue; _nextAudioTry = DateTime.MinValue; }
         Tick();
@@ -863,7 +940,9 @@ internal sealed class AppController : ApplicationContext
     /// <summary>Error state: stay armed and try the socket and the output device again now.</summary>
     public void RetryConnect()
     {
+        _disarmedWhileIdle = false;
         _armed = true;
+        Log(ListenPolicy.LogLine(true, ListenSource.Retry));
         _nextRxTry = DateTime.MinValue;
         _nextAudioTry = DateTime.MinValue;
         if (_rx is null) { Tick(); return; }

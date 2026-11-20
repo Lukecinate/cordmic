@@ -103,7 +103,7 @@ object Protocol {
                         noiseMode: NoiseMode = NoiseMode.OFF, frontFocus: Boolean = false,
                         dirCode: Int = 0, micCount: Int = 0, frontFocusAr: Boolean = false,
                         speechLow: Boolean = false, sync: SyncClock? = null, voiceClarity: Boolean = true,
-                        diag: VoiceDiag? = null): Int {
+                        diag: VoiceDiag? = null, installId: ByteArray? = null): Int {
         buf[off] = LINK_MAGIC
         var f = 0
         if (noiseCancellation) f = f or 1
@@ -118,8 +118,9 @@ object Protocol {
         val engine = if (aaudio) 1 else 2
         buf[off + 3] = (engine or ((dirCode and 3) shl 2) or ((micCount.coerceIn(0, 15) and 15) shl 4)).toByte()
         val withDiag = sync != null && diag != null
-        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE + (if (withDiag) DIAG_SIZE else 0) else 0
-        val name = deviceName.encodeToByteArray()
+        val withId = sync != null && installId != null && installId.size == InstallId.SIZE
+        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE + (if (withDiag) DIAG_SIZE else 0) + (if (withId) PhoneIdBlock.SIZE else 0) else 0
+        val name = deviceName.trim().replace(Regex("\\s+"), " ").encodeToByteArray()
         val n = minOf(name.size, buf.size - off - LINK_SIZE - syncBytes)
         if (n > 0) name.copyInto(buf, off + LINK_SIZE, 0, n)
         var used = LINK_SIZE + maxOf(0, n)
@@ -132,6 +133,8 @@ object Protocol {
             if (speechLow) flags2 = flags2 or SettingsSync.FLAG_SPEECH_LOW
             if (voiceClarity) flags2 = flags2 or SettingsSync.FLAG_VOICE_CLARITY
             used += SettingsSync.write(buf, off + used, flags2, sync.revs)
+            if (withId && off + used + PhoneIdBlock.SIZE <= buf.size)
+                used += PhoneIdBlock.write(buf, off + used, installId!!)
         }
         return used
     }

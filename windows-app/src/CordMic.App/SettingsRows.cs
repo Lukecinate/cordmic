@@ -490,6 +490,8 @@ internal sealed class ButtonRow : Row
     private readonly Button _button;
     private readonly Func<string?> _statusText;
     public Func<string>? Caption { get; init; }
+    public Func<bool>? CanClick { get; init; }
+    public Func<string?>? DisabledHint { get; init; }
 
     public ButtonRow(SettingsForm f, string text, string? help, Func<Task> onClick, Func<string?> status) : base(f)
     {
@@ -519,8 +521,13 @@ internal sealed class ButtonRow : Row
     public override bool RefreshValue()
     {
         base.RefreshValue();
-        bool changed = SetText(_status, _statusText());
+        string? status = _statusText();
+        bool can = CanClick?.Invoke() ?? true;
+        if (!can && DisabledHint?.Invoke() is { Length: > 0 } hint)
+            status = string.IsNullOrEmpty(status) ? hint : status;
+        bool changed = SetText(_status, status);
         if (Caption is not null) changed |= SetText(_button, Caption());
+        if (_button.Enabled != can) { _button.Enabled = can; changed = true; }
         return changed;
     }
 }
@@ -552,6 +559,8 @@ internal sealed class StatusRow : Row
     private readonly Func<string?> _l1, _l2;
     /// <summary>0.7.2: step-by-step help while the phone is not connected (tethering guidance), else null.</summary>
     public Func<string?>? Guidance { get; init; }
+    /// <summary>0.8.0: optional colour for the first status line (teal when blocked, amber when not).</summary>
+    public Func<Color?>? LineColor { get; init; }
 
     public StatusRow(SettingsForm f, string title, string? help, Func<string?> line1, Func<string?> line2) : base(f)
     {
@@ -577,7 +586,11 @@ internal sealed class StatusRow : Row
     public override bool RefreshValue()
     {
         base.RefreshValue();
-        return SetText(_line1, _l1()) | SetText(_line2, _l2()) | SetText(_guide, Guidance?.Invoke());
+        bool changed = SetText(_line1, _l1()) | SetText(_line2, _l2()) | SetText(_guide, Guidance?.Invoke());
+        var c = LineColor?.Invoke();
+        var want = c ?? Theme.Ink;
+        if (_line1.ForeColor != want) { _line1.ForeColor = want; changed = true; }
+        return changed;
     }
 }
 

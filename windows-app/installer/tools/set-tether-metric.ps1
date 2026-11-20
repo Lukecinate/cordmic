@@ -133,5 +133,6 @@ do {
     if ((Get-Date) -ge $deadline) { break }
     Start-Sleep -Seconds 2
 } while ($true)
-if ($changed -eq 0) { Log "no change needed (adapters found: $(@($adapters).Count))" }
+if (@($adapters).Count -eq 0) { Log "no tether adapter" }
+elseif ($changed -eq 0) { Log "no change needed (adapters found: $(@($adapters).Count))" }
 Update-CordMicFirewall $adapters

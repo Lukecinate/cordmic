@@ -40,6 +40,9 @@ public static class SettingsSync
     /// <summary>PING only (0.6.0): the PC runs Studio noise reduction, so the phone should bypass its suppressor, platform
     /// noise suppression, gate, AGC and pause expander (user gain, voice clarity and the limiter stay). Older phones ignore it.</summary>
     public const byte FlagStudio = 1 << 5;
+    /// <summary>PING only (0.8.0): ask the phone for its install-id block after the sync block. Older phones ignore it;
+    /// a 0.7.x PC never sets the bit, so it never has to parse the block.</summary>
+    public const byte FlagWantPhoneKey = 1 << 6;
 
     public static byte NextSeq(byte local, byte remote)
     {
@@ -99,14 +102,25 @@ public static class SettingsSync
     /// Reads a trailing sync block from the bytes after the classic 4-byte PONG header.
     /// Returns the UTF-8 name length (separator NUL stripped) when a block is present.
     /// </summary>
-    public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength)
+    public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength) =>
+        TryReadTrailing(afterClassic, out flags2, out revs, out nameLength, out _);
+
+    /// <summary>0.8.0: also returns the optional install-id block that follows the sync block when present.</summary>
+    public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength, out byte[]? installId)
     {
         flags2 = 0;
         revs = Array.Empty<FieldRev>();
         nameLength = afterClassic.Length;
-        if (afterClassic.Length < Size) return false;
-        int start = afterClassic.Length - Size;
-        if (!TryRead(afterClassic.Slice(start), out flags2, out revs)) return false;
+        installId = null;
+        int end = afterClassic.Length;
+        if (end >= PhoneIdBlock.Size && PhoneIdBlock.TryRead(afterClassic.Slice(end - PhoneIdBlock.Size), out var id))
+        {
+            installId = id;
+            end -= PhoneIdBlock.Size;
+        }
+        if (end < Size) return false;
+        int start = end - Size;
+        if (!TryRead(afterClassic.Slice(start, Size), out flags2, out revs)) return false;
         nameLength = start;
         if (nameLength > 0 && afterClassic[nameLength - 1] == 0) nameLength--;
         return true;

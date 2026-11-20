@@ -67,19 +67,19 @@ internal sealed class NetWatcher : IDisposable
             if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
             if (!DeviceRules.IsTetheringAdapter(ni.Description, ni.Name)) continue;
             bool up = ni.OperationalStatus == OperationalStatus.Up;
-            if (!up) { candidates?.Add(new TetherAdapterInfo(ni.Description, ni.Name, false, false)); continue; }
+            if (!up) { candidates?.Add(new TetherAdapterInfo(DeviceNames.Clean(ni.Description), DeviceNames.Clean(ni.Name), false, false)); continue; }
             var ip = ni.GetIPProperties();
             int idx = -1;
             try { idx = ip.GetIPv4Properties()?.Index ?? -1; } catch (NetworkInformationException) { }
             var uni = ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork);
             var local = uni?.Address;
-            candidates?.Add(new TetherAdapterInfo(ni.Description, ni.Name, true, local is not null && !IsLinkLocal(local)));
+            candidates?.Add(new TetherAdapterInfo(DeviceNames.Clean(ni.Description), DeviceNames.Clean(ni.Name), true, local is not null && !IsLinkLocal(local)));
             if (local is null || result is not null) continue; // no IPv4 yet (DHCP still running) -> try again next tick
             int prefix = 24;
             try { if (uni!.PrefixLength is > 0 and <= 32) prefix = uni.PrefixLength; } catch (Exception) { }
             var phone = ip.GatewayAddresses.Select(g => g.Address).FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !a.Equals(IPAddress.Any))
                         ?? ip.DhcpServerAddresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-            result = new TetherAdapter(ni.Id, ni.Name, ni.Description, idx, local, phone,
+            result = new TetherAdapter(ni.Id, DeviceNames.Clean(ni.Name), DeviceNames.Clean(ni.Description), idx, local, phone,
                                        haveBest && idx >= 0 && best == (uint)idx, prefix);
             if (candidates is null) break;
         }

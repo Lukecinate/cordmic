@@ -221,6 +221,44 @@ public sealed class Receiver : IDisposable
     public double RenderPeriodMs => _renderPeriodMs;
     /// <summary>Target actually in use (preset, raised when the render period cannot sustain it).</summary>
     public double EffectiveJitterMs => _jb.Target * FramesPerPacket * 1000.0 / _sampleRate;
+    /// <summary>Current drift estimate in ppm (NaN if the resampler is off).</summary>
+    public double DriftPpm => _jb.DriftPpm;
+    /// <summary>Monotonic ticks when the current peer was first accepted; 0 if none.</summary>
+    public long PeerSinceTicks { get; private set; }
+    public bool PhoneSeedApplied { get; private set; }
+    private double _seedTargetMs = double.NaN, _seedPpm;
+    private bool _seedFromHistory;
+    private double _seedConfidence;
+
+    /// <summary>0.8.0 M0: start the jitter buffer from a learned target and drift. Logs once per peer.</summary>
+    public void ApplyPhoneSeed(double targetMs, double driftPpm, bool fromHistory, double confidence)
+    {
+        _seedTargetMs = PhoneLinkHistory.ClampTargetMs(targetMs);
+        _seedPpm = PhoneLinkHistory.ClampPpm(fromHistory ? driftPpm : 0);
+        _seedFromHistory = fromHistory;
+        _seedConfidence = confidence;
+        ApplyStoredSeed(log: !PhoneSeedApplied);
+        PhoneSeedApplied = true;
+    }
+
+    public void ClearPhoneSeedFlag()
+    {
+        PhoneSeedApplied = false;
+        _seedTargetMs = double.NaN;
+    }
+
+    /// <summary>Re-apply a stored seed after a period change or buffer rebuild so the preset floor does not wipe it.</summary>
+    private void ApplyStoredSeed(bool log)
+    {
+        if (!double.IsFinite(_seedTargetMs)) return;
+        double pktMs = FramesPerPacket <= 0 ? 5 : FramesPerPacket * 1000.0 / _sampleRate;
+        int packets = Math.Max(1, (int)Math.Round(_seedTargetMs / pktMs));
+        int floored = JitterPolicy.EffectiveTargetPackets(_seedTargetMs, PolicyPeriodMs, pktMs);
+        packets = Math.Max(packets, floored);
+        _jb.Seed(packets, _seedPpm);
+        if (log)
+            Log?.Invoke(PhoneLinkHistory.SeedLogLine(_jb.Target * pktMs, _seedFromHistory ? _seedPpm : 0, _seedFromHistory, _seedConfidence));
+    }
 
     /// <summary>Voice-chain settings pushed to a 0.5.0 phone on the next ping. A 0.4.2 phone ignores the payload.</summary>
     public NoiseMode NoiseMode { get; set; } = NoiseMode.Light;
@@ -309,11 +347,13 @@ public sealed class Receiver : IDisposable
             if (jb.Retarget(target, max, high, PolicyPeriodMs))
             {
                 jb.StudioMode = studio;
+                ApplyStoredSeed(log: false);
                 LogTarget(pktMs, target);
                 return;
             }
         }
         _jb = MakeJb(FramesPerPacket);
+        ApplyStoredSeed(log: false);
         LogTarget(pktMs, target);
     }
 
@@ -527,7 +567,12 @@ public sealed class Receiver : IDisposable
                 ResetSessionCounters();
             }
             Peer = addr;
-            if (wasIdle) ResumeStudio();
+            if (wasIdle)
+            {
+                PeerSinceTicks = Stopwatch.GetTimestamp();
+                ClearPhoneSeedFlag();
+                ResumeStudio();
+            }
             PeerChanged?.Invoke(addr);
         }
         _peerLastTicks = Stopwatch.GetTimestamp();
@@ -540,6 +585,8 @@ public sealed class Receiver : IDisposable
         // A new session from this address has to pair again when pairing is on.
         _paired.Remove(old.Address);
         Peer = null;
+        PeerSinceTicks = 0;
+        ClearPhoneSeedFlag();
         // 0.6.2: stop Studio and concealment while no phone is connected (0.6.1 kept concealing and counting for the
         // whole idle period); the counters restart from zero when the next session begins.
         SuspendStudio();
@@ -729,6 +776,7 @@ public sealed class Receiver : IDisposable
                 {
                     LogLimited("pktsize", $"packet size changed {FramesPerPacket} -> {h.Frames} frames");
                     _jb = MakeJb(h.Frames);
+                    ApplyStoredSeed(log: false);
                 }
             }
         }
@@ -807,7 +855,7 @@ public sealed class Receiver : IDisposable
                 _pingSeq++;
                 var payload = _pingPkt.AsSpan(Protocol.HeaderSize);
                 LinkControl.WritePing(payload, NoiseCancellation, Agc, MicGainDb, _ctrlSeq, extended: true, VoiceClarity, NoiseMode, FrontFocus, FrontFocusAudioRecord);
-                byte flags2 = SettingsSync.FlagPeerSync | SettingsSync.FlagWantDiag;
+                byte flags2 = SettingsSync.FlagPeerSync | SettingsSync.FlagWantDiag | SettingsSync.FlagWantPhoneKey;
                 if (FrontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
                 if (VoiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
                 if (StudioActive) flags2 |= SettingsSync.FlagStudio;
