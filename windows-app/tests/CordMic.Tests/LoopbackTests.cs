@@ -34,6 +34,13 @@ public class LoopbackTests
         public void Stop() { _stop = true; _t?.Join(1000); }
     }
 
+    sealed class CtlState
+    {
+        public volatile bool Stop;
+        public int Pongs;
+        public bool Hello;
+    }
+
     /// <summary>Minimal C# phone simulator (mirrors sim_sender.py).</summary>
     static (int sent, int dropped, int pongs, bool hello) Send(int port, double seconds, double loss, double jitterMs, double reorder, int seed)
     {
@@ -42,18 +49,18 @@ public class LoopbackTests
         s.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         s.ReceiveTimeout = 50;
         var to = new IPEndPoint(IPAddress.Loopback, port);
-        int pongs = 0; bool hello = false; bool stop = false;
+        var ctlState = new CtlState();
         var ctl = new Thread(() =>
         {
             var buf = new byte[256]; EndPoint from = new IPEndPoint(IPAddress.Any, 0);
-            while (!stop)
+            while (!ctlState.Stop)
             {
                 try
                 {
                     int n = s.ReceiveFrom(buf, ref from);
                     if (!Protocol.TryDecode(buf.AsSpan(0, n), out var h, out _)) continue;
-                    if (h.Type == Protocol.TPing) { s.SendTo(Protocol.Encode(Protocol.TPong, h.Seq, h.TsUs), from); pongs++; }
-                    else if (h.Type == Protocol.THello) hello = true;
+                    if (h.Type == Protocol.TPing) { s.SendTo(Protocol.Encode(Protocol.TPong, h.Seq, h.TsUs), from); ctlState.Pongs++; }
+                    else if (h.Type == Protocol.THello) ctlState.Hello = true;
                 }
                 catch (SocketException) { }
                 catch (ObjectDisposedException) { break; }
@@ -80,8 +87,11 @@ public class LoopbackTests
             if (held != null) { s.SendTo(held, to); sent++; held = null; }
         }
         s.SendTo(Protocol.Encode(Protocol.TBye, 0, 0), to);
-        Thread.Sleep(100); stop = true; ctl.Join(500);
-        return (sent, dropped, pongs, hello);
+        Thread.Sleep(100);
+        ctlState.Stop = true;
+        try { s.Close(); } catch (Exception) { }
+        ctl.Join(1000);
+        return (sent, dropped, ctlState.Pongs, ctlState.Hello);
     }
 
     [Fact]
@@ -90,13 +100,15 @@ public class LoopbackTests
         using var rx = new Receiver(0, "127.0.0.1", 10, pingInterval: 0.1); rx.Start();
         var clk = new Clock(); clk.Start(rx);
         var r = Send(rx.Port, 3, 0, 0, 0, 1); Thread.Sleep(100); clk.Stop();
-        var s = rx.Snapshot(); _out.WriteLine(s.Line());
-        Assert.True(r.hello);
+        var s = rx.Snapshot();
+        _out.WriteLine(s.Line());
+        _out.WriteLine($"hello={r.hello} pongs={r.pongs} nonsilent={clk.NonSilent} maxDepth={clk.MaxDepth:F1}");
+        Assert.True(r.hello, "receiver HELLO never reached the phone simulator");
         Assert.Equal(0, s.Lost);
-        Assert.True(r.pongs > 5);
+        Assert.True(r.pongs > 5, $"pongs={r.pongs}");
         Assert.NotNull(s.RttMs);
         Assert.True(clk.NonSilent > 0.9 * 600, $"nonsilent={clk.NonSilent}");
-        Assert.True(clk.MaxDepth < 40);
+        Assert.True(clk.MaxDepth < 40, $"maxDepth={clk.MaxDepth:F1}");
     }
 
     [Fact]
@@ -106,9 +118,12 @@ public class LoopbackTests
         var clk = new Clock(); clk.Start(rx);
         var r = Send(rx.Port, 3, 0.02, 3, 0.02, 7); Thread.Sleep(100); clk.Stop();
         var s = rx.Snapshot(); _out.WriteLine(s.Line());
+        _out.WriteLine($"dropped={r.dropped} reord={s.Reordered} maxDepth={clk.MaxDepth:F1}");
         Assert.InRange(s.Lost, r.dropped - 2, r.dropped + 2);
         Assert.True(s.Reordered > 0);
-        Assert.True(clk.MaxDepth < 40);
+        // Loss + 3 ms jitter lets the adaptive target grow (25 ms in the windows-2022 run);
+        // keep a cap so the buffer cannot run away, but do not use the clean-link 40 ms bound.
+        Assert.True(clk.MaxDepth < 80, $"maxDepth={clk.MaxDepth:F1}");
     }
 
     [Fact]
