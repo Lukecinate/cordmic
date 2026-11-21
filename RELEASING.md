@@ -39,6 +39,27 @@ Bump only through a reviewed PR (Dependabot is enabled for `github-actions`).
 A CI check (`tools/release/check-action-pins.sh`) fails if any `uses:` is not a
 40-character lowercase hex SHA.
 
+## Dependency and tool pins
+
+- `dotnet restore --locked-mode` is used on CI for `CordMic.App` and `CordMic.Tests`.
+  The lock files (`packages.lock.json`) sit next to those projects. After changing
+  a package reference, regenerate with `dotnet restore --use-lock-file --force-evaluate`
+  and commit the lock file. Other projects have no package references, so they do
+  not keep a lock file (having one would fight `win-x64` vs lock-file RID checks).
+- Android builds use Gradle dependency verification (`android/gradle/verification-metadata.xml`)
+  with SHA-256 checksums. After adding or bumping a dependency, regenerate from
+  `android/` with
+  `./gradlew --write-verification-metadata sha256 testReleaseUnitTest assembleRelease -PcordmicSkipSigning=true`
+  and commit the file.
+- The Windows packaging job installs official NSIS **3.11** (portable zip) from
+  SourceForge, after checking SHA-256
+  `c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1`
+  (looked up 2026-11-21 from the official NSIS 3.11 zip and independently hashed
+  here). Script: `tools/release/install-nsis.sh`. CI also compiles the installer
+  script in a package-smoke job that does not need SignPath. Local Linux packaging
+  may use distro `nsis` 3.11, which is the same version.
+
+
 ## Chain (every non-key step is scripted)
 
 1. **Tests** — `test-windows` and `test-android` in `.github/workflows/release.yml`.

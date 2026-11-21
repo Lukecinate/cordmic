@@ -118,7 +118,7 @@ public class PolicySimTests
             Assert.True(after.SlipPerMin < 900, $"{row.name} slip {after.SlipPerMin} still hunting");
             Assert.True(after.Orate < 80, $"{row.name} after orate {after.Orate} too high");
         }
-        File.WriteAllText("/tmp/cordmic-052-sim.txt", report.ToString());
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "cordmic-052-sim.txt"), report.ToString());
     }
 
     [Fact]

@@ -24,8 +24,10 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: "8.0.x"
+      - name: Restore (locked)
+        run: dotnet restore windows-app/tests/CordMic.Tests/CordMic.Tests.csproj --locked-mode
       - name: Test CordMic.Core
-        run: dotnet test windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --nologo
+        run: dotnet test windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --nologo --no-restore
 
   test-android:
     runs-on: ubuntu-24.04
@@ -39,3 +41,34 @@ jobs:
       - name: Android unit tests
         working-directory: android
         run: ./gradlew testReleaseUnitTest --no-daemon
+
+  package-smoke:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore (locked)
+        run: dotnet restore windows-app/src/CordMic.App/CordMic.App.csproj --locked-mode
+      - name: Publish unsigned Windows app
+        run: >
+          dotnet publish windows-app/src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained
+          --no-restore
+          -p:PublishSingleFile=true
+          -p:Deterministic=true
+          -p:ContinuousIntegrationBuild=true
+          -o windows-app/publish
+      - name: Install pinned NSIS 3.11
+        shell: bash
+        run: bash tools/release/install-nsis.sh
+      - name: Compile installer script
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' windows-app/src/CordMic.App/CordMic.App.csproj | head -1)
+          VERSION_NUMERIC=${VERSION%%-*}
+          mkdir -p dist
+          command -v makensis >/dev/null 2>&1 || command -v makensis.exe >/dev/null 2>&1
+          (cd windows-app/installer && makensis -V2 -DVERSION="$VERSION" -DVERSION_NUMERIC="$VERSION_NUMERIC" cordmic.nsi)
+          ls -la dist

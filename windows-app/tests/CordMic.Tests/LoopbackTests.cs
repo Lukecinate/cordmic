@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using CordMic.Core;
+using CordMic.Tests;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -21,8 +22,8 @@ public class LoopbackTests
                 var b = new byte[480]; var sw = Stopwatch.StartNew(); double next = 0;
                 while (!_stop)
                 {
-                    next += 0.005; var w = next - sw.Elapsed.TotalSeconds;
-                    if (w > 0) Thread.Sleep(TimeSpan.FromSeconds(w));
+                    next += 0.005;
+                    TestPace.WaitUntilSeconds(sw, next);
                     rx.Pull(b);
                     if (b.Any(x => x != 0)) NonSilent++;
                     MaxDepth = Math.Max(MaxDepth, rx.Jitter.DepthMs());
@@ -65,8 +66,7 @@ public class LoopbackTests
         var pcm = new byte[480];
         for (int seq = 0; seq < n; seq++)
         {
-            var w = seq * 0.005 - sw.Elapsed.TotalSeconds;
-            if (w > 0) Thread.Sleep(TimeSpan.FromSeconds(w));
+            TestPace.WaitUntilSeconds(sw, seq * 0.005);
             for (int i = 0; i < 240; i++)
             {
                 short v = (short)(0.3 * 32767 * Math.Sin(2 * Math.PI * 440 * (seq * 240 + i) / 48000));

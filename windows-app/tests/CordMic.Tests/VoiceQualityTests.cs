@@ -139,7 +139,7 @@ public class VoiceQualityTests
 
         // Rec1 (Default+AAudio+NC+gain0) had speech <250/1–4 kHz ≈ 7.6. Replay that file
         // through Voice Clarity alone so the notes can show the EQ's effect on the real voice.
-        const string rec1 = "/tmp/cordmic-recs/rec1.s16";
+        var rec1 = Path.Combine(Path.GetTempPath(), "cordmic-recs", "rec1.s16");
         if (File.Exists(rec1))
         {
             var bytes = File.ReadAllBytes(rec1);
@@ -155,7 +155,7 @@ public class VoiceQualityTests
             L($"rec1 VoiceClarity-only mud <250/1-4k {lowB / Math.Max(midB, 1e-12):F3} -> {lowA / Math.Max(midA, 1e-12):F3}  low {lowA / Math.Max(lowB, 1e-12):F3}×");
         }
 
-        File.WriteAllText("/tmp/cordmic-053-quality-after.txt", lines.ToString());
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "cordmic-053-quality-after.txt"), lines.ToString());
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public class VoiceQualityTests
         double min = seconds / 60.0;
         int clicks = Clicks(pcm, 1000, Math.Max(0, po - 2000));
         _out.WriteLine($"drift 2.7ms {seconds}s: slips={jb.Stats.SampleSlips} ({jb.Stats.SampleSlips / min:F0}/min, {jb.Stats.SampleSlips / (double)seconds:F1}/s) urate={jb.Stats.Underruns} orate={jb.Stats.OverflowDrops} clicks={clicks} ppm={jb.DriftPpm:F1} bufavg={jb.AvgDepthMs:F1} ms");
-        File.AppendAllText("/tmp/cordmic-053-quality-after.txt",
+        File.AppendAllText(Path.Combine(Path.GetTempPath(), "cordmic-053-quality-after.txt"),
             $"drift 2.7ms {seconds}s: slips={jb.Stats.SampleSlips} ({jb.Stats.SampleSlips / (double)seconds:F1}/s) urate={jb.Stats.Underruns} orate={jb.Stats.OverflowDrops} clicks={clicks} ppm={jb.DriftPpm:F1} bufavg={jb.AvgDepthMs:F1} ms\n");
         Assert.True(jb.Stats.SampleSlips < 80, $"slips {jb.Stats.SampleSlips} — still hunting");
         Assert.True(Math.Abs(jb.DriftPpm) <= 150.0001);

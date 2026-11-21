@@ -27,8 +27,9 @@ android {
     // Release signing: point CORDMIC_SIGNING_PROPERTIES (or -PcordmicSigning=...) at a properties file with
     // storeFile, storePassword, keyAlias, keyPassword. The keystore and passwords are never stored in the repo.
     // Without it, local release builds fall back to the debug key.
+    val skipSigning = hasProperty("cordmicSkipSigning")
     val signingFile = (findProperty("cordmicSigning") as String?) ?: System.getenv("CORDMIC_SIGNING_PROPERTIES")
-    val signingProps = signingFile?.let { f -> file(f).takeIf { it.isFile }?.let { Properties().apply { it.inputStream().use(::load) } } }
+    val signingProps = if (skipSigning) null else signingFile?.let { f -> file(f).takeIf { it.isFile }?.let { Properties().apply { it.inputStream().use(::load) } } }
     signingConfigs {
         if (signingProps != null) create("release") {
             storeFile = file(signingProps.getProperty("storeFile"))
@@ -43,7 +44,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = if (signingProps != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+            // CI unsigned artifacts: -PcordmicSkipSigning=true (no keystore on the runner).
+            // Local release builds without a properties file still fall back to the debug key.
+            signingConfig = when {
+                skipSigning -> null
+                signingProps != null -> signingConfigs.getByName("release")
+                else -> signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {

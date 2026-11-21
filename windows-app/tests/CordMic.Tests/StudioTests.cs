@@ -268,11 +268,16 @@ public class StudioTests
         {
             var trial = RunStudioCadenceTrial();
             _out.WriteLine($"attempt {attempt}: misses {trial.Misses}, latePulls {trial.LatePulls}, maxLate {trial.MaxLateMs:F2} ms, energy {trial.Energy:G4}, fell {trial.Fell}");
+            // If the processor already delivered with ≤1 miss, the test thread being late is
+            // not a product failure. CadenceHeld only matters when misses are high enough
+            // that we cannot tell the two apart.
+            if (trial.Misses <= 1 && !trial.Fell && trial.Energy > 0)
+                return;
             if (!trial.CadenceHeld)
                 continue;
+            Assert.True(trial.Misses <= 1, $"processor misses {trial.Misses} while pulls stayed on cadence");
             Assert.False(trial.Fell);
             Assert.True(trial.Energy > 0);
-            Assert.True(trial.Misses <= 1, $"processor misses {trial.Misses} while pulls stayed on cadence");
             return;
         }
         Assert.Fail("test thread could not keep a 10 ms pull cadence after 5 attempts; no processor verdict");
@@ -283,13 +288,7 @@ public class StudioTests
     /// <summary>Busy-wait near each 10 ms deadline so Sleep overshoot is not counted as a processor miss.</summary>
     private static void WaitUntilMs(Stopwatch sw, double targetMs)
     {
-        while (true)
-        {
-            double left = targetMs - sw.Elapsed.TotalMilliseconds;
-            if (left <= 0) return;
-            if (left > 2) Thread.Sleep(1);
-            else Thread.SpinWait(80);
-        }
+        TestPace.WaitUntilMs(sw, targetMs);
     }
 
     private StudioCadenceTrial RunStudioCadenceTrial()

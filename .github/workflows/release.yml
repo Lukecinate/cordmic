@@ -37,8 +37,10 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: "8.0.x"
+      - name: Restore (locked)
+        run: dotnet restore windows-app/tests/CordMic.Tests/CordMic.Tests.csproj --locked-mode
       - name: Test
-        run: dotnet test windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --nologo
+        run: dotnet test windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --nologo --no-restore
 
   test-android:
     if: ${{ github.event_name == 'push' || inputs.publish == false }}
@@ -65,13 +67,15 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: "8.0.x"
+      - name: Restore (locked)
+        run: dotnet restore windows-app/src/CordMic.App/CordMic.App.csproj --locked-mode
       - name: Publish unsigned Windows app
         shell: bash
         run: |
           set -euo pipefail
           VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' windows-app/src/CordMic.App/CordMic.App.csproj | head -1)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          dotnet publish windows-app/src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained \
+          dotnet publish windows-app/src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained --no-restore \
             -p:PublishSingleFile=true \
             -p:Deterministic=true \
             -p:ContinuousIntegrationBuild=true \
@@ -98,7 +102,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - name: Assemble unsigned release APK (no keystore on the runner)
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon -PcordmicSkipSigning=true || ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -PcordmicSkipSigning=true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsigned-apk
@@ -147,6 +151,9 @@ jobs:
         with:
           name: signed-inner
           path: windows-app/publish
+      - name: Install pinned NSIS 3.11
+        shell: bash
+        run: bash tools/release/install-nsis.sh
       - name: Build installer and portable zip from signed binaries
         shell: bash
         run: |
@@ -154,10 +161,7 @@ jobs:
           VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' windows-app/src/CordMic.App/CordMic.App.csproj | head -1)
           VERSION_NUMERIC=${VERSION%%-*}
           mkdir -p dist
-          if ! command -v makensis >/dev/null 2>&1; then
-            echo "makensis is required on the runner; install a pinned NSIS 3.x before this job is first used"
-            exit 1
-          fi
+          command -v makensis >/dev/null 2>&1 || command -v makensis.exe >/dev/null 2>&1
           (cd windows-app/installer && makensis -V2 -DVERSION="$VERSION" -DVERSION_NUMERIC="$VERSION_NUMERIC" cordmic.nsi)
           printf 'CordMic portable copy. Keep this file: it tells CordMic to update this folder in place.\r\n' > windows-app/publish/portable.txt
           python3 - "$VERSION" <<'PY'

@@ -1,0 +1,5 @@
+# Signature test vectors are verified as exact bytes (ECDSA over the committed JSON).
+# Force LF so Windows checkouts do not rewrite them as CRLF.
+tools/keytool/testdata/** text eol=lf
+android/app/src/test/resources/release-manifest.json text eol=lf
+android/app/src/test/resources/release-manifest.json.sig text eol=lf

@@ -15,10 +15,10 @@ public class Release072Tests
         return d!.FullName;
     }
 
-    private static string RepoFile(string rel) => File.ReadAllText(Path.Combine(RepoDir(), rel));
+    private static string RepoFile(string rel) => File.ReadAllText(Path.Combine(RepoDir(), rel)).Replace("\r\n", "\n").Replace("\r", "\n");
 
     private static IEnumerable<(string File, string Text)> AppSources() =>
-        Directory.GetFiles(Path.Combine(RepoDir(), "src", "CordMic.App"), "*.cs").Select(f => (Path.GetFileName(f), File.ReadAllText(f)));
+        Directory.GetFiles(Path.Combine(RepoDir(), "src", "CordMic.App"), "*.cs").Select(f => (Path.GetFileName(f), File.ReadAllText(f).Replace("\r\n", "\n").Replace("\r", "\n")));
 
     /// <summary>Body of the first method/constructor whose signature matches <paramref name="signature"/> (brace matched).</summary>
     private static string Body(string src, string signature)
@@ -279,7 +279,9 @@ public class Release072Tests
     {
         var body = Body(RepoFile("src/CordMic.App/AppController.cs"), "private void OnTrayUpdateClicked()");
         int check = body.IndexOf("_updates.CheckAsync", StringComparison.Ordinal);
-        int show = body.IndexOf("ShowSettings(SettingsPage.Updates);\n", StringComparison.Ordinal);
+        // Last ShowSettings: the Available path also opens Settings after UpdateNowAsync;
+        // the check path must start CheckAsync before its own ShowSettings (newline-agnostic).
+        int show = body.LastIndexOf("ShowSettings(SettingsPage.Updates);", StringComparison.Ordinal);
         Assert.True(check > 0 && show > check, "the check must not depend on the Settings window");
         Assert.Contains("UpdatePhase.Available", body);
         Assert.Contains("UpdateNowAsync", body);
