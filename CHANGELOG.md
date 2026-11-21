@@ -67,6 +67,13 @@ existing tethering path until hardware gate G-M1 is decided.
   are embedded; until then the SHA-256SUMS path is unchanged. GitHub Actions workflows
   pin third-party actions by full commit SHA (looked up from official tags on 2026-11-21).
 
+### Added
+- M7 optional accessory binding: elevated helper verbs `install-accessory-binding`,
+  `remove-accessory-binding`, and `accessory-binding-status`. The catalog signature
+  is checked on a staged copy (TOCTOU). Unsigned packages are refused. Settings can
+  set up or remove the binding once a SignPath-signed catalog ships; this build still
+  refuses install (`docs/PENDING-HARDWARE-M7.md`).
+
 
 ## [0.8.0-beta.1] - 2026-11-21
 

@@ -13,6 +13,17 @@ internal static class Program
     {
         // Helper verbs run before the single-instance mutex so an elevated
         // --configure-cable launched from a running tray app actually does work.
+        if (CordMic.Core.Usb.AccessoryBindingArgs.Mentions(args))
+        {
+            if (!CordMic.Core.Usb.AccessoryBindingArgs.TryParse(args, out var accVerb, out var accErr)
+                || accVerb == CordMic.Core.Usb.AccessoryBindingArgs.Verb.None)
+            {
+                Console.Error.WriteLine(accErr ?? "invalid accessory helper arguments");
+                return CordMic.Core.Usb.AccessoryBindingArgs.ExitUsage;
+            }
+            return AccessoryBindingHelper.Run(accVerb);
+        }
+
         if (CableHelperArgs.MentionsHelperVerb(args))
         {
             if (!CableHelperArgs.TryParse(args, out var verb, out var err) || verb == CableHelperArgs.Verb.None)

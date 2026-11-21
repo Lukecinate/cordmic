@@ -532,7 +532,7 @@ internal static class RowFactory
             case "usbRetry":
                 return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.TryUsbAgain(); return Task.CompletedTask; }, () => null);
             case "usbSetup":
-                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.UsbSetup(); return Task.CompletedTask; }, () => null);
+                return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.UsbSetup(); return Task.CompletedTask; }, () => app.UsbBindingOem is { } oem ? L.T("set.usbSetup.installed", oem) : null) { Caption = () => app.UsbSetupCaption };
             case "copyDiagnostics":
                 return new ButtonRow(f, T(item.LabelKey), H(item), () => { app.CopySanitizedDiagnostics(); return Task.CompletedTask; }, () => null);
             case "fixRoute":

@@ -906,10 +906,59 @@ internal sealed class AppController : ApplicationContext
         Log("usb: try again (blocklist cleared locally when the route controller is wired)");
     }
 
+    public string? UsbBindingOem
+    {
+        get
+        {
+            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "CordMic", CordMic.Core.Usb.AccessoryBindingService.RecordFileName);
+            return new CordMic.Core.Usb.FileBindingRecordStore(path).Read()?.OemName;
+        }
+    }
+
+    public string UsbSetupCaption => string.IsNullOrEmpty(UsbBindingOem) ? L.T("set.usbSetup") : L.T("set.usbUndo");
+
     public void UsbSetup()
     {
-        // M7 will run the elevated verb only after a trusted catalog exists.
-        MessageBox.Show(L.T("status.usb.experimental"), "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (!string.IsNullOrEmpty(UsbBindingOem))
+        {
+            UsbUndo();
+            return;
+        }
+        var (_, _, ready) = EvaluateUsbPackage();
+        if (!ready.MayInstall)
+        {
+            Log("usb setup refused: " + ready.Reason);
+            MessageBox.Show(ready.Reason, "CordMic", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(Paths.ExePath, CordMic.Core.Usb.AccessoryBindingArgs.Install)
+            { UseShellExecute = true, Verb = "runas" });
+            Log("usb setup requested (elevated)");
+        }
+        catch (System.ComponentModel.Win32Exception) { Log("usb setup cancelled at UAC"); }
+    }
+
+    public void UsbUndo()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(Paths.ExePath, CordMic.Core.Usb.AccessoryBindingArgs.Remove)
+            { UseShellExecute = true, Verb = "runas" });
+            Log("usb setup removal requested (elevated)");
+        }
+        catch (System.ComponentModel.Win32Exception) { Log("usb setup removal cancelled at UAC"); }
+    }
+
+    (string Inf, string Cat, CordMic.Core.Usb.CatalogInstallPlan.Readiness Ready) EvaluateUsbPackage()
+    {
+        var dir = Path.Combine(Paths.ExeDir, "driver");
+        if (!Directory.Exists(dir)) dir = Paths.ExeDir;
+        var inf = Path.Combine(dir, CordMic.Core.Usb.CatalogInstallPlan.InfFileName);
+        var cat = Path.Combine(dir, CordMic.Core.Usb.CatalogInstallPlan.CatFileName);
+        var ready = CordMic.Core.Usb.CatalogInstallPlan.Evaluate(File.Exists(inf), File.Exists(cat), catalogSignatureTrusted: false, publisherMatches: false);
+        return (inf, cat, ready);
     }
 
     public void CopySanitizedDiagnostics()
