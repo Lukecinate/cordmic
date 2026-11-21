@@ -343,7 +343,7 @@ public class StudioTests
         var sw = Stopwatch.StartNew();
         for (int k = 0; k < 400 && !fired.IsSet; k++)
         {
-            while (sw.Elapsed.TotalMilliseconds < k * 10) Thread.Sleep(1);
+            TestPace.WaitUntilMs(sw, k * 10);
             sp.Pull(buf);
         }
         Assert.True(fired.Wait(2000));
