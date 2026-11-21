@@ -4,8 +4,19 @@ All notable changes to CordMic are documented here. Versions follow [Semantic Ve
 
 ## [0.8.0] - unreleased
 
-Work after 0.8.0-beta.2. This is not a release. Wire version stays 1. USB Auto routes stay on the
+Work after 0.8.0-beta.3. This is not a release. Wire version stays 1. USB Auto routes stay on the
 existing tethering path until hardware gate G-M1 is decided.
+
+## [0.8.0-beta.3] - 2026-11-21
+
+Pre-release of supply-chain pins, extra fuzz coverage, and Windows CI test fixes.
+This is not the latest stable release: 0.7.2 stays current for automatic updates.
+Install only if you want to test these changes. Wire version stays 1. Android
+`versionCode` is 24 / `versionName` 0.8.0-beta.3. The release APK is signed with
+the same key as 0.6.1–0.7.2. The Windows installer is not Authenticode-signed.
+
+The USB accessory route stays experimental and off by default. Automatic mode still
+uses USB tethering until hardware gate G-M1 is decided. Gate H remains unticked.
 
 ### Changed
 - CI restores .NET projects in locked mode (`packages.lock.json` for the app and tests).
@@ -13,7 +24,7 @@ existing tethering path until hardware gate G-M1 is decided.
   job installs official NSIS 3.11 after checking its SHA-256; a package-smoke job
   compiles the installer script without SignPath.
 - CI can assemble an unsigned release APK with `-PcordmicSkipSigning=true` (no keystore
-  on the runner).
+  on the runner). The .NET test suite also runs on windows-2022.
 
 ### Added
 - Extra route-controller chaos cases and transport/Android frame-decoder fuzz (split
