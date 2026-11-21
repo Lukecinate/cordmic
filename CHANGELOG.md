@@ -4,89 +4,70 @@ All notable changes to CordMic are documented here. Versions follow [Semantic Ve
 
 ## [0.8.0] - unreleased
 
-Work after 0.8.0-beta.1. This is not a release. Wire version stays 1. USB Auto routes stay on the
+Work after 0.8.0-beta.2. This is not a release. Wire version stays 1. USB Auto routes stay on the
 existing tethering path until hardware gate G-M1 is decided.
+
+## [0.8.0-beta.2] - 2026-11-21
+
+Pre-release of the 0.8.0 USB engine seam, Auto safety, and release tooling. This is not the latest
+stable release: 0.7.2 stays current for automatic updates. Install only if you want to test these
+changes. Wire version stays 1. Android `versionCode` is 23 / `versionName` 0.8.0-beta.2. The release
+APK is signed with the same key as 0.6.1–0.7.2. The Windows installer is not Authenticode-signed.
+
+The USB accessory route is experimental and off by default. Automatic mode still uses USB tethering,
+like 0.7.2, until hardware gate G-M1 is decided. Testers can turn the USB engine off from Settings,
+with `--no-usb-engine`, or with `%ProgramData%\CordMic\disable-usb-engine`. Settings can copy
+sanitized diagnostics (IP addresses and Windows user names removed; voice recordings are never
+included).
+
+### Added
+- Probe tools and an INF-only accessory binding for review. USB and MIDI routes stay behind a local
+  experimental opt-in. Unsigned catalogs are never installed.
+- USB transport seam: length-prefixed frames with CRC32C, resync after header or CRC errors, a
+  simulated pipe, and a fault-matrix, fuzz and short soak suite. Longer fuzz and soak runs stay
+  optional (`CORDMIC_FUZZ_MS`, `CORDMIC_SOAK_MS`).
+- Android accessory endpoint with a matching frame codec, a bounded accessory link, and status
+  strings (EN/ID). MIDI is not in the production app.
+- AOA handshake (requests 51–53) and WinUSB pipe policy defaults, tested against a simulated
+  control channel. Real WinUSB I/O remains a hardware check.
+- Route controller for Auto safety: a ready tethering path is left alone, USB is attempted at most
+  once per plug-in, a failure after START asks for a replug then falls back, and a phone is skipped
+  after three failed sessions (cleared by Try USB again).
+- Settings → Connection: USB mode (Automatic stays on tethering; USB is labelled experimental),
+  Turn off the USB engine, Try USB again, Set up USB connection, and Copy sanitized diagnostics.
+- Audio quality gates are config-driven and marked provisional until a widened bench and at least
+  three recordings of five minutes or more are collected. The latency budget is median ≤ tethering
+  + 2 ms and p95 ≤ tethering + 10 ms. “Replug needed” is a beta-exit failure (target 0 in 30 armed
+  sessions; more than 1 blocks the gate).
+- Release chain documents and scripts: code-signing policy, a SignPath application draft that is
+  not submitted, a keystore backup procedure, `RELEASING.md` (deputy still a placeholder), an
+  incident and rollback runbook, and a dry-run timing note. Offline manifest signing stays manual.
+  The updater will require a signed release manifest once K1/K2 public keys are embedded; until
+  then the SHA-256SUMS path is unchanged. GitHub Actions are pinned by full commit SHA.
+- Optional accessory-binding helper verbs. The catalog signature is checked on a staged copy.
+  Unsigned packages are refused. This build has no SignPath-signed catalog, so Set up USB
+  connection refuses to install.
+- Gate H hardware checklist (`docs/release-checklists/0.8.0.md`), still unticked.
 
 ### Fixed
 - `windows-app/build.sh` creates `dist/` before NSIS runs, so a clean tree no longer fails with
-  "Can't open output file".
+  “Can't open output file”.
 - The Studio processor delivery test keeps the same miss threshold (at most one miss in 3 s) but
-  busy-waits to the 10 ms pull cadence and retries only when the test thread itself was late,
-  so a loaded machine is not counted as a processor failure.
-
-### Added
-- M1 probe tools and a read-only USB catalog report (`cordmic-usbprobe`, `cordmic-midiprobe`),
-  an INF-only accessory binding for review, and `docs/PENDING-HARDWARE-M1.md`. Auto still uses
-  USB tethering until hardware gate G-M1 is decided; USB and MIDI routes stay behind a local
-  experimental opt-in (default off). Unsigned catalogs are never installed.
-
-### Added
-- M2 USB transport seam: length-prefixed frames with CRC32C, resync after header or CRC
-  errors, a simulated pipe, and a fault-matrix, fuzz and short soak suite. The 30-minute fuzz
-  and 8-hour soak stay optional (`CORDMIC_FUZZ_MS`, `CORDMIC_SOAK_MS`) for nightly runs; default
-  CI covers the same fault classes in a shorter window.
-
-### Fixed
+  busy-waits to the 10 ms pull cadence and retries only when the test thread itself was late.
 - Discovery HELLO probes in the UDP receiver now use `Environment.TickCount64` for the 1 s
   interval, so a wall-clock jump cannot fire a probe storm.
 
-### Added
-- M3 Android accessory endpoint: USB frame codec matching the PC engine, `AccessoryLink`
-  (bounded queue, 40 ms audio drop, 250 ms keepalive, BYE on stop), an accessory intent
-  filter, and status strings (EN/ID). Accessory is used when the system attaches it; Auto
-  on the PC still stays on tethering until G-M1. MIDI is not in the production app.
-
-### Added
-- M4 AOA handshake (requests 51–53 with timeouts) and WinUSB pipe policy defaults, tested
-  against a simulated control channel and device watcher. Real WinUSB I/O and the 30-minute
-  stream remain PENDING-HARDWARE (`docs/PENDING-HARDWARE-M4.md`).
-
-### Added
-- M5 route controller for Auto safety: a ready tethering path is left alone, USB is attempted
-  at most once per plug-in, a failure after START asks for a replug then falls back, and a
-  phone is skipped after three failed sessions (cleared by Try USB again). Automatic still
-  uses USB tethering until hardware gate G-M1 is decided; USB stays behind a local experimental
-  opt-in (Settings, or `%ProgramData%\CordMic\enable-experimental-usb`). The kill switch is
-  in Settings, `--no-usb-engine`, and `%ProgramData%\CordMic\disable-usb-engine`.
-- Settings → Connection: USB mode (Automatic stays on tethering; USB is labelled experimental),
-  Turn off the USB engine, Try USB again, Set up USB connection, and Copy sanitized diagnostics
-  (IP addresses and Windows user names removed; voice recordings are never included).
-- Audio quality gates are config-driven and marked provisional until the widened bench and at
-  least three recordings of five minutes or more are collected. The aligned latency budget is
-  median ≤ tethering + 2 ms and p95 ≤ tethering + 10 ms; “replug needed” is a beta-exit failure
-  (target 0 in 30 armed sessions; more than 1 blocks the gate).
-
-
-### Added
-- M6 release chain: `CODE_SIGNING.md`, a SignPath application draft that is not submitted,
-  a keystore backup procedure and scripts (the original keystore is never moved or printed),
-  `RELEASING.md` (deputy still a placeholder), an incident and rollback runbook, and
-  `docs/RELEASE-DRY-RUN.md`. Every non-key release step has a script; offline manifest
-  signing stays manual. `cordmic-keytool` generates encrypted ECDSA P-256 keys and signs
-  manifests. The updater verifies a signed `release-manifest.json` once K1/K2 public keys
-  are embedded; until then the SHA-256SUMS path is unchanged. GitHub Actions workflows
-  pin third-party actions by full commit SHA (looked up from official tags on 2026-11-21).
-
-### Added
-- M7 optional accessory binding: elevated helper verbs `install-accessory-binding`,
-  `remove-accessory-binding`, and `accessory-binding-status`. The catalog signature
-  is checked on a staged copy (TOCTOU). Unsigned packages are refused. Settings can
-  set up or remove the binding once a SignPath-signed catalog ships; this build still
-  refuses install (`docs/PENDING-HARDWARE-M7.md`).
-
-### Added
-- M8 Gate H checklist (`docs/release-checklists/0.8.0.md`), still unticked: aligned
-  latency budget (median ≤ tethering + 2 ms, p95 ≤ + 10 ms), “replug needed”
-  as a beta-exit failure (target 0 in 30 armed sessions; more than 1 blocks the
-  gate), the widened bench, and at least three recordings of five minutes or more
-  before audio thresholds are locked. This is not a beta or stable tag.
-
-### Changed
-- M9 README (EN/ID): 0.7.2 stays the current stable release; USB in Automatic
-  stays on tethering until G-M1; the accessory USB path is labelled experimental;
-  company and managed-PC deployment is unsupported until a later review. No
-  0.8.0 tag or GitHub release is published in this work.
-
+### Known limits
+- Hardware gate G-M1 is not decided. Automatic mode does not attempt the USB accessory route.
+- Real WinUSB streaming, unplug/replug, latency versus tethering, and the widened test bench
+  (non-Samsung phone, Windows 10 and Windows 11, Memory Integrity on) have not been run yet.
+  Audio thresholds stay provisional until at least three recordings of five minutes or more
+  are collected. “Replug needed” has no field count yet.
+- The optional accessory catalog is unsigned in this build, so USB setup is refused.
+- SignPath application, offline release keys (K1/K2), and an O1 attestation cost ceiling are
+  maintainer actions and have not been done. Company and managed-PC deployment is unsupported
+  until a later review.
+- Gate H is unticked. This pre-release must not be treated as 0.8.0 stable.
 
 ## [0.8.0-beta.1] - 2026-11-21
 

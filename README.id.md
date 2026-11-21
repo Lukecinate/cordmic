@@ -9,7 +9,7 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi stabil saat ini: **0.7.2**. Pra-rilis **0.8.0-beta.1** ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)).
+Versi stabil saat ini: **0.7.2**. Pra-rilis saat ini adalah **0.8.0-beta.2** (setelah 0.8.0-beta.1), ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)).
 
 Jalur USB aksesori dalam pengerjaan 0.8.0 bersifat **eksperimental** dan mati secara bawaan. Mode otomatis tetap memakai tethering USB, seperti 0.7.2, sampai gerbang perangkat keras G-M1 diputuskan. Pemasangan di PC perusahaan atau yang dikelola TI **belum didukung** sampai ada tinjauan tersendiri; tidak ada panduan instalasi untuk admin.
 
