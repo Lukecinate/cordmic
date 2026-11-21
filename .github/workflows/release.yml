@@ -1,0 +1,300 @@
+# Release chain for tags v*.*.*. Does not publish "latest" until a maintainer
+# starts the verify-and-publish job. No pull_request_target. No self-hosted
+# runners. Secrets are never echoed; set -x is forbidden.
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Run verify-and-publish on an existing draft tag (this repository's tag in github.ref or the tag input)"
+        type: boolean
+        default: false
+      tag:
+        description: "Existing draft tag to verify and publish (workflow_dispatch only)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  test-windows:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Test
+        run: dotnet test windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --nologo
+
+  test-android:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew testReleaseUnitTest --no-daemon
+
+  build-unsigned:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    needs: [test-windows, test-android]
+    runs-on: windows-2022
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Publish unsigned Windows app
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' windows-app/src/CordMic.App/CordMic.App.csproj | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          dotnet publish windows-app/src/CordMic.App/CordMic.App.csproj -c Release -r win-x64 --self-contained \
+            -p:PublishSingleFile=true \
+            -p:Deterministic=true \
+            -p:ContinuousIntegrationBuild=true \
+            -p:SourceRevisionId=${GITHUB_SHA} \
+            -o unsigned/win
+        id: meta
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: unsigned-win
+        with:
+          name: unsigned-windows
+          path: unsigned/win/
+          if-no-files-found: error
+
+  build-unsigned-apk:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    needs: [test-windows, test-android]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Assemble unsigned release APK (no keystore on the runner)
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon -PcordmicSkipSigning=true || ./gradlew assembleRelease --no-daemon
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-apk
+          path: android/app/build/outputs/apk/release/*
+          if-no-files-found: error
+
+  sign-inner:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    needs: [build-unsigned]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-windows
+          path: unsigned/win
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: to-signpath
+        with:
+          name: to-signpath-inner
+          path: unsigned/win/
+      - name: Submit inner binaries to SignPath (manual approval in SignPath)
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: cordmic
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: inner-binaries
+          github-artifact-id: ${{ steps.to-signpath.outputs.artifact-id }}
+          output-artifact-directory: signed/win
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-inner
+          path: signed/win/
+
+  package:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    needs: [sign-inner]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-inner
+          path: windows-app/publish
+      - name: Build installer and portable zip from signed binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' windows-app/src/CordMic.App/CordMic.App.csproj | head -1)
+          VERSION_NUMERIC=${VERSION%%-*}
+          mkdir -p dist
+          if ! command -v makensis >/dev/null 2>&1; then
+            echo "makensis is required on the runner; install a pinned NSIS 3.x before this job is first used"
+            exit 1
+          fi
+          (cd windows-app/installer && makensis -V2 -DVERSION="$VERSION" -DVERSION_NUMERIC="$VERSION_NUMERIC" cordmic.nsi)
+          printf 'CordMic portable copy. Keep this file: it tells CordMic to update this folder in place.\r\n' > windows-app/publish/portable.txt
+          python3 - "$VERSION" <<'PY'
+          import os, sys, zipfile
+          ver = sys.argv[1]
+          out = os.path.join("dist", f"CordMic-Portable-{ver}.zip")
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+              for name in sorted(os.listdir("windows-app/publish")):
+                  z.write(os.path.join("windows-app/publish", name), name)
+          PY
+          ls -la dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: packaged
+        with:
+          name: packaged-unsigned-installer
+          path: dist/
+          if-no-files-found: error
+
+  sign-installer:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    needs: [package]
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packaged-unsigned-installer
+          path: dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: to-signpath
+        with:
+          name: to-signpath-installer
+          path: dist/
+      - name: Submit installer to SignPath (manual approval in SignPath)
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: cordmic
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.to-signpath.outputs.artifact-id }}
+          output-artifact-directory: signed-dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed-dist
+          path: signed-dist/
+
+  provenance:
+    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    needs: [sign-installer, build-unsigned-apk]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-dist
+          path: artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: unsigned-apk
+          path: artifacts
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: artifacts/*
+      - name: SHA256SUMS and unsigned manifest
+        run: |
+          set -euo pipefail
+          bash tools/release/hash-assets.sh artifacts > artifacts/SHA256SUMS
+          VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' windows-app/src/CordMic.App/CordMic.App.csproj | head -1)
+          CHANNEL=stable
+          case "$VERSION" in *-beta*|*-rc*) CHANNEL=beta ;; esac
+          mapfile -t files < <(find artifacts -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'release-manifest.json*' | sort)
+          python3 tools/release/make-manifest.py --version "$VERSION" --channel "$CHANNEL" --out artifacts/release-manifest.json "${files[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: artifacts/
+
+  draft:
+    if: ${{ github.event_name == 'push' }}
+    needs: [provenance]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: artifacts
+      - name: Create a draft GitHub release (not latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="Draft built by the release workflow from ${GITHUB_SHA}. The maintainer signs the APK and the release manifest, then runs verify-and-publish. This draft is not latest."
+          gh release create "$TAG" artifacts/* \
+            --draft \
+            --verify-tag \
+            --title "$TAG" \
+            --notes "$NOTES"
+
+  verify-and-publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download the draft and run publish checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh release download "$TAG" --dir artifacts
+          bash tools/release/publish-checks.sh --dir artifacts \
+            --manifest artifacts/release-manifest.json \
+            --sig artifacts/release-manifest.json.sig || {
+              echo "publish checks failed (Gate H, hashes, or signed manifest). Not publishing."
+              exit 1
+            }
+          PRE=()
+          case "$TAG" in
+            *-beta*|*-rc*) PRE+=(--prerelease) ;;
+          esac
+          # gh release edit publishes the draft; --latest only for stable tags.
+          if [ ${#PRE[@]} -eq 0 ]; then
+            gh release edit "$TAG" --draft=false --latest
+          else
+            gh release edit "$TAG" --draft=false --prerelease
+          fi

@@ -160,6 +160,20 @@ public sealed class UpdateEngine
                 ?? throw new UpdateException(UpdateError.NoAsset, "SHA256SUMS has no entry for " + name);
         }
 
+        // When K1/K2 public keys are embedded, a signed manifest is also required. Until then
+        // the SHA-256SUMS path above is unchanged.
+        if (ReleaseKeys.ManifestSigningRequired)
+        {
+            var man = await ReadAndVerifyManifestAsync(info, ct).ConfigureAwait(false);
+            var manFile = man.Files.FirstOrDefault(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrEmpty(manFile.Sha256Hex))
+                throw new UpdateException(UpdateError.NoAsset, "signed manifest has no entry for " + name);
+            if (!string.Equals(manFile.Sha256Hex, expected.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new UpdateException(UpdateError.HashMismatch, "SHA256SUMS does not match the signed manifest");
+            if (listed is long publishedSize && manFile.Size > 0 && manFile.Size != publishedSize)
+                throw new UpdateException(UpdateError.HashMismatch, "signed manifest size does not match the release");
+        }
+
         CleanOldStaging(StagingRoot);
         var dir = SecureFiles.CreatePrivateDirectory(StagingRoot, "update-");
         try
@@ -287,6 +301,56 @@ public sealed class UpdateEngine
         catch (Exception) { }
         CleanOldStaging(StagingRoot, restored?.Dir, nowUtc);
         return new RestoreResult(restored, unusable && restored is null);
+    }
+
+    /// <summary>
+    /// Downloads and verifies <c>release-manifest.json</c> when production keys are embedded.
+    /// Not called while <see cref="ReleaseKeys.Production"/> is empty.
+    /// </summary>
+    public async Task<ReleaseManifestData> ReadAndVerifyManifestAsync(AppUpdate.ReleaseInfo info, CancellationToken ct)
+    {
+        if (!info.AssetUrls.TryGetValue(ManifestVerifier.ManifestFileName, out var manUrl)
+            || !info.AssetUrls.TryGetValue(ManifestVerifier.SignatureFileName, out var sigUrl))
+            throw new UpdateException(UpdateError.NoAsset, "release has no signed manifest");
+        if (info.AssetSizes is { } sizes)
+        {
+            if (sizes.TryGetValue(ManifestVerifier.ManifestFileName, out var ms) && ms > ReleaseManifest.MaxBytes)
+                throw new UpdateException(UpdateError.TooLarge, "release-manifest.json is too large");
+            if (sizes.TryGetValue(ManifestVerifier.SignatureFileName, out var ss) && ss > ManifestSignature.MaxBytes)
+                throw new UpdateException(UpdateError.TooLarge, "release-manifest.json.sig is too large");
+        }
+        byte[] manBytes, sigBytes;
+        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            cts.CancelAfter(MetadataTimeout);
+            try
+            {
+                manBytes = await ReadLimitedAsync(manUrl, ReleaseManifest.MaxBytes, cts.Token).ConfigureAwait(false);
+                sigBytes = await ReadLimitedAsync(sigUrl, ManifestSignature.MaxBytes, cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            { throw new UpdateException(UpdateError.Network, "signed manifest download timed out"); }
+            catch (HttpRequestException e)
+            { throw new UpdateException(UpdateError.Network, e.Message, e); }
+        }
+        var status = ManifestVerifier.Verify(
+            manBytes, sigBytes, CurrentVersion, ReleaseManifest.ChannelStable,
+            ReleaseKeys.Production, ReleaseKeys.ProductionRevoked, out var manifest, out var detail);
+        status = ManifestVerifier.RequireNewer(status, manifest, CurrentVersion, out var newerDetail);
+        if (status != ManifestVerifyStatus.Ok || manifest is null)
+            throw new UpdateException(status is ManifestVerifyStatus.Downgrade ? UpdateError.Downgrade : UpdateError.HashMismatch, string.IsNullOrEmpty(detail) ? newerDetail : detail);
+        return manifest;
+    }
+
+    async Task<byte[]> ReadLimitedAsync(string url, int max, CancellationToken ct)
+    {
+        using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        if (resp.Content.Headers.ContentLength is long n && n > max)
+            throw new UpdateException(UpdateError.TooLarge, "signed manifest is too large");
+        var data = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        if (data.Length > max) throw new UpdateException(UpdateError.TooLarge, "signed manifest is too large");
+        return data;
     }
 }
 

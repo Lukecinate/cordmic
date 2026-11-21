@@ -1,0 +1,13 @@
+{
+  "product": "CordMic",
+  "version": "0.8.0",
+  "channel": "stable",
+  "files": [
+    {
+      "name": "CordMic-Setup-0.8.0.exe",
+      "size": 10,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "revokedKeyIds": []
+}

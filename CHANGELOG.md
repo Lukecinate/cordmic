@@ -57,7 +57,15 @@ existing tethering path until hardware gate G-M1 is decided.
   (target 0 in 30 armed sessions; more than 1 blocks the gate).
 
 
-
+### Added
+- M6 release chain: `CODE_SIGNING.md`, a SignPath application draft that is not submitted,
+  a keystore backup procedure and scripts (the original keystore is never moved or printed),
+  `RELEASING.md` (deputy still a placeholder), an incident and rollback runbook, and
+  `docs/RELEASE-DRY-RUN.md`. Every non-key release step has a script; offline manifest
+  signing stays manual. `cordmic-keytool` generates encrypted ECDSA P-256 keys and signs
+  manifests. The updater verifies a signed `release-manifest.json` once K1/K2 public keys
+  are embedded; until then the SHA-256SUMS path is unchanged. GitHub Actions workflows
+  pin third-party actions by full commit SHA (looked up from official tags on 2026-11-21).
 
 
 ## [0.8.0-beta.1] - 2026-11-21
