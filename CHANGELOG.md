@@ -74,6 +74,13 @@ existing tethering path until hardware gate G-M1 is decided.
   set up or remove the binding once a SignPath-signed catalog ships; this build still
   refuses install (`docs/PENDING-HARDWARE-M7.md`).
 
+### Added
+- M8 Gate H checklist (`docs/release-checklists/0.8.0.md`), still unticked: aligned
+  latency budget (median ≤ tethering + 2 ms, p95 ≤ + 10 ms), “replug needed”
+  as a beta-exit failure (target 0 in 30 armed sessions; more than 1 blocks the
+  gate), the widened bench, and at least three recordings of five minutes or more
+  before audio thresholds are locked. This is not a beta or stable tag.
+
 
 ## [0.8.0-beta.1] - 2026-11-21
 
