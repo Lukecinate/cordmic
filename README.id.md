@@ -11,6 +11,8 @@ Discord, Zoom, OBS, dan game sebagai mikrofon.
 
 Versi stabil saat ini: **0.7.2**. Pra-rilis **0.8.0-beta.1** ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)).
 
+Jalur USB aksesori dalam pengerjaan 0.8.0 bersifat **eksperimental** dan mati secara bawaan. Mode otomatis tetap memakai tethering USB, seperti 0.7.2, sampai gerbang perangkat keras G-M1 diputuskan. Pemasangan di PC perusahaan atau yang dikelola TI **belum didukung** sampai ada tinjauan tersendiri; tidak ada panduan instalasi untuk admin.
+
 - **Hanya kabel.** HP muncul sebagai adapter jaringan kabel (RNDIS/NCM). Audio tidak lewat Wi-Fi atau internet.
 - **Latensi rendah.** PCM 48 kHz mono dalam paket 5 ms, capture AAudio eksklusif bila diizinkan HP, jitter buffer
   yang disesuaikan dengan periode render Windows yang sebenarnya, kontrol drift dengan resampler, penyamaran packet
@@ -447,6 +449,9 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
 
 ## Keterbatasan yang diketahui
 
+- **Mesin USB eksperimental (0.8.0, tidak di Otomatis).** USB langsung (AOA / WinUSB) mati sampai opsi eksperimental dinyalakan, atau sampai gerbang perangkat keras G-M1 diputuskan. 0.7.2 tetap rilis stabil saat ini.
+- **PC perusahaan / yang dikelola.** Pemasangan di PC perusahaan atau yang dikelola belum didukung sampai ada tinjauan nanti.
+- **Kebijakan penandatanganan kode.** Cara rilis akan ditandatangani ada di [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). Pendaftaran SignPath adalah langkah maintainer (lihat [docs/SIGNPATH-APPLICATION.md](docs/SIGNPATH-APPLICATION.md); ini draf dan belum dikirim).
 - **Installer Windows belum ditandatangani.** Installer dan `CordMic.exe` belum Authenticode-signed, jadi SmartScreen
   memperingatkan saat pertama dijalankan. Verifikasi unduhan dengan `SHA256SUMS` dari rilis.
 - **USB tethering harus dinyalakan manual.** Android tidak mengizinkan aplikasi biasa menyalakan tethering, dan banyak

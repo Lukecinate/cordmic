@@ -81,6 +81,12 @@ existing tethering path until hardware gate G-M1 is decided.
   gate), the widened bench, and at least three recordings of five minutes or more
   before audio thresholds are locked. This is not a beta or stable tag.
 
+### Changed
+- M9 README (EN/ID): 0.7.2 stays the current stable release; USB in Automatic
+  stays on tethering until G-M1; the accessory USB path is labelled experimental;
+  company and managed-PC deployment is unsupported until a later review. No
+  0.8.0 tag or GitHub release is published in this work.
+
 
 ## [0.8.0-beta.1] - 2026-11-21
 

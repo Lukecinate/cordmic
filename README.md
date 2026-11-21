@@ -11,6 +11,8 @@ Discord, Zoom, OBS and games can select as a microphone.
 
 Current stable version: **0.7.2**. A pre-release, **0.8.0-beta.1**, is on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and is not offered by automatic updates ([changelog](CHANGELOG.md), [latest stable](https://github.com/Lukecinate/cordmic/releases/latest)).
 
+USB over the accessory path in 0.8.0 work is **experimental** and off by default. Automatic mode still uses USB tethering, like 0.7.2, until hardware gate G-M1 is decided. Company and managed-PC deployment is **unsupported** until a later review; there is no admin install guide.
+
 - **Cable only.** The phone appears as a wired network adapter (RNDIS/NCM). Audio never uses Wi-Fi or the internet.
 - **Low latency.** 48 kHz mono PCM in 5 ms packets, AAudio exclusive capture where the phone grants it, a
   jitter buffer sized to the real Windows render period, a resampling drift controller, pitch-based packet-loss
@@ -444,6 +446,9 @@ settings in use. Do not attach voice recordings to public issues.
 
 ## Known limitations
 
+- **Experimental USB engine (0.8.0, not in Auto).** Direct USB (AOA / WinUSB) is off until you turn on the experimental option, or until hardware gate G-M1 is decided. 0.7.2 remains the current stable release.
+- **Company / managed PCs.** Deployment on company or managed PCs is unsupported until a later review.
+- **Code signing policy.** How releases will be signed is in [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). The SignPath application is a maintainer step (see [docs/SIGNPATH-APPLICATION.md](docs/SIGNPATH-APPLICATION.md); it is a draft and has not been submitted).
 - **Unsigned Windows installer.** The installer and `CordMic.exe` are not Authenticode-signed, so SmartScreen
   warns on first run. Verify downloads with `SHA256SUMS` from the release.
 - **USB tethering must be turned on manually.** Android does not let regular apps enable tethering, and many
