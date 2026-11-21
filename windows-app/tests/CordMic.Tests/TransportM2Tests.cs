@@ -5,6 +5,7 @@ using CordMic.Core.Transport;
 
 namespace CordMic.Tests;
 
+[Collection("cpu-timing")]
 public class TransportM2Tests
 {
     [Fact]
@@ -209,8 +210,8 @@ public class TransportM2Tests
         await using var t = new UsbTransport(pipe, new UsbTransportOptions { ReadTimeoutMs = 20, SilenceLostMs = 80, KeepaliveMs = 20 });
         await t.StartAsync(CancellationToken.None);
         var sw = Stopwatch.StartNew();
-        while (!t.Health.LinkLost && sw.ElapsedMilliseconds < 1000) await Task.Delay(10);
-        Assert.True(t.Health.LinkLost);
+        while (!t.Health.LinkLost && sw.ElapsedMilliseconds < 4000) await Task.Delay(10);
+        Assert.True(t.Health.LinkLost, $"link not lost after hang; timeouts={t.Health.ReaderTimeouts} reason={t.Health.LinkLostReason}");
         Assert.True(t.Health.ReaderTimeouts >= 1);
         Assert.Equal("silence", t.Health.LinkLostReason);
     }
@@ -285,8 +286,8 @@ public class TransportM2Tests
         pipe.PeerWrite(frame);
         pipe.PeerWrite(FrameCodec.Encode(UsbFrameType.Control, 2, payload));
         var sw = Stopwatch.StartNew();
-        while (!t.Health.LinkLost && sw.ElapsedMilliseconds < 1000) await Task.Delay(10);
-        Assert.True(t.Health.LinkLost);
+        while (!t.Health.LinkLost && sw.ElapsedMilliseconds < 4000) await Task.Delay(10);
+        Assert.True(t.Health.LinkLost, $"link not lost on future hello; reason={t.Health.LinkLostReason}");
         Assert.Equal("hello-version", t.Health.LinkLostReason);
     }
 

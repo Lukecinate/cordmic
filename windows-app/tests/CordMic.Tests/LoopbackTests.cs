@@ -7,6 +7,7 @@ using Xunit;
 using Xunit.Abstractions;
 
 /// <summary>UDP loopback: fake phone -> 127.0.0.1 -> C# Receiver -> real-time 5 ms consumer.</summary>
+[Collection("cpu-timing")]
 public class LoopbackTests
 {
     private readonly ITestOutputHelper _out;

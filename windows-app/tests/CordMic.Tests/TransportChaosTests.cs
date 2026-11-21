@@ -3,6 +3,7 @@ using CordMic.Core.Transport;
 
 namespace CordMic.Tests;
 
+[Collection("cpu-timing")]
 public class TransportChaosTests
 {
     [Fact]

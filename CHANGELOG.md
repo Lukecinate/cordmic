@@ -7,6 +7,11 @@ All notable changes to CordMic are documented here. Versions follow [Semantic Ve
 Work after 0.8.0-beta.3. This is not a release. Wire version stays 1. USB Auto routes stay on the
 existing tethering path until hardware gate G-M1 is decided.
 
+### Changed
+- Timing-sensitive transport and loopback tests run in the non-parallel `cpu-timing`
+  collection, and two link-lost waits allow up to 4 s so windows-2022 CI is not
+  flaky under load. Product behaviour is unchanged.
+
 ## [0.8.0-beta.3] - 2026-11-21
 
 Pre-release of supply-chain pins, extra fuzz coverage, and Windows CI test fixes.
