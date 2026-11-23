@@ -51,13 +51,16 @@ A CI check (`tools/release/check-action-pins.sh`) fails if any `uses:` is not a
   `android/` with
   `./gradlew --write-verification-metadata sha256 testReleaseUnitTest assembleRelease -PcordmicSkipSigning=true`
   and commit the file.
-- The Windows packaging job installs official NSIS **3.11** (portable zip) from
+- The Windows packaging job installs official NSIS **3.13** (portable zip) from
   SourceForge, after checking SHA-256
-  `c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1`
-  (looked up 2026-11-21 from the official NSIS 3.11 zip and independently hashed
-  here). Script: `tools/release/install-nsis.sh`. CI also compiles the installer
-  script in a package-smoke job that does not need SignPath. Local Linux packaging
-  may use distro `nsis` 3.11, which is the same version.
+  `ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8`
+  (looked up 2026-11-23 from the official NSIS 3.13 zip, 2,363,925 bytes, and
+  independently hashed here; `unzip -t` was clean). 3.12 fixed CVE-2026-42171
+  (SYSTEM installer temp-directory fallback in 3.06.1–3.11); 3.13 also includes
+  the nsExec crash fix. Script: `tools/release/install-nsis.sh`. CI also compiles
+  the installer script in a package-smoke job that does not need SignPath. Local
+  Linux packaging may still use a distro `nsis` package; release artifacts are
+  built with this pinned official zip.
 
 
 ## Chain (every non-key step is scripted)
@@ -92,10 +95,13 @@ updater likewise keeps the SHA-256SUMS path until those keys are present.
 
 ## Tag and version rules
 
-- Release tags look like `v0.8.0` or `v0.8.0-beta.2`. Never move a tag.
+- Release tags look like `v1.0.0` or `v0.8.0-beta.2`. Never move a tag.
 - A pre-release must be published with `prerelease: true` so the in-app updater
-  (which ignores pre-releases) does not move 0.7.2 users onto a beta.
-- 0.7.2 stays the current stable release until 0.8.0 is published as latest.
+  (which ignores pre-releases) does not move stable users onto a beta.
+- 1.0.0 is the current stable release (GitHub latest). 0.8.0 is not published as
+  a stable: that number would imply USB hardware gate G-M1 / Gate H had passed.
+  A later USB-stable version is only used after those gates are genuinely ticked
+  with hardware evidence.
 
 ## Cost ceiling (O1)
 

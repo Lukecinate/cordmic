@@ -23,6 +23,7 @@ internal sealed class SettingsForm : Form
     private readonly System.Windows.Forms.Timer _refresh = new() { Interval = 500 };
     private SettingsPage _page;
     private readonly DpiResources<FontSet> _fonts;
+    private readonly PageWheelFilter _wheel;
 
     public SettingsPage Page => _page;
     /// <summary>Fonts for this window's current DPI (audit M7).</summary>
@@ -63,6 +64,8 @@ internal sealed class SettingsForm : Form
         _content = new PagePanel(this) { Dock = DockStyle.Fill, BackColor = Theme.Surface };
         Controls.Add(_content);
         Controls.Add(_nav);
+        _wheel = new PageWheelFilter(_content, _content);
+        Application.AddMessageFilter(_wheel);
 
         _refresh.Tick += (_, _) => RefreshNow();
         Load += (_, _) => { ApplyFonts(DeviceDpi, rebuild: false); ApplyInitialSize(); ShowPage(page); _refresh.Start(); };
@@ -89,8 +92,12 @@ internal sealed class SettingsForm : Form
 
     protected override void Dispose(bool disposing)
     {
+        if (disposing)
+        {
+            Application.RemoveMessageFilter(_wheel);
+            _fonts.Dispose();
+        }
         base.Dispose(disposing);
-        if (disposing) _fonts.Dispose();
     }
 
     internal int Sx(int logical) => SettingsLayout.Px(logical, Dpi);
@@ -171,6 +178,12 @@ internal sealed class SettingsForm : Form
         }
         if (keyData is (Keys.Control | Keys.Tab) or (Keys.Control | Keys.PageDown)) { Step(+1); return true; }
         if (keyData is (Keys.Control | Keys.Shift | Keys.Tab) or (Keys.Control | Keys.PageUp)) { Step(-1); return true; }
+        if (keyData is Keys.PageDown or Keys.PageUp)
+        {
+            if (ActiveControl is ComboBox { DroppedDown: true }) return base.ProcessCmdKey(ref msg, keyData);
+            _content.PageScroll(keyData == Keys.PageDown ? +1 : -1);
+            return true;
+        }
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
@@ -215,8 +228,26 @@ internal sealed class SettingsForm : Form
         {
             int lines = SystemInformation.MouseWheelScrollLines;
             int step = lines < 0 ? ClientSize.Height : _f.Sx(16) * Math.Max(1, lines);
-            int y = -AutoScrollPosition.Y - delta * step / 120;
-            AutoScrollPosition = new Point(0, Math.Max(0, y));
+            ApplyScroll(delta, step);
+        }
+
+        /// <summary>PageUp / PageDown: one viewport, minus a small overlap, per keypress.</summary>
+        public void PageScroll(int direction)
+        {
+            int step = Math.Max(1, ClientSize.Height - _f.Sx(32));
+            ApplyScroll(direction < 0 ? 120 : -120, step);
+        }
+
+        private void ApplyScroll(int delta, int step)
+        {
+            int max = Math.Max(0, AutoScrollMinSize.Height - ClientSize.Height);
+            AutoScrollPosition = new Point(0, SettingsLayout.NextWheelScrollY(AutoScrollPosition.Y, delta, step, max));
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            Wheel(e.Delta);
+            if (e is HandledMouseEventArgs h) h.Handled = true;
         }
 
         public void ApplyHeaderFonts()

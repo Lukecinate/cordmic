@@ -9,9 +9,9 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 cleans up the voice, streams it to a Windows tray app, and the tray app plays it into a virtual audio cable that
 Discord, Zoom, OBS and games can select as a microphone.
 
-Current stable version: **0.7.2**. The current pre-release is **0.8.0-beta.3** (after 0.8.0-beta.2), on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and is not offered by automatic updates ([changelog](CHANGELOG.md), [latest stable](https://github.com/Lukecinate/cordmic/releases/latest)).
+Current stable version: **1.0.0**. It is the GitHub latest release and is offered by the in-app updater to 0.7.2 and to 0.8.0-beta installs ([changelog](CHANGELOG.md), [latest](https://github.com/Lukecinate/cordmic/releases/latest)). Pre-releases 0.8.0-beta.1–beta.3 remain on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and are not offered by automatic updates.
 
-USB over the accessory path in 0.8.0 work is **experimental** and off by default. Automatic mode still uses USB tethering, like 0.7.2, until hardware gate G-M1 is decided. Company and managed-PC deployment is **unsupported** until a later review; there is no admin install guide.
+USB over the accessory path remains **experimental**, off by default, and untested on hardware. Automatic mode still uses USB tethering. Hardware gate G-M1 has not been passed; this release does not claim that the accessory path works on a real phone. Company and managed-PC deployment is **unsupported** until a later review; there is no admin install guide.
 
 - **Cable only.** The phone appears as a wired network adapter (RNDIS/NCM). Audio never uses Wi-Fi or the internet.
 - **Low latency.** 48 kHz mono PCM in 5 ms packets, AAudio exclusive capture where the phone grants it, a
@@ -430,6 +430,8 @@ use** and the log says `warning: Windows routes PC internet through the phone (m
 let the PC use the phone's internet on purpose, create an empty file `%ProgramData%\CordMic\allow-phone-internet`
 (administrator); the next run of the task restores DHCP DNS and the default routes. Uninstalling restores them too.
 
+**Settings page does not scroll with the mouse wheel.** In 0.8.0 betas the wheel only moved the page when the cursor was over a slider, a combo box, or a sliver of empty padding. 1.0.0 forwards the wheel from every control on the page, and Page Up / Page Down also scroll.
+
 **Settings window does not open.** 0.7.0 and 0.7.1 closed the Settings window with an error on some PCs; 0.7.2
 fixes it and, if Settings ever fails again, logs `settings window failed: …` and shows a message instead of closing.
 `CordMic.exe --self-test-ui` builds the main and Settings windows at 100/150/200% scale in English and Indonesian
@@ -446,7 +448,7 @@ settings in use. Do not attach voice recordings to public issues.
 
 ## Known limitations
 
-- **Experimental USB engine (0.8.0, not in Auto).** Direct USB (AOA / WinUSB) is off until you turn on the experimental option, or until hardware gate G-M1 is decided. 0.7.2 remains the current stable release.
+- **Experimental USB engine (untested on hardware, not used by Auto).** Direct USB (AOA / WinUSB) stays off unless you turn on the experimental option. Automatic mode still uses USB tethering. Hardware gate G-M1 has not been passed. 1.0.0 is the current stable release.
 - **Company / managed PCs.** Deployment on company or managed PCs is unsupported until a later review.
 - **Code signing policy.** How releases will be signed is in [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). The SignPath application is a maintainer step (see [docs/SIGNPATH-APPLICATION.md](docs/SIGNPATH-APPLICATION.md); it is a draft and has not been submitted).
 - **Unsigned Windows installer.** The installer and `CordMic.exe` are not Authenticode-signed, so SmartScreen
@@ -661,6 +663,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 1.0.0 | First supported stable after 0.7.2: Settings page scrolling, NSIS 3.13, .NET 8.0.34 in the self-contained app, USB accessory path still experimental, off, and untested on hardware |
 | 0.7.2 | Settings window crash fixed, tethering status and Samsung guidance on PC and phone, PC internet never routed through the phone's mobile data, UI self-test |
 | 0.7.1 | Text follows each monitor's scale, a downloaded update survives a restart, fixes from an audit of the 0.7.0 updater and windows |
 | 0.7.0 | New Windows Settings window (pages, help text, scrolling, keyboard, DPI), automatic background update downloads with one-click Update now, progress and Cancel, portable self-update with rollback, slimmer tray menu |

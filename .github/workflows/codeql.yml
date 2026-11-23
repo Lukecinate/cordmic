@@ -1,0 +1,55 @@
+# CodeQL analysis for C# (Windows app / Core) and Java/Kotlin (Android).
+# Marketplace actions are pinned to 40-character commit SHAs.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "27 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: csharp
+            build-mode: manual
+          - language: java-kotlin
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        if: matrix.language == 'csharp'
+        with:
+          dotnet-version: "8.0.428"
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        if: matrix.language == 'java-kotlin'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Build C# (locked restore)
+        if: matrix.language == 'csharp' && matrix.build-mode == 'manual'
+        run: |
+          set -euo pipefail
+          dotnet restore windows-app/tests/CordMic.Tests/CordMic.Tests.csproj --locked-mode
+          dotnet build windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --no-restore --nologo
+      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          category: "/language:${{ matrix.language }}"

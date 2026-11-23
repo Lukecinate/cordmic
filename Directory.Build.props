@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
     <NuGetAudit>true</NuGetAudit>
-    <NuGetAuditMode>direct</NuGetAuditMode>
+    <NuGetAuditMode>all</NuGetAuditMode>
   </PropertyGroup>
 </Project>

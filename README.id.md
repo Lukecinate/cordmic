@@ -9,9 +9,9 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi stabil saat ini: **0.7.2**. Pra-rilis saat ini adalah **0.8.0-beta.3** (setelah 0.8.0-beta.2), ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)).
+Versi stabil saat ini: **1.0.0**. Ini rilis *latest* di GitHub, dan pembaruan dalam aplikasi menawarkannya ke pemasangan 0.7.2 serta ke beta 0.8.0 ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)). Pra-rilis 0.8.0-beta.1–beta.3 tetap ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis.
 
-Jalur USB aksesori dalam pengerjaan 0.8.0 bersifat **eksperimental** dan mati secara bawaan. Mode otomatis tetap memakai tethering USB, seperti 0.7.2, sampai gerbang perangkat keras G-M1 diputuskan. Pemasangan di PC perusahaan atau yang dikelola TI **belum didukung** sampai ada tinjauan tersendiri; tidak ada panduan instalasi untuk admin.
+Jalur USB aksesori tetap **eksperimental**, mati secara bawaan, dan belum diuji di perangkat keras. Mode otomatis tetap memakai tethering USB. Gerbang perangkat keras G-M1 belum dilalui; rilis ini tidak menyatakan bahwa jalur aksesori sudah berfungsi di HP nyata. Pemasangan di PC perusahaan atau yang dikelola TI **belum didukung** sampai ada tinjauan tersendiri; tidak ada panduan instalasi untuk admin.
 
 - **Hanya kabel.** HP muncul sebagai adapter jaringan kabel (RNDIS/NCM). Audio tidak lewat Wi-Fi atau internet.
 - **Latensi rendah.** PCM 48 kHz mono dalam paket 5 ms, capture AAudio eksklusif bila diizinkan HP, jitter buffer
@@ -433,6 +433,8 @@ terpakai** dan log menulis `warning: Windows routes PC internet through the phon
 sengaja memakai internet HP di PC, buat file kosong `%ProgramData%\CordMic\allow-phone-internet` (administrator);
 tugas berikutnya mengembalikan DNS DHCP dan default route. Uninstall juga mengembalikannya.
 
+**Halaman Pengaturan tidak bisa digulir dengan roda mouse.** Di beta 0.8.0 roda mouse hanya menggulir halaman jika kursor berada di atas slider, kotak combo, atau sisa padding yang sempit. 1.0.0 meneruskan roda mouse dari setiap kontrol di halaman, dan Page Up / Page Down juga menggulir.
+
 **Jendela Pengaturan tidak mau terbuka.** 0.7.0 dan 0.7.1 menutup jendela Pengaturan dengan error di sebagian PC;
 0.7.2 memperbaikinya dan, bila Pengaturan gagal lagi, mencatat `settings window failed: …` dan menampilkan pesan.
 `CordMic.exe --self-test-ui` membangun jendela utama dan Pengaturan pada skala 100/150/200% dalam bahasa Inggris dan
@@ -449,7 +451,7 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
 
 ## Keterbatasan yang diketahui
 
-- **Mesin USB eksperimental (0.8.0, tidak di Otomatis).** USB langsung (AOA / WinUSB) mati sampai opsi eksperimental dinyalakan, atau sampai gerbang perangkat keras G-M1 diputuskan. 0.7.2 tetap rilis stabil saat ini.
+- **Mesin USB eksperimental (belum diuji di perangkat keras, tidak dipakai mode Otomatis).** USB langsung (AOA / WinUSB) tetap mati kecuali opsi eksperimental dinyalakan. Mode otomatis tetap memakai tethering USB. Gerbang perangkat keras G-M1 belum dilalui. 1.0.0 adalah rilis stabil saat ini.
 - **PC perusahaan / yang dikelola.** Pemasangan di PC perusahaan atau yang dikelola belum didukung sampai ada tinjauan nanti.
 - **Kebijakan penandatanganan kode.** Cara rilis akan ditandatangani ada di [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). Pendaftaran SignPath adalah langkah maintainer (lihat [docs/SIGNPATH-APPLICATION.md](docs/SIGNPATH-APPLICATION.md); ini draf dan belum dikirim).
 - **Installer Windows belum ditandatangani.** Installer dan `CordMic.exe` belum Authenticode-signed, jadi SmartScreen
@@ -661,6 +663,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 1.0.0 | Stabil pertama yang didukung setelah 0.7.2: pengguliran halaman Pengaturan, NSIS 3.13, .NET 8.0.34 di aplikasi self-contained, jalur USB aksesori tetap eksperimental, mati, dan belum diuji di perangkat keras |
 | 0.7.2 | Crash jendela Pengaturan diperbaiki, status tethering dan panduan Samsung di PC dan HP, internet PC tidak pernah lewat kuota HP, self-test UI |
 | 0.7.1 | Teks mengikuti skala tiap monitor, pembaruan yang sudah diunduh tetap ada setelah restart, perbaikan dari audit updater dan jendela 0.7.0 |
 | 0.7.0 | Jendela Pengaturan Windows baru (halaman, teks bantuan, bisa digulir, keyboard, DPI), unduhan pembaruan otomatis di latar belakang dengan Perbarui sekarang sekali klik, progres dan Batal, pembaruan mandiri versi portabel dengan rollback, menu tray lebih ringkas |

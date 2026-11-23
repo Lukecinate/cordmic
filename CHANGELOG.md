@@ -2,15 +2,25 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.8.0] - unreleased
+## [1.0.0] - 2026-11-23
 
-Work after 0.8.0-beta.3. This is not a release. Wire version stays 1. USB Auto routes stay on the
-existing tethering path until hardware gate G-M1 is decided.
+First supported stable release after 0.7.2. The version is 1.0.0, not 0.8.0, because 0.8.0 would imply that the USB accessory (AOA) hardware gates had passed. They have not. Wire version stays 1. Automatic mode still uses USB tethering. The direct USB engine introduced in the 0.8.0 betas remains Experimental, off by default, and untested on hardware. `UsbEngineGate.HardwareGateGm1Passed` stays false. Android `versionCode` is 25 / `versionName` 1.0.0.
+
+Windows builds are unsigned, as previous stables were, while SignPath is not configured. Verify downloads with `SHA256SUMS`. The in-app updater follows GitHub `/releases/latest` and offers 1.0.0 to 0.7.2 and to 0.8.0-beta users. Settings files from 0.7.2 and the 0.8.0 betas load in this release.
+
+### Fixed
+- Settings pages on the Windows app did not scroll with the mouse wheel when the cursor was over labels, toggles, buttons, or row panels. A process-wide wheel filter now forwards the wheel to the page (unless a combo box is dropped down). Page Up and Page Down also scroll. This was the usual case on a shorter window or a 14-inch laptop, where the Connection page is taller than the Settings window.
+
+### Security
+- Official NSIS used to build the installer is 3.13 (SHA-256 of the official zip is verified in `tools/release/install-nsis.sh`). 3.12 fixed CVE-2026-42171 (SYSTEM installer temp-directory fallback in 3.06.1–3.11); 3.13 also includes the nsExec crash fix.
+- Self-contained Windows builds pin the .NET runtime to 8.0.34 (SDK 8.0.428 in CI) so the November 2026 runtime patches are in the shipped executable. `dotnet list package --vulnerable --include-transitive` reports no known vulnerable NuGet packages from current sources.
+- The updater refuses non-HTTPS asset and SHA256SUMS URLs, and URLs that carry user-info. SHA-256 verification after download is unchanged.
+- CI includes a CodeQL workflow pinned to `github/codeql-action` v4.39.4 (`1bd86f2fdb4b86187fa4059f16f31a3202acc9ea`) for C# and Java/Kotlin, and a secret-scan step on every CI run.
 
 ### Changed
-- Timing-sensitive transport and loopback tests run in the non-parallel `cpu-timing`
-  collection, and two link-lost waits allow up to 4 s so windows-2022 CI is not
-  flaky under load. Product behaviour is unchanged.
+- Test-only: coverlet.collector 10.1.0 → 10.1.1 (not shipped).
+- Timing-sensitive transport tests added after 0.8.0-beta.3 stay in the non-parallel `cpu-timing` collection, and Gradle junit-bom module pins stay in place. Product behaviour on the tethering path is unchanged.
+- OSV findings on `android/gradle/verification-metadata.xml` are build-time Android Gradle Plugin / Kotlin plugin transitives (Guava, Netty, Bouncy Castle, and others). They are not packaged in the APK. A Kotlin upgrade large enough to clear them would pull a beta plugin and is not taken in this stable. See `docs/research/2026-11-23-major-release.md`.
 
 ## [0.8.0-beta.3] - 2026-11-21
 

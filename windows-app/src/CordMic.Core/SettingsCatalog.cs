@@ -173,6 +173,22 @@ public static class SettingsLayout
 
     /// <summary>True when the content needs the vertical scrollbar in a viewport of <paramref name="viewportH"/>.</summary>
     public static bool NeedsScroll(int contentH, int viewportH) => contentH > viewportH;
+
+    /// <summary>
+    /// Next AutoScrollPosition Y setter value (non-negative) after a mouse-wheel or page-key move.
+    /// <paramref name="autoScrollY"/> is the current getter value (WinForms returns a negative Y when
+    /// scrolled down). <paramref name="delta"/> is the usual signed wheel delta (positive = away from
+    /// the user = scroll up). <paramref name="step"/> is the pixel distance of one 120-unit wheel notch.
+    /// </summary>
+    public static int NextWheelScrollY(int autoScrollY, int delta, int step, int maxY)
+    {
+        if (step < 0) step = 0;
+        if (maxY < 0) maxY = 0;
+        int y = -autoScrollY - delta * step / 120;
+        if (y < 0) y = 0;
+        if (y > maxY) y = maxY;
+        return y;
+    }
 }
 
 /// <summary>A rectangle in content coordinates (before the scroll offset).</summary>

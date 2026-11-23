@@ -114,7 +114,8 @@ internal static class WheelGuard
     public static bool Forward(Control c, ref Message m)
     {
         if (m.Msg != WM_MOUSEWHEEL || c is ComboBox { DroppedDown: true }) return false;
-        for (var p = c.Parent; p is not null; p = p.Parent)
+        // Include the leaf itself (a page that implements IWheelScroll) as well as ancestors.
+        for (Control? p = c; p is not null; p = p.Parent)
         {
             if (p is IWheelScroll w)
             {
@@ -122,6 +123,46 @@ internal static class WheelGuard
                 return true;
             }
         }
+        return false;
+    }
+}
+
+/// <summary>
+/// 1.0.0: WinForms delivers WM_MOUSEWHEEL to the control under the cursor. Labels, toggles, buttons
+/// and row panels were swallowing the wheel, so the Settings page only scrolled when the cursor was
+/// over a slider, an open combo, or a sliver of empty padding. This process-wide filter forwards the
+/// wheel to the page whenever the cursor is over it, unless a combo box is dropped down.
+/// </summary>
+internal sealed class PageWheelFilter : IMessageFilter
+{
+    private const int WM_MOUSEWHEEL = 0x020A;
+    private readonly Control _viewport;
+    private readonly IWheelScroll _page;
+
+    public PageWheelFilter(Control viewport, IWheelScroll page)
+    {
+        _viewport = viewport;
+        _page = page;
+    }
+
+    public bool PreFilterMessage(ref Message m)
+    {
+        if (m.Msg != WM_MOUSEWHEEL) return false;
+        if (_viewport.IsDisposed || !_viewport.IsHandleCreated) return false;
+        var form = _viewport.FindForm();
+        if (form is null || form.IsDisposed || !form.Visible) return false;
+        var client = _viewport.PointToClient(Control.MousePosition);
+        if (!_viewport.ClientRectangle.Contains(client)) return false;
+        if (ComboDropped(form)) return false;
+        _page.Wheel(unchecked((short)((m.WParam.ToInt64() >> 16) & 0xFFFF)));
+        return true;
+    }
+
+    internal static bool ComboDropped(Control root)
+    {
+        if (root is ComboBox { DroppedDown: true, Visible: true }) return true;
+        foreach (Control c in root.Controls)
+            if (ComboDropped(c)) return true;
         return false;
     }
 }

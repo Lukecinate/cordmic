@@ -195,6 +195,21 @@ public static class AppUpdate
 
     private static string Bare(string v) => SemVer.TryParse(v, out var s) ? s.ToString() : v.TrimStart('v', 'V');
 
+    /// <summary>
+    /// Downloads (SHA256SUMS and assets) must be HTTPS, with no user-info in the URL.
+    /// The in-app updater still verifies SHA-256 after the transfer; this only stops cleartext or
+    /// credential-bearing URLs that a compromised or unexpected latest-JSON might supply.
+    /// </summary>
+    public static bool IsAllowedDownloadUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttps) return false;
+        if (!string.IsNullOrEmpty(uri.UserInfo)) return false;
+        if (uri.Host.Length == 0) return false;
+        return true;
+    }
+
     public static ReleaseInfo ParseLatestJson(string json)
     {
         using var doc = JsonDocument.Parse(json);

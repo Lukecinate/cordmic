@@ -145,6 +145,8 @@ public sealed class UpdateEngine
         if (!AppUpdate.ShouldOffer(info, CurrentVersion)) throw new UpdateException(UpdateError.Downgrade, "already up to date (" + CurrentVersion + ")");
         var (name, url) = AssetFor(info, kind);
         if (string.IsNullOrEmpty(info.SumsUrl)) throw new UpdateException(UpdateError.NoAsset, "release has no SHA256SUMS");
+        if (!AppUpdate.IsAllowedDownloadUrl(url) || !AppUpdate.IsAllowedDownloadUrl(info.SumsUrl))
+            throw new UpdateException(UpdateError.NoAsset, "release asset URL must be HTTPS");
         long? listed = info.AssetSizes is { } sz && sz.TryGetValue(name, out var l) ? l : null;
         if (listed > MaxAssetBytes) throw new UpdateException(UpdateError.TooLarge, $"{name} is too large");
 

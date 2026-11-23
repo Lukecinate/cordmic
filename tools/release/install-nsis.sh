@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install official NSIS 3.11 (portable zip) after verifying SHA-256.
+# Install official NSIS 3.13 (portable zip) after verifying SHA-256.
 # Used on GitHub Actions windows-2022 runners. Not a Windows driver or
 # signing-policy change. Local Linux packaging continues to use distro
-# nsis 3.11 (same version) via the box's package manager.
+# nsis via the package manager only as a last resort; CI uses this pinned official zip (3.13, CVE-2026-42171).
 set -euo pipefail
 
-NSIS_VERSION="3.11"
-NSIS_SHA256="c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1"
+NSIS_VERSION="3.13"
+NSIS_SHA256="ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8"
 NSIS_URL="https://downloads.sourceforge.net/project/nsis/NSIS%203/${NSIS_VERSION}/nsis-${NSIS_VERSION}.zip"
 
 TMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cordmic-nsis-pin"
