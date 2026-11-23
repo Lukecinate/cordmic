@@ -2,6 +2,15 @@
 
 All notable changes to CordMic are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- The release workflow no longer fails when SignPath is not configured. The
+  SignPath jobs run only when the repository variable `SIGNPATH_ENABLED` is
+  `true`; otherwise they are skipped and unsigned packaging, provenance, and
+  (on a tag push) the draft release still complete. Enabling SignPath later
+  does not change the pinned action, environment, or approval path.
+
 ## [1.0.0] - 2026-11-23
 
 First supported stable release after 0.7.2. The version is 1.0.0, not 0.8.0, because 0.8.0 would imply that the USB accessory (AOA) hardware gates had passed. They have not. Wire version stays 1. Automatic mode still uses USB tethering. The direct USB engine introduced in the 0.8.0 betas remains Experimental, off by default, and untested on hardware. `UsbEngineGate.HardwareGateGm1Passed` stays false. Android `versionCode` is 25 / `versionName` 1.0.0.

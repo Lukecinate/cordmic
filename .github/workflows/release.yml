@@ -109,8 +109,14 @@ jobs:
           path: android/app/build/outputs/apk/release/*
           if-no-files-found: error
 
+  # SignPath jobs run only when the repository variable SIGNPATH_ENABLED is
+  # the string "true" (Settings → Secrets and variables → Actions → Variables).
+  # Unset or any other value skips them (neutral, not a failure) so unsigned
+  # packaging, provenance, and a tag draft still complete. When the variable is
+  # later set, these jobs are unchanged: same pinned action, environment,
+  # secrets, and approval.
   sign-inner:
-    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    if: ${{ (github.event_name == 'push' || inputs.publish == false) && vars.SIGNPATH_ENABLED == 'true' }}
     needs: [build-unsigned]
     runs-on: ubuntu-24.04
     environment: release
@@ -142,19 +148,25 @@ jobs:
           path: signed/win/
 
   package:
-    if: ${{ github.event_name == 'push' || inputs.publish == false }}
-    needs: [sign-inner]
+    if: ${{ !cancelled() && (github.event_name == 'push' || inputs.publish == false) && needs.build-unsigned.result == 'success' && (needs.sign-inner.result == 'success' || needs.sign-inner.result == 'skipped') }}
+    needs: [build-unsigned, sign-inner]
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ needs.sign-inner.result == 'success' }}
         with:
           name: signed-inner
+          path: windows-app/publish
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ needs.sign-inner.result != 'success' }}
+        with:
+          name: unsigned-windows
           path: windows-app/publish
       - name: Install pinned NSIS 3.13
         shell: bash
         run: bash tools/release/install-nsis.sh
-      - name: Build installer and portable zip from signed binaries
+      - name: Build installer and portable zip
         shell: bash
         run: |
           set -euo pipefail
@@ -181,7 +193,7 @@ jobs:
           if-no-files-found: error
 
   sign-installer:
-    if: ${{ github.event_name == 'push' || inputs.publish == false }}
+    if: ${{ (github.event_name == 'push' || inputs.publish == false) && vars.SIGNPATH_ENABLED == 'true' }}
     needs: [package]
     runs-on: ubuntu-24.04
     environment: release
@@ -211,8 +223,8 @@ jobs:
           path: signed-dist/
 
   provenance:
-    if: ${{ github.event_name == 'push' || inputs.publish == false }}
-    needs: [sign-installer, build-unsigned-apk]
+    if: ${{ !cancelled() && (github.event_name == 'push' || inputs.publish == false) && needs.package.result == 'success' && needs.build-unsigned-apk.result == 'success' && (needs.sign-installer.result == 'success' || needs.sign-installer.result == 'skipped') }}
+    needs: [package, sign-installer, build-unsigned-apk]
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
@@ -221,8 +233,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ needs.sign-installer.result == 'success' }}
         with:
           name: signed-dist
+          path: artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ needs.sign-installer.result != 'success' }}
+        with:
+          name: packaged-unsigned-installer
           path: artifacts
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

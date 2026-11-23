@@ -69,11 +69,17 @@ A CI check (`tools/release/check-action-pins.sh`) fails if any `uses:` is not a
 2. **Unsigned build** — deterministic `dotnet publish` (`ContinuousIntegrationBuild=true`,
    `Deterministic=true`, `SourceRevisionId`) and an unsigned Android `assembleRelease`
    (no keystore on the runner).
-3. **Sign inner binaries** — SignPath `inner-binaries` and `driver-catalog`, manual
+3. **Sign inner binaries** (only when the repository variable `SIGNPATH_ENABLED`
+   is `true`) — SignPath `inner-binaries` and `driver-catalog`, manual
    approval. The API token lives in the `release` environment. Jobs never use `set -x`.
-4. **Package** — NSIS installer and portable zip from the signed binaries.
-5. **Sign installer** — SignPath `installer`.
-6. **Provenance** — `actions/attest-build-provenance` and a CycloneDX SBOM.
+   If the variable is unset or not `true`, this job is skipped (not failed) and
+   packaging uses the unsigned build.
+4. **Package** — NSIS installer and portable zip from the signed binaries when
+   SignPath ran, otherwise from the unsigned Windows build.
+5. **Sign installer** (only when `SIGNPATH_ENABLED` is `true`) — SignPath `installer`.
+   Skipped cleanly when SignPath is not enabled.
+6. **Provenance** — `actions/attest-build-provenance` and a CycloneDX SBOM,
+   using signed artifacts when SignPath ran, otherwise the unsigned package.
 7. **Draft release** — `SHA256SUMS`, unsigned `release-manifest.json`, a GitHub
    *draft* (not latest, not published).
 8. **APK signing (maintainer, scripted, key stays private)** —
