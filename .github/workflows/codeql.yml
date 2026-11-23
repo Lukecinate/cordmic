@@ -28,7 +28,7 @@ jobs:
           - language: csharp
             build-mode: manual
           - language: java-kotlin
-            build-mode: none
+            build-mode: manual
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
@@ -40,6 +40,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        if: matrix.language == 'java-kotlin'
       - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           languages: ${{ matrix.language }}
@@ -50,6 +52,10 @@ jobs:
           set -euo pipefail
           dotnet restore windows-app/tests/CordMic.Tests/CordMic.Tests.csproj --locked-mode
           dotnet build windows-app/tests/CordMic.Tests/CordMic.Tests.csproj -c Release --no-restore --nologo
+      - name: Compile Android (unsigned)
+        if: matrix.language == 'java-kotlin' && matrix.build-mode == 'manual'
+        working-directory: android
+        run: ./gradlew testReleaseUnitTest --no-daemon -PcordmicSkipSigning=true
       - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           category: "/language:${{ matrix.language }}"
