@@ -268,6 +268,10 @@ public sealed class Receiver : IDisposable
         set => NoiseMode = value ? (NoiseMode == NoiseMode.Off ? NoiseMode.Light : NoiseMode) : NoiseMode.Off;
     }
     public bool VoiceClarity { get; set; } = true;
+    /// <summary>1.1.0 podcast voice chain (default on). Off sends FlagChainOff so the phone bypasses it; Studio builds its
+    /// chain without it. Call <see cref="ConfigureStudio"/> afterwards to apply a change to a running Studio chain.</summary>
+    public bool PodcastVoiceChain { get; set; } = true;
+    private bool _studioVoiceChain = true;
     public bool FrontFocus { get; set; } = true;
     public bool FrontFocusAudioRecord { get; set; }
     public SyncClock Sync { get; } = new();
@@ -390,10 +394,11 @@ public sealed class Receiver : IDisposable
 
     private bool ConfigureStudioLocked(StudioPreset preset, bool autoVolume, double startGainDb)
     {
-        bool same = preset == _studioPreset && autoVolume == _studioAutoVolume
+        bool same = preset == _studioPreset && autoVolume == _studioAutoVolume && _studioVoiceChain == PodcastVoiceChain
                     && (_studio is not null || _studioSuspended || preset == StudioPreset.Off);
         bool wasAutoVolume = _studioAutoVolume;
         _studioPreset = preset; _studioAutoVolume = autoVolume; _studioStartGainDb = startGainDb;
+        _studioVoiceChain = PodcastVoiceChain;
         if (same && !_studioFailed) return true;
         // 0.6.2: a preset or auto-volume change while Studio runs swaps the chain on the worker (crossfade); the
         // jitter buffer and the worker ring keep running, so there is no rebuild and no gap.
@@ -401,7 +406,7 @@ public sealed class Receiver : IDisposable
         {
             double g = autoVolume ? (wasAutoVolume ? cur.AgcGainDb : startGainDb) : 0;
             StudioChain? chain = null;
-            try { chain = new StudioChain(preset, autoVolume, double.IsFinite(g) ? g : startGainDb); }
+            try { chain = new StudioChain(preset, autoVolume, double.IsFinite(g) ? g : startGainDb, _studioVoiceChain); }
             catch (Exception e) { Log?.Invoke($"studio chain swap failed, restarting Studio: {e.Message}"); }
             if (chain is not null && cur.ReplaceChain(chain))
             {
@@ -442,7 +447,7 @@ public sealed class Receiver : IDisposable
         {
             try
             {
-                var st = new StudioProcessor(new StudioChain(_studioPreset, _studioAutoVolume, startGainDb), buf => _jb.Pull(buf), _renderPeriodMs, StudioThreadInit);
+                var st = new StudioProcessor(new StudioChain(_studioPreset, _studioAutoVolume, startGainDb, _studioVoiceChain), buf => _jb.Pull(buf), _renderPeriodMs, StudioThreadInit);
                 st.FellBack += OnStudioFellBack;
                 _studio = st;
             }
@@ -859,6 +864,7 @@ public sealed class Receiver : IDisposable
                 if (FrontFocusAudioRecord) flags2 |= SettingsSync.FlagFrontFocusAr;
                 if (VoiceClarity) flags2 |= SettingsSync.FlagVoiceClarity;
                 if (StudioActive) flags2 |= SettingsSync.FlagStudio;
+                if (!PodcastVoiceChain) flags2 |= SettingsSync.FlagChainOff;
                 SettingsSync.Write(payload.Slice(LinkControl.Size), flags2, Sync.Revs);
                 Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)

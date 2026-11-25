@@ -25,6 +25,21 @@ public sealed class StudioChain : IDisposable
     private readonly float[] _r = new float[Frame], _xd = new float[Frame], _kd = new float[Frame], _y = new float[Frame];
     private readonly short[] _ks = new short[Frame];
     private readonly DelayLine _dx = new(RnnoiseDelay), _dk = new(RnnoiseDelay - StrongDelay);
+    // 1.1.0 podcast voice chain: AGC, dynamic EQ, compressor and look-ahead limiter, then the spectral dereverb /
+    // dialog masks, all before RNNoise; a true-peak guard after the comfort floor. B3 auto volume is not stacked on top.
+    private readonly PodcastChain? _pod;
+    private readonly VoiceChain? _spectral;
+    private readonly TruePeakGuard? _tpg;
+    private readonly double[] _pd = new double[Frame];
+    private readonly short[] _ps = new short[Frame];
+
+    /// <summary>True when the 1.1.0 podcast voice chain runs in front of RNNoise.</summary>
+    public bool VoiceChainOn { get; }
+    public PodcastChain? Podcast => _pod;
+    /// <summary>Samples the podcast chain adds in front of RNNoise (look-ahead + STFT block + guards); 0 when off.</summary>
+    public int VoiceChainDelay => VoiceChainOn ? _pod!.LatencyFrames + _spectral!.ChainDelayFrames + TruePeakGuard.LatencyFrames : 0;
+    /// <summary>Added latency of the whole chain (RNNoise look-ahead plus the podcast stages), in ms.</summary>
+    public double ChainLatencyMs => (RnnoiseDelay + VoiceChainDelay) / 48.0;
 
     public StudioPreset Preset { get; }
     public AgcB3 Agc => _agc;
@@ -59,14 +74,29 @@ public sealed class StudioChain : IDisposable
     /// <summary>Added latency of the chain itself (RNNoise look-ahead), in ms. The worker adds one more frame.</summary>
     public static double LatencyMs => RnnoiseDelay / 48.0;
 
-    public StudioChain(StudioPreset preset, bool autoVolume, double startGainDb = AgcB3.DefaultStartGainDb)
+    /// <param name="voiceChain">1.1.0 podcast voice chain in front of RNNoise (the app passes the user setting, default on).</param>
+    public StudioChain(StudioPreset preset, bool autoVolume, double startGainDb = AgcB3.DefaultStartGainDb, bool voiceChain = false)
     {
         if (preset == StudioPreset.Off) throw new ArgumentException("preset");
         Preset = preset;
         _rn = new Rnnoise();
         _strong = new VoiceChain(48000) { Mode = NoiseMode.Strong, Agc = false, Expander = NoiseMode.Off, VoiceClarity = false, GainDb = 0 };
         _guard = preset == StudioPreset.Max ? null : WhisperGuard.ForPreset(preset);
-        _agc = new AgcB3(autoVolume ? startGainDb : 0) { Enabled = autoVolume };
+        VoiceChainOn = voiceChain;
+        if (voiceChain)
+        {
+            var p = PodcastPresets.ForStudio(preset);
+            _pod = new PodcastChain(48000, 1, p) { AgcEnabled = autoVolume };
+            _spectral = new VoiceChain(48000)
+            {
+                Mode = NoiseMode.Off, Agc = false, Expander = NoiseMode.Off, VoiceClarity = false, GainDb = 0,
+                Podcast = true, PodcastSpectralOnly = true, PodcastParams = p,
+            };
+            _tpg = new TruePeakGuard(48000, 1, VoiceChain.CeilingDbfs);
+            // the podcast AGC levels the voice before RNNoise; B3 only meters loudness (comfort floor) at 0 dB
+            _agc = new AgcB3(0) { Enabled = false };
+        }
+        else _agc = new AgcB3(autoVolume ? startGainDb : 0) { Enabled = autoVolume };
     }
 
     /// <summary>Processes one frame in place.</summary>
@@ -75,6 +105,14 @@ public sealed class StudioChain : IDisposable
     {
         if (x.Length != Frame) throw new ArgumentException("frame length", nameof(x));
         TrackInputFloor(x);
+        if (VoiceChainOn)
+        {
+            for (int i = 0; i < Frame; i++) _pd[i] = x[i];
+            _pod!.Process(_pd, Frame);
+            for (int i = 0; i < Frame; i++) _ps[i] = (short)Math.Clamp((int)Math.Round(_pd[i] * 32768.0), short.MinValue, short.MaxValue);
+            _spectral!.Process(_ps);
+            for (int i = 0; i < Frame; i++) x[i] = _ps[i] / 32768f;
+        }
         LastVad = _rn.Process(x, _r);
         if (_guard is not null)
         {
@@ -101,6 +139,7 @@ public sealed class StudioChain : IDisposable
             _cn.SetLevel(lvl);
             _cn.AddTo(_y);
         }
+        if (_tpg is not null) for (int i = 0; i < Frame; i++) _y[i] = (float)_tpg.Process(_y[i]);
         _y.CopyTo(x);
     }
 

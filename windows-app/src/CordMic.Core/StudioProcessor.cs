@@ -63,7 +63,8 @@ public sealed class StudioProcessor : IDisposable
     public long ConcealedSamples { get { lock (_ringLock) return _gc.ConcealedSamples; } }
     /// <summary>Completed chain swaps (diagnostics and tests).</summary>
     public int Swaps { get; private set; }
-    public double AgcGainDb => _chain.Agc.GainDb;
+    /// <summary>B3 auto-volume gain; NaN when the 1.1.0 voice chain levels the voice instead (the saved B3 start gain is kept).</summary>
+    public double AgcGainDb => _chain.VoiceChainOn ? double.NaN : _chain.Agc.GainDb;
     public bool HasFallenBack => _fellBack != 0;
     /// <summary>Added latency: RNNoise look-ahead plus <see cref="BufferFrames"/> frames of worker buffering, in ms (40).</summary>
     public static double AddedLatencyMs => StudioChain.LatencyMs + BufferFrames * Frame / 48.0;

@@ -9,7 +9,7 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 cleans up the voice, streams it to a Windows tray app, and the tray app plays it into a virtual audio cable that
 Discord, Zoom, OBS and games can select as a microphone.
 
-Current stable version: **1.0.0**. It is the GitHub latest release and is offered by the in-app updater to 0.7.2 and to 0.8.0-beta installs ([changelog](CHANGELOG.md), [latest](https://github.com/Lukecinate/cordmic/releases/latest)). Pre-releases 0.8.0-beta.1–beta.3 remain on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and are not offered by automatic updates.
+Current stable version: **1.1.0** (podcast voice chain, see [Voice processing](#voice-processing)). It is the GitHub latest release and is offered by the in-app updater to 1.0.0, 0.7.2 and 0.8.0-beta installs ([changelog](CHANGELOG.md), [latest](https://github.com/Lukecinate/cordmic/releases/latest)). Pre-releases 0.8.0-beta.1–beta.3 remain on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and are not offered by automatic updates.
 
 USB over the accessory path remains **experimental**, off by default, and untested on hardware. Automatic mode still uses USB tethering. Hardware gate G-M1 has not been passed; this release does not claim that the accessory path works on a real phone. Company and managed-PC deployment is **unsupported** until a later review; there is no admin install guide.
 
@@ -181,7 +181,7 @@ DPI (100–200%). Keyboard: Tab / Shift+Tab between settings, arrow keys inside 
 |---|---|---|
 | Connection | Phone status; Ask for a pairing code (with New code); Start with Windows; Language (Automatic, English, Bahasa Indonesia) | Pairing per previous setting; Start with Windows off; Automatic |
 | Sound | Virtual microphone (Automatic = best virtual cable found: VB-CABLE A–D, VAC, VoiceMeeter, or a specific device); Install VB-CABLE (only when no cable is found); Auto volume; Phone mic boost 0 to +24 dB; **Delay or stability**: Lowest delay / Balanced / Most stable, with the current phone-to-PC delay | Automatic; Auto volume on; +6 dB; Balanced |
-| Noise & voice | **Noise reduction**, one choice: Off, Phone – light (recommended), Phone – strong, PC Studio – balanced / whisper / maximum (+40 ms, see [PC Studio noise reduction](#pc-studio-noise-reduction-optional)); Voice clarity; Front focus; Phone microphones (what the phone reported) | Phone – light; Voice clarity on; Front focus on |
+| Noise & voice | **Noise reduction**, one choice: Off, Phone – light (recommended), Phone – strong, PC Studio – balanced / whisper / maximum (+47 ms, see [PC Studio noise reduction](#pc-studio-noise-reduction-optional)); Voice clarity; Podcast voice chain (1.1.0); Front focus; Phone microphones (what the phone reported) | Phone – light; Voice clarity on; Podcast voice chain on; Front focus on |
 | Updates | Update card (status, progress, Cancel, one primary button); Download updates automatically; Install when I exit CordMic; Download page on GitHub | Download automatically **on**; install on exit off |
 | Advanced | Jitter buffer (Low 5 / Normal 10 / Safe 20 ms); Windows output mode (Auto, Low latency, Stable, Exclusive); Front focus, compatible mode (AudioRecord, higher latency); Optimize VB-CABLE; Fix phone network priority; Mic mode is set on the phone; Get VB-CABLE; Open log; Reset audio settings | Normal; Auto; off |
 
@@ -290,6 +290,20 @@ only a short capability summary plus the model name is sent to the PC over the e
 3. Windows shows a new adapter, usually "Remote NDIS based Internet Sharing Device" or "UsbNcm".
 
 ## Voice processing
+
+### Podcast voice chain (1.1.0, on by default)
+
+Every preset first runs a podcast-style chain. It consists of a gated AGC toward about −17 dBFS RMS (held in pauses,
+never lifting the room floor above −52 dBFS); a dynamic EQ (80 Hz high-pass, a dynamic cut around 250 Hz, a dynamic
+de-ess around 6.5 kHz); a soft-knee 3:1 compressor with program-dependent release; and a look-ahead brickwall limiter
+at −1 dBFS. Spectral dereverb and dialog isolation come next, folded into the noise-suppression STFT (one mask, no
+double masking). A thin true-peak guard runs after noise reduction. It runs on the phone, or on the PC in front of
+RNNoise when PC Studio is on, never on both. It adds 1.0 ms (Off), 1.5 ms (Light; 6.9 ms where Android's own
+suppressor is used), 2.0 ms (Strong) or 7.4 ms (PC Studio). Turn it off in *Settings → Noise & voice → Podcast voice
+chain* to get the 1.0.0 processing below. Parameters, latency and CPU per stage:
+[docs/dsp/podcast-chain.md](docs/dsp/podcast-chain.md).
+
+### Chain without the podcast stages (1.0.0 behaviour)
 
 All voice processing runs on the phone, before the packet is sent. The chain is the same in Kotlin
 (`VoiceChain.kt`) and in the C# reference implementation (`CordMic.Core/VoiceChain.cs`), which carries the tests.
@@ -448,7 +462,7 @@ settings in use. Do not attach voice recordings to public issues.
 
 ## Known limitations
 
-- **Experimental USB engine (untested on hardware, not used by Auto).** Direct USB (AOA / WinUSB) stays off unless you turn on the experimental option. Automatic mode still uses USB tethering. Hardware gate G-M1 has not been passed. 1.0.0 is the current stable release.
+- **Experimental USB engine (untested on hardware, not used by Auto).** Direct USB (AOA / WinUSB) stays off unless you turn on the experimental option. Automatic mode still uses USB tethering. Hardware gate G-M1 has not been passed. 1.1.0 is the current stable release.
 - **Company / managed PCs.** Deployment on company or managed PCs is unsupported until a later review.
 - **Code signing policy.** How releases will be signed is in [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). The SignPath application is a maintainer step (see [docs/SIGNPATH-APPLICATION.md](docs/SIGNPATH-APPLICATION.md); it is a draft and has not been submitted).
 - **Unsigned Windows installer.** The installer and `CordMic.exe` are not Authenticode-signed, so SmartScreen
@@ -573,7 +587,8 @@ cordmic/
 
 The pipeline is **designed for roughly 30–45 ms end-to-end**. This is a design budget, not a measurement:
 capture ~3–10 ms + 5 ms packet + USB link 1–2 ms + 10–15 ms jitter buffer + WASAPI/VB-CABLE ~3–20 ms, plus 2.7 ms
-when Strong noise cancellation is on, or about 40 ms when PC Studio noise reduction is on. Actual latency depends on the phone, the capture path and the PC audio stack.
+when Strong noise cancellation is on, or about 40 ms when PC Studio noise reduction is on. The 1.1.0 podcast voice chain adds 1.0–2.0 ms
+(6.9 ms on Light with Android's own suppressor, 7.4 ms with PC Studio); see [docs/dsp/podcast-chain.md](docs/dsp/podcast-chain.md). Actual latency depends on the phone, the capture path and the PC audio stack.
 *Front focus (higher latency)* and *Voice communication* add capture delay.
 
 **PC-side delay shown by the app:** network (½ round trip) + jitter buffer (time-averaged) + Windows output (the
@@ -663,6 +678,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 1.1.0 | Podcast voice chain in every preset (gated AGC, dynamic EQ, compressor, look-ahead limiter, dereverb, dialog isolation, true-peak guard), on by default with a Settings switch; release workflow skips SignPath cleanly |
 | 1.0.0 | First supported stable after 0.7.2: Settings page scrolling, NSIS 3.13, .NET 8.0.34 in the self-contained app, USB accessory path still experimental, off, and untested on hardware |
 | 0.7.2 | Settings window crash fixed, tethering status and Samsung guidance on PC and phone, PC internet never routed through the phone's mobile data, UI self-test |
 | 0.7.1 | Text follows each monitor's scale, a downloaded update survives a restart, fixes from an audit of the 0.7.0 updater and windows |

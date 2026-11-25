@@ -219,6 +219,7 @@ internal sealed class AppController : ApplicationContext
         {
             Log = Log, RxThreadInit = Native.BoostAudioThread,
             NoiseMode = _settings.NoiseMode, VoiceClarity = _settings.VoiceClarity,
+            PodcastVoiceChain = _settings.PodcastVoiceChain,
             FrontFocus = _settings.FrontFocus,
             FrontFocusAudioRecord = _settings.FrontFocusAudioRecord,
             Agc = _settings.AutoVolume,
@@ -1110,6 +1111,23 @@ internal sealed class AppController : ApplicationContext
         Log("voice clarity -> " + (on ? "on" : "off"));
     }
 
+    /// <summary>1.1.0 podcast voice chain (default on). Applies to the phone (FlagChainOff on PING) and to Studio.</summary>
+    public bool PodcastVoiceChain => _settings.PodcastVoiceChain;
+
+    public void SetPodcastVoiceChain(bool on)
+    {
+        if (_settings.PodcastVoiceChain == on) return;
+        _settings.PodcastVoiceChain = on;
+        Save();
+        if (_rx is { } rx)
+        {
+            rx.PodcastVoiceChain = on;
+            rx.ConfigureStudio(_settings.StudioPreset, _settings.AutoVolume, _settings.StudioAgcGainDb);
+            rx.NotifyLinkControlChanged();
+        }
+        Log("podcast voice chain -> " + (on ? "on" : "off"));
+    }
+
     public void SetAutoVolume(bool on)
     {
         if (_settings.AutoVolume == on) return;
@@ -1179,6 +1197,7 @@ internal sealed class AppController : ApplicationContext
             rx.ConfigureStudio(StudioPreset.Off, _settings.AutoVolume, _settings.StudioAgcGainDb);
             rx.NoiseMode = _settings.NoiseMode;
             rx.VoiceClarity = _settings.VoiceClarity;
+            rx.PodcastVoiceChain = _settings.PodcastVoiceChain;
             rx.FrontFocus = _settings.FrontFocus;
             rx.FrontFocusAudioRecord = _settings.FrontFocusAudioRecord;
             rx.Agc = _settings.AutoVolume;

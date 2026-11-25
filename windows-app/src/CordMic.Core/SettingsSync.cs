@@ -43,6 +43,9 @@ public static class SettingsSync
     /// <summary>PING only (0.8.0): ask the phone for its install-id block after the sync block. Older phones ignore it;
     /// a 0.7.x PC never sets the bit, so it never has to parse the block.</summary>
     public const byte FlagWantPhoneKey = 1 << 6;
+    /// <summary>PING only (1.1.0): the user turned the podcast voice chain off. Older phones ignore it; older PCs never
+    /// set it, so a 1.1.0 phone keeps the chain on.</summary>
+    public const byte FlagChainOff = 1 << 7;
 
     public static byte NextSeq(byte local, byte remote)
     {

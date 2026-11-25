@@ -26,6 +26,8 @@ object SettingsSync {
     const val FLAG_STUDIO = 1 shl 5
     /** PING only (0.8.0): the PC wants the install-id block after the sync block. Older PCs never set this. */
     const val FLAG_WANT_PHONE_KEY = 1 shl 6
+    /** PING only (1.1.0): the user turned the podcast voice chain off on the PC. Older PCs never set it (chain stays on). */
+    const val FLAG_CHAIN_OFF = 1 shl 7
 
     fun nextSeq(local: Int, remote: Int): Int {
         val n = maxOf(local and 0xFF, remote and 0xFF) + 1
@@ -84,6 +86,7 @@ data class SyncPayload(val flags2: Int, val revs: Array<FieldRev>) {
     val wantDiag: Boolean get() = flags2 and SettingsSync.FLAG_WANT_DIAG != 0
     val studio: Boolean get() = flags2 and SettingsSync.FLAG_STUDIO != 0
     val wantPhoneKey: Boolean get() = flags2 and SettingsSync.FLAG_WANT_PHONE_KEY != 0
+    val chainOff: Boolean get() = flags2 and SettingsSync.FLAG_CHAIN_OFF != 0
     override fun equals(other: Any?) = other is SyncPayload && flags2 == other.flags2 && revs.contentEquals(other.revs)
     override fun hashCode() = 31 * flags2 + revs.contentHashCode()
 }

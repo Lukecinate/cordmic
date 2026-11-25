@@ -1,3 +1,5 @@
+using CordMic.Core.Dsp;
+
 namespace CordMic.Core;
 
 /// <summary>How strongly the phone should suppress steady noise. Default is <see cref="Light"/>.</summary>
@@ -143,8 +145,45 @@ public sealed class VoiceChain
         return (DbToLin(openDb), DbToLin(closeDb));
     }
 
+    // ---- 1.1.0 podcast chain -------------------------------------------------------------------------------
+    private readonly PodcastChain _pod;
+    private readonly TruePeakGuard _tpg;
+    private readonly SpectralVoice _spec;
+    private readonly DspBiquad _gateHp = new();
+    private readonly double[] _extra = new double[NoiseFft / 2 + 1];
+    private double[] _work = new double[4096];
+    private bool[] _gateBuf = new bool[4096];
+    private bool _spectralOn;
+    private PodcastParams _podParams = PodcastPresets.Light;
+
+    /// <summary>
+    /// 1.1.0 podcast chain (gated AGC, dynamic EQ, compressor, look-ahead limiter) before noise suppression, spectral
+    /// dereverb / dialog isolation folded into the suppression STFT, and a true-peak guard last. Off in this class by
+    /// default so the legacy chain stays testable; the app turns it on (the user setting defaults to on).
+    /// </summary>
+    public bool Podcast { get; set; }
+    /// <summary>Podcast tuning for the current preset (<see cref="PodcastPresets"/>); dereverb/dialog strengths come from here.</summary>
+    public PodcastParams PodcastParams
+    {
+        get => _podParams;
+        set { if (!ReferenceEquals(value, _podParams)) { _podParams = value ?? throw new ArgumentNullException(nameof(value)); _pod.Params = value; } }
+    }
+    /// <summary>Wall clock in nanoseconds for <see cref="Cpu"/>; injectable for tests.</summary>
+    public Func<long> Clock { get; set; } = () => System.Diagnostics.Stopwatch.GetTimestamp() * (1_000_000_000L / System.Diagnostics.Stopwatch.Frequency);
+    /// <summary>CPU watchdog: when tripped, dereverb and dialog isolation are dropped for the session.</summary>
+    public CpuGuard Cpu { get; }
+    /// <summary>True when the dereverb / dialog masks run (podcast on, a non-zero strength, CPU guard not tripped).</summary>
+    public bool SpectralActive => Podcast && !Cpu.Tripped && (_podParams.Dereverb > 0 || _podParams.Dialog > 0);
+    private bool StftActive => _mode != NoiseMode.Off || SpectralActive;
+    /// <summary>True signal delay added by the whole chain in samples (STFT block, limiter look-ahead, true-peak guard).</summary>
+    public int ChainDelayFrames => (StftActive ? NoiseFft : 0) + (Podcast ? (PodcastSpectralOnly ? 0 : _pod.LatencyFrames) + TruePeakGuard.LatencyFrames : 0);
+    public double PodcastAgcGainDb => _pod.AgcGainDb;
+    /// <summary>PC Studio pre-stage: only the spectral dereverb / dialog masks and the true-peak guard run (the Studio
+    /// chain owns its own <see cref="PodcastChain"/>).</summary>
+    public bool PodcastSpectralOnly { get; set; }
+
     /// <summary>Samples of delay the chain is inserting right now (STFT hop, or 0 when suppression is off).</summary>
-    public int DelayFrames => _mode == NoiseMode.Off ? 0 : NoiseDelayFrames;
+    public int DelayFrames => StftActive ? NoiseDelayFrames : 0;
 
     /// <summary>Added latency of the noise suppressor. 0 when it is off.</summary>
     public double NoiseLatencyMs => DelayFrames * 1000.0 / _sr;
@@ -172,6 +211,11 @@ public sealed class VoiceChain
         _expOpen = 1 - Math.Exp(-1.0 / (0.005 * sampleRate));
         _expClose = 1 - Math.Exp(-1.0 / (0.150 * sampleRate));
         _holdFrames = (int)(GateHoldSec * sampleRate);
+        _pod = new PodcastChain(sampleRate, 1, PodcastPresets.Light);
+        _tpg = new TruePeakGuard(sampleRate, 1, CeilingDbfs);
+        _spec = new SpectralVoice(sampleRate, NoiseFft, NoiseHop);
+        _gateHp.HighPass(sampleRate, 120, 0.7071067811865476);
+        Cpu = new CpuGuard(sampleRate);
     }
 
     public void Reset()
@@ -184,10 +228,12 @@ public sealed class VoiceChain
         Array.Clear(_blockIn); Array.Clear(_hopOut); Array.Clear(_ola); Array.Clear(_noise);
         Array.Clear(_psd); Array.Clear(_prevClean);
         for (int i = 0; i < _binGain.Length; i++) _binGain[i] = 1;
+        _pod.Reset(); _tpg.Reset(); _spec.Reset(); Cpu.Reset(); _gateHp.Reset(); _spectralOn = false;
     }
 
     public void Process(Span<short> samples)
     {
+        if (Podcast) { ProcessPodcast(samples); return; }
         double user = DbToLin(_gainDb);
         if (double.IsNaN(_userGain)) _userGain = user;
         double maxAgc = DbToLin(Math.Min(MaxAgcDb, MaxGainDb - _gainDb));
@@ -237,6 +283,54 @@ public sealed class VoiceChain
             else if (s < -32768) s = -32768;
             samples[i] = (short)s;
         }
+    }
+
+    /// <summary>
+    /// 1.1.0 order: [clarity presence] → gate measure → user gain → podcast chain (AGC, dynamic EQ, compressor, look-ahead
+    /// limiter) → STFT noise suppression with the dereverb / dialog masks → pause expander → true-peak guard.
+    /// </summary>
+    private void ProcessPodcast(Span<short> samples)
+    {
+        int n = samples.Length;
+        if (n > _work.Length) { _work = new double[n]; _gateBuf = new bool[n]; } // only if a caller grows its block
+        long t0 = Clock();
+        double user = DbToLin(_gainDb);
+        if (double.IsNaN(_userGain)) _userGain = user;
+        _pod.AgcEnabled = Agc && !PodcastSpectralOnly;
+        _pod.DynamicEqEnabled = _pod.CompressorEnabled = _pod.LimiterEnabled = !PodcastSpectralOnly;
+        _pod.AgcMaxDb = Math.Min(MaxAgcDb, MaxGainDb - _gainDb);
+        for (int i = 0; i < n; i++)
+        {
+            double x = samples[i] / 32768.0;
+            if (VoiceClarity) x = _presence.Process(x); // static presence lift; HP and mud are dynamic EQ now
+            GateStep(_gateHp.Process(x));
+            _gateBuf[i] = _gated;
+            _userGain += (user - _userGain) * _gainSmooth;
+            _work[i] = x * _userGain;
+        }
+        _pod.Process(_work, n);
+        double pause = Expander switch
+        {
+            NoiseMode.Strong => DbToLin(StrongPauseDb),
+            NoiseMode.Light => DbToLin(LightPauseDb),
+            _ => 1.0,
+        };
+        _spectralOn = SpectralActive;
+        bool stft = _mode != NoiseMode.Off || _spectralOn;
+        for (int i = 0; i < n; i++)
+        {
+            double y = _work[i];
+            if (stft) y = NoiseStep(y);
+            else { _fill = NoiseHop; _emit = 0; _haveHop = false; }
+            double expWant = _gateBuf[i] ? pause : 1.0;
+            _exp += (expWant - _exp) * (expWant > _exp ? _expOpen : _expClose);
+            y = _tpg.Process(y * _exp);
+            int s = (int)Math.Round(y * 32768.0);
+            if (s > 32767) s = 32767;
+            else if (s < -32768) s = -32768;
+            samples[i] = (short)s;
+        }
+        Cpu.Record(Clock() - t0, n);
     }
 
     /// <summary>Pre-gain envelope, continuous floor tracking, and the gate with a short hold.</summary>
@@ -327,6 +421,7 @@ public sealed class VoiceChain
         // Speech, whispers and fricatives are louder than that, so they no longer train the estimate.
         bool nearFloor = noiseE <= 0 || frameE < 2.5 * noiseE;
         bool strong = _mode == NoiseMode.Strong;
+        bool ns = _mode != NoiseMode.Off;
         double floor = strong ? StrongFloor : LightFloor;
         double over = strong ? StrongOverSub : 1.0;
         double dd = strong ? 0.94 : 0.92;
@@ -346,7 +441,14 @@ public sealed class VoiceChain
             // Decision-directed a-priori SNR (smooth over time), then a Wiener gain.
             double prio = dd * _prevClean[k] / nn + (1 - dd) * Math.Max(post - 1, 0);
             double g = prio / (1 + prio);
-            _rawGain[k] = g < floor ? floor : g > 1 ? 1 : g;
+            _rawGain[k] = !ns ? 1 : g < floor ? floor : g > 1 ? 1 : g;
+        }
+        if (Podcast && _spectralOn)
+        {
+            // One mask: each bin takes the deeper of NS and dereverb × dialog (never their product), so the stages do
+            // not stack into musical noise; the shared smoothing below runs once.
+            _spec.Compute(_psd, _mag, _noise, _podParams.Dereverb, _podParams.Dialog, _extra);
+            for (int k = 0; k <= half; k++) if (_extra[k] < _rawGain[k]) _rawGain[k] = _extra[k];
         }
         // Whispers and s/f/sh sounds: when the band above 3 kHz is clearly above its noise, keep it.
         bool hfActive = hfN > 0 && hfS > HfProtectRatio * hfN;
@@ -354,7 +456,7 @@ public sealed class VoiceChain
         {
             double l = _rawGain[k > 0 ? k - 1 : k], c = _rawGain[k], r = _rawGain[k < half ? k + 1 : k];
             double g = 0.25 * l + 0.5 * c + 0.25 * r;
-            if (hfActive && k >= HfBin && g < HfProtectFloor) g = HfProtectFloor;
+            if (ns && hfActive && k >= HfBin && g < HfProtectFloor) g = HfProtectFloor;
             double a = g > _binGain[k] ? GainRise : GainFall;
             _binGain[k] = a * _binGain[k] + (1 - a) * g;
             double clean = _binGain[k] * _mag[k];

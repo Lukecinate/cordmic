@@ -9,7 +9,7 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi stabil saat ini: **1.0.0**. Ini rilis *latest* di GitHub, dan pembaruan dalam aplikasi menawarkannya ke pemasangan 0.7.2 serta ke beta 0.8.0 ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)). Pra-rilis 0.8.0-beta.1–beta.3 tetap ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis.
+Versi stabil saat ini: **1.1.0** (rantai suara podcast, lihat [Pemrosesan suara](#pemrosesan-suara)). Ini rilis *latest* di GitHub, dan pembaruan dalam aplikasi menawarkannya ke pemasangan 1.0.0, 0.7.2 serta ke beta 0.8.0 ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)). Pra-rilis 0.8.0-beta.1–beta.3 tetap ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis.
 
 Jalur USB aksesori tetap **eksperimental**, mati secara bawaan, dan belum diuji di perangkat keras. Mode otomatis tetap memakai tethering USB. Gerbang perangkat keras G-M1 belum dilalui; rilis ini tidak menyatakan bahwa jalur aksesori sudah berfungsi di HP nyata. Pemasangan di PC perusahaan atau yang dikelola TI **belum didukung** sampai ada tinjauan tersendiri; tidak ada panduan instalasi untuk admin.
 
@@ -180,7 +180,7 @@ Ctrl+Tab / Ctrl+Shift+Tab (atau Ctrl+PageDown / PageUp) antar halaman, Esc menut
 |---|---|---|
 | Koneksi | Status HP; Minta kode pairing (dengan Kode baru); Jalan saat Windows mulai; Bahasa (Otomatis, English, Bahasa Indonesia) | Pairing mengikuti pengaturan sebelumnya; Jalan saat Windows mulai mati; Otomatis |
 | Suara | Mikrofon virtual (Otomatis = kabel virtual terbaik yang ditemukan: VB-CABLE A–D, VAC, VoiceMeeter, atau perangkat tertentu); Pasang VB-CABLE (hanya bila belum ada kabel); Volume otomatis; Penguat mic HP 0 sampai +24 dB; **Jeda atau stabil**: Jeda terendah / Seimbang / Paling stabil, dengan jeda HP-ke-PC saat ini | Otomatis; Volume otomatis aktif; +6 dB; Seimbang |
-| Bising & suara | **Peredam bising**, satu pilihan: Mati, HP – ringan (disarankan), HP – kuat, Studio PC – seimbang / bisikan / maksimal (+40 ms, lihat [Peredam bising Studio di PC](#peredam-bising-studio-di-pc-opsional)); Kejelasan suara; Fokus depan; Mikrofon HP (info dari HP) | HP – ringan; Kejelasan suara aktif; Fokus depan aktif |
+| Bising & suara | **Peredam bising**, satu pilihan: Mati, HP – ringan (disarankan), HP – kuat, Studio PC – seimbang / bisikan / maksimal (+47 ms, lihat [Peredam bising Studio di PC](#peredam-bising-studio-di-pc-opsional)); Kejelasan suara; Rantai suara podcast (1.1.0); Fokus depan; Mikrofon HP (info dari HP) | HP – ringan; Kejelasan suara aktif; Rantai suara podcast aktif; Fokus depan aktif |
 | Pembaruan | Kartu pembaruan (status, progres, Batal, satu tombol utama); Unduh pembaruan otomatis; Pasang saat aku keluar dari CordMic; Halaman unduhan di GitHub | Unduh otomatis **aktif**; pasang saat keluar mati |
 | Lanjutan | Jitter buffer (Low 5 / Normal 10 / Safe 20 ms); Mode output Windows (Auto, Latensi rendah, Stabil, Exclusive); Fokus depan, mode kompatibel (AudioRecord, latensi lebih tinggi); Optimalkan VB-CABLE; Perbaiki prioritas jaringan HP; Mode mic diatur di HP; Dapatkan VB-CABLE; Buka log; Reset pengaturan audio | Normal; Auto; mati |
 
@@ -290,6 +290,21 @@ PC lewat link yang sama.
 3. Windows menampilkan adapter baru, biasanya "Remote NDIS based Internet Sharing Device" atau "UsbNcm".
 
 ## Pemrosesan suara
+
+### Rantai suara podcast (1.1.0, aktif secara bawaan)
+
+Setiap preset lebih dulu menjalankan rantai bergaya podcast. Isinya: AGC bergerbang menuju sekitar −17 dBFS RMS
+(ditahan saat jeda, tidak pernah menaikkan lantai ruangan di atas −52 dBFS); EQ dinamis (high-pass 80 Hz, potongan
+dinamis sekitar 250 Hz, de-ess dinamis sekitar 6,5 kHz); kompresor 3:1 soft-knee dengan release yang mengikuti materi;
+dan limiter brickwall look-ahead di −1 dBFS. Setelah itu dereverb spektral dan isolasi dialog, digabung ke STFT peredam
+bising (satu mask, tanpa masking ganda). Penjaga true-peak tipis berjalan setelah peredam bising. Rantai ini berjalan
+di HP, atau di PC sebelum RNNoise bila Studio PC aktif, tidak pernah di keduanya. Tambahan latensinya 1,0 ms (Mati),
+1,5 ms (Ringan; 6,9 ms bila peredam bawaan Android dipakai), 2,0 ms (Kuat) atau 7,4 ms (Studio PC). Matikan di
+*Pengaturan → Bising & suara → Rantai suara podcast* untuk kembali ke pemrosesan 1.0.0 di bawah. Parameter, latensi,
+dan CPU per tahap: [docs/dsp/podcast-chain.md](docs/dsp/podcast-chain.md).
+
+### Rantai tanpa tahap podcast (perilaku 1.0.0)
+
 
 Semua pemrosesan suara berjalan di HP sebelum paket dikirim. Rantainya sama di Kotlin (`VoiceChain.kt`) dan di
 implementasi referensi C# (`CordMic.Core/VoiceChain.cs`) yang memuat test.
@@ -451,7 +466,7 @@ dipakai. Jangan melampirkan rekaman suara di issue publik.
 
 ## Keterbatasan yang diketahui
 
-- **Mesin USB eksperimental (belum diuji di perangkat keras, tidak dipakai mode Otomatis).** USB langsung (AOA / WinUSB) tetap mati kecuali opsi eksperimental dinyalakan. Mode otomatis tetap memakai tethering USB. Gerbang perangkat keras G-M1 belum dilalui. 1.0.0 adalah rilis stabil saat ini.
+- **Mesin USB eksperimental (belum diuji di perangkat keras, tidak dipakai mode Otomatis).** USB langsung (AOA / WinUSB) tetap mati kecuali opsi eksperimental dinyalakan. Mode otomatis tetap memakai tethering USB. Gerbang perangkat keras G-M1 belum dilalui. 1.1.0 adalah rilis stabil saat ini.
 - **PC perusahaan / yang dikelola.** Pemasangan di PC perusahaan atau yang dikelola belum didukung sampai ada tinjauan nanti.
 - **Kebijakan penandatanganan kode.** Cara rilis akan ditandatangani ada di [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md). Pendaftaran SignPath adalah langkah maintainer (lihat [docs/SIGNPATH-APPLICATION.md](docs/SIGNPATH-APPLICATION.md); ini draf dan belum dikirim).
 - **Installer Windows belum ditandatangani.** Installer dan `CordMic.exe` belum Authenticode-signed, jadi SmartScreen
@@ -663,6 +678,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 1.1.0 | Rantai suara podcast di setiap preset (AGC bergerbang, EQ dinamis, kompresor, limiter look-ahead, dereverb, isolasi dialog, penjaga true-peak), aktif secara bawaan dengan sakelar di Pengaturan; workflow rilis melewati SignPath dengan bersih |
 | 1.0.0 | Stabil pertama yang didukung setelah 0.7.2: pengguliran halaman Pengaturan, NSIS 3.13, .NET 8.0.34 di aplikasi self-contained, jalur USB aksesori tetap eksperimental, mati, dan belum diuji di perangkat keras |
 | 0.7.2 | Crash jendela Pengaturan diperbaiki, status tethering dan panduan Samsung di PC dan HP, internet PC tidak pernah lewat kuota HP, self-test UI |
 | 0.7.1 | Teks mengikuti skala tiap monitor, pembaruan yang sudah diunduh tetap ada setelah restart, perbaikan dari audit updater dan jendela 0.7.0 |

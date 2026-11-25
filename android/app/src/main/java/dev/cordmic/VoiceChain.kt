@@ -45,8 +45,37 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     var gainDb: Int = DEFAULT_GAIN_DB
         set(value) { field = value.coerceIn(0, MAX_GAIN_DB) }
 
-    val delayFrames: Int get() = if (mode == NoiseMode.OFF) 0 else NOISE_DELAY_FRAMES
+    /**
+     * 1.1.0 podcast chain (gated AGC, dynamic EQ, compressor, look-ahead limiter) before noise suppression, spectral
+     * dereverb / dialog isolation folded into the suppression STFT, and a true-peak guard last. Off in this class by
+     * default so the legacy chain stays testable; the app turns it on (the user setting defaults to on).
+     */
+    var podcast: Boolean = false
+    /** Podcast tuning for the current preset (see [PodcastPresets]); dereverb/dialog strengths come from here. */
+    var podcastParams: PodcastParams = PodcastPresets.LIGHT
+        set(value) { if (value !== field) { field = value; pod.params = value } }
+    /** Wall clock for [cpu]; injectable for tests. */
+    var clock: () -> Long = { System.nanoTime() }
+    /** CPU watchdog: when tripped, dereverb and dialog isolation are dropped for the session. */
+    val cpu = CpuGuard(sampleRate)
+    private val pod = PodcastChain(sampleRate, 1, PodcastPresets.LIGHT)
+    private val tpg = TruePeakGuard(sampleRate, 1, CEILING_DBFS)
+    private val spec = SpectralVoice(sampleRate, NOISE_FFT, NOISE_HOP)
+    private val extra = DoubleArray(NOISE_FFT / 2 + 1)
+    private val work = DoubleArray(4096)
+    private val gateBuf = BooleanArray(4096)
+    private val gateHp = Biquad.highPass(sampleRate, 120.0, 0.7071067811865476)
+    private var spectralOn = false
+
+    /** True when the dereverb / dialog masks run (podcast on, a non-zero strength, CPU guard not tripped). */
+    val spectralActive: Boolean get() = podcast && !cpu.tripped && (podcastParams.dereverb > 0 || podcastParams.dialog > 0)
+    private val stftActive: Boolean get() = mode != NoiseMode.OFF || spectralActive
+
+    val delayFrames: Int get() = if (stftActive) NOISE_DELAY_FRAMES else 0
     val noiseLatencyMs: Double get() = delayFrames * 1000.0 / sampleRate
+    /** True signal delay added by the whole chain in samples (STFT block, limiter look-ahead, true-peak guard). */
+    val chainDelayFrames: Int get() = (if (stftActive) NOISE_FFT else 0) + (if (podcast) pod.latencyFrames + tpg.latencyFrames else 0)
+    val podcastAgcGainDb: Double get() = pod.agcGainDb
 
     private val hp: Biquad
     private val shelf: Biquad
@@ -126,6 +155,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         blockIn.fill(0.0); hopOut.fill(0.0); ola.fill(0.0); noise.fill(0.0)
         psd.fill(0.0); prevClean.fill(0.0)
         binGain.fill(1.0)
+        pod.reset(); tpg.reset(); spec.reset(); cpu.reset(); gateHp.reset(); spectralOn = false
     }
 
     fun setNoiseFloorDbfs(floorDbfs: Double?) {
@@ -162,6 +192,11 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         private set
 
     fun process(samples: ShortArray, n: Int = samples.size) {
+        if (podcast) {
+            var o = 0
+            while (o < n) { val c = min(work.size, n - o); processPodcast(samples, o, c); o += c }
+            return
+        }
         val user = dbToLin(gainDb.toDouble())
         if (userGain.isNaN()) userGain = user
         val maxAgc = dbToLin(min(MAX_AGC_DB, (MAX_GAIN_DB - gainDb).toDouble()))
@@ -208,6 +243,53 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             gated = gated,
             agc = agc,
             agcGainDb = if (agc) 20 * kotlin.math.log10(max(agcGain, 1e-9)) else 0.0,
+            expanderDb = 20 * kotlin.math.log10(max(expGain, 1e-9)),
+            floorKnown = floorKnown,
+        )
+    }
+
+    /**
+     * 1.1.0 order: [clarity presence] -> gate measure -> user gain -> podcast chain (AGC, dynamic EQ, compressor,
+     * look-ahead limiter) -> STFT noise suppression with the dereverb / dialog masks -> pause expander -> true-peak guard.
+     */
+    private fun processPodcast(samples: ShortArray, off: Int, n: Int) {
+        val t0 = clock()
+        val user = dbToLin(gainDb.toDouble())
+        if (userGain.isNaN()) userGain = user
+        pod.agcEnabled = agc
+        pod.agcMaxDb = min(MAX_AGC_DB, (MAX_GAIN_DB - gainDb).toDouble())
+        for (i in 0 until n) {
+            var x = samples[off + i] / 32768.0
+            if (voiceClarity) x = presence.process(x) // static presence lift; HP and mud are dynamic EQ now
+            gateStep(gateHp.process(x))
+            gateBuf[i] = gated
+            userGain += (user - userGain) * gainSmooth
+            work[i] = x * userGain
+        }
+        pod.process(work, n)
+        val pause = when (expander) {
+            NoiseMode.STRONG -> dbToLin(STRONG_PAUSE_DB)
+            NoiseMode.LIGHT -> dbToLin(LIGHT_PAUSE_DB)
+            else -> 1.0
+        }
+        spectralOn = spectralActive
+        val stft = mode != NoiseMode.OFF || spectralOn
+        for (i in 0 until n) {
+            var y = work[i]
+            y = if (stft) noiseStep(y) else { fill = NOISE_HOP; emit = 0; haveHop = false; y }
+            val expWant = if (gateBuf[i]) pause else 1.0
+            expGain += (expWant - expGain) * (if (expWant > expGain) expOpen else expClose)
+            y = tpg.process(y * expGain)
+            var s = round(y * 32768.0).toInt()
+            if (s > 32767) s = 32767 else if (s < -32768) s = -32768
+            samples[off + i] = s.toShort()
+        }
+        cpu.record(clock() - t0, n)
+        diagnostics = VoiceDiag(
+            floorDbfs = 20 * kotlin.math.log10(max(floor, 1e-9)),
+            gated = gated,
+            agc = agc,
+            agcGainDb = if (agc) pod.agcGainDb else 0.0,
             expanderDb = 20 * kotlin.math.log10(max(expGain, 1e-9)),
             floorKnown = floorKnown,
         )
@@ -287,6 +369,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         // Only a frame close to the current noise level may pull the estimate up quickly.
         val nearFloor = noiseE <= 0 || frameE < 2.5 * noiseE
         val strong = mode == NoiseMode.STRONG
+        val ns = mode != NoiseMode.OFF
         val floorG = if (strong) STRONG_FLOOR else LIGHT_FLOOR
         val over = if (strong) STRONG_OVER_SUB else 1.0
         val dd = if (strong) 0.94 else 0.92
@@ -308,7 +391,13 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             // Decision-directed a-priori SNR, then a Wiener gain.
             val prio = dd * prevClean[k] / nn + (1 - dd) * max(post - 1, 0.0)
             val g = prio / (1 + prio)
-            rawGain[k] = g.coerceIn(floorG, 1.0)
+            rawGain[k] = if (ns) g.coerceIn(floorG, 1.0) else 1.0
+        }
+        if (podcast && spectralOn) {
+            // One mask: each bin takes the deeper of NS and dereverb x dialog (never their product), so the stages
+            // do not stack into musical noise; the shared smoothing below runs once.
+            spec.compute(psd, mag, noise, podcastParams.dereverb, podcastParams.dialog, extra)
+            for (k in 0..half) if (extra[k] < rawGain[k]) rawGain[k] = extra[k]
         }
         // Whispers and s/f/sh sounds: keep the band above 3 kHz while it is clearly above its noise.
         val hfActive = hfN > 0 && hfS > HF_PROTECT_RATIO * hfN
@@ -317,7 +406,7 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             val c = rawGain[k]
             val r = rawGain[if (k < half) k + 1 else k]
             var g = 0.25 * l + 0.5 * c + 0.25 * r
-            if (hfActive && k >= HF_BIN && g < HF_PROTECT_FLOOR) g = HF_PROTECT_FLOOR
+            if (ns && hfActive && k >= HF_BIN && g < HF_PROTECT_FLOOR) g = HF_PROTECT_FLOOR
             val a = if (g > binGain[k]) GAIN_RISE else GAIN_FALL
             binGain[k] = a * binGain[k] + (1 - a) * g
             val clean = binGain[k] * mag[k]

@@ -6,8 +6,9 @@ namespace CordMic.Core;
 
 public sealed class AppSettings
 {
-    /// <summary>Settings schema. 2 = 0.7.0 (automatic update downloads on by default, install on quit).</summary>
-    public const int CurrentSchema = 2;
+    /// <summary>Settings schema. 2 = 0.7.0 (automatic update downloads on by default, install on quit).
+    /// 3 = 1.1.0 (podcast voice chain, on by default).</summary>
+    public const int CurrentSchema = 3;
     public int Version { get; set; } = CurrentSchema;
     public int Port { get; set; } = Protocol.DefaultPort;
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -27,6 +28,9 @@ public sealed class AppSettings
     public NoiseMode NoiseMode { get; set; } = NoiseMode.Light;
     /// <summary>High-pass, low-shelf cut and a slight presence lift. Default on.</summary>
     public bool VoiceClarity { get; set; } = true;
+    /// <summary>1.1.0: podcast voice chain (AGC, dynamic EQ, compressor, limiter, dereverb, dialog isolation) in front of
+    /// noise reduction, on the phone or in Studio. Default on; files from older versions are migrated to on.</summary>
+    public bool PodcastVoiceChain { get; set; } = true;
     /// <summary>Automatic makeup gain toward −18 dBFS, with a noise gate so silence is not boosted.</summary>
     public bool AutoVolume { get; set; } = true;
     /// <summary>0.6.0: PC Studio noise reduction preset. Off keeps the 0.5.7 phone-side processing.</summary>
@@ -159,14 +163,24 @@ public sealed class AppSettings
     {
         if (Version >= CurrentSchema) return null;
         int from = Version;
-        string note;
-        if (!AutoUpdate && autoUpdateTurnedOffSince061?.Invoke() == true)
-            note = "automatic update downloads stay off (turned off in 0.6.1 or later)";
-        else
+        var notes = new List<string>();
+        if (from < 2)
         {
-            note = AutoUpdate ? "automatic update downloads stay on" : "automatic update downloads turned on (0.7.0 default)";
-            AutoUpdate = true;
+            if (!AutoUpdate && autoUpdateTurnedOffSince061?.Invoke() == true)
+                notes.Add("automatic update downloads stay off (turned off in 0.6.1 or later)");
+            else
+            {
+                notes.Add(AutoUpdate ? "automatic update downloads stay on" : "automatic update downloads turned on (0.7.0 default)");
+                AutoUpdate = true;
+            }
         }
+        if (from < 3)
+        {
+            // Schema 2 -> 3 (1.1.0): the podcast voice chain is new and on by default for existing users too.
+            PodcastVoiceChain = true;
+            notes.Add("podcast voice chain on (1.1.0 default)");
+        }
+        string note = string.Join("; ", notes);
         Version = CurrentSchema;
         return $"settings schema {from} -> {CurrentSchema}: {note}";
     }
@@ -217,6 +231,7 @@ public sealed class AppSettings
         NoiseCancellation = true;
         NoiseMode = NoiseMode.Light;
         VoiceClarity = true;
+        PodcastVoiceChain = true;
         AutoVolume = true;
         FrontFocus = true;
         FrontFocusAudioRecord = false;

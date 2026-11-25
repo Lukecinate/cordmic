@@ -155,14 +155,16 @@ public class Release100Tests
     }
 
     [Fact]
-    public void AppVersion_Is100StableNotAPrerelease()
+    public void AppVersion_IsStableNotAPrerelease()
     {
+        // 1.0.0 pinned 1.0.0 / versionCode 25 here; later releases pin their own numbers (Release110Tests).
         var csproj = File.ReadAllText(Path.Combine(SlnDir(), "src/CordMic.App/CordMic.App.csproj"));
-        Assert.Contains("<Version>1.0.0</Version>", csproj);
+        var v = System.Text.RegularExpressions.Regex.Match(csproj, "<Version>([^<]+)</Version>").Groups[1].Value;
+        Assert.True(Version.Parse(v) >= new Version(1, 0, 0), v);
         Assert.DoesNotContain("beta", csproj, StringComparison.OrdinalIgnoreCase);
         var gradle = File.ReadAllText(Path.Combine(RepoRoot(), "android/app/build.gradle.kts"));
-        Assert.Contains("versionCode = 25", gradle);
-        Assert.Contains("versionName = \"1.0.0\"", gradle);
+        var code = int.Parse(System.Text.RegularExpressions.Regex.Match(gradle, @"versionCode = (\d+)").Groups[1].Value);
+        Assert.True(code >= 25, code.ToString());
     }
 
     [Theory]

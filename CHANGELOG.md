@@ -4,6 +4,40 @@ All notable changes to CordMic are documented here. Versions follow [Semantic Ve
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
+Adds a podcast-style voice chain in front of noise reduction in every preset. It is on by default and can be turned
+off with one switch. Wire version stays 1. Android `versionCode` is 26 / `versionName` 1.1.0. Windows builds are
+unsigned while SignPath is not configured; verify downloads with `SHA256SUMS`. The USB accessory engine remains
+Experimental, off by default, and untested on hardware (`UsbEngineGate.HardwareGateGm1Passed` stays false).
+
+### Added
+- Podcast voice chain, before noise suppression, in every noise setting. On the phone it covers Off / Light / Strong;
+  in PC Studio it covers Balanced / Whisper / Maximum and runs in front of RNNoise. It runs on one side only, never
+  both. Stages:
+  gated AGC toward about −17 dBFS RMS, which holds its gain in pauses and never lifts the room floor above −52 dBFS;
+  dynamic EQ (80 Hz high-pass, dynamic cut around 250 Hz, dynamic de-ess around 6.5 kHz);
+  soft-knee 3:1 compressor with program-dependent release;
+  look-ahead brickwall limiter at −1 dBFS (1.0 / 1.5 / 2.0 ms look-ahead by preset);
+  spectral dereverb (exponential late-reverb model per STFT bin, Wiener-style gain with a floor);
+  dialog isolation (voice-band VAD and speech-presence mask).
+  Dereverb and dialog isolation share the existing noise-suppression STFT and its smoothing. Each bin keeps the
+  deeper of the noise and voice masks, never their product, which avoids double masking. A thin true-peak guard
+  after noise suppression keeps NS gain changes from clipping. Details, per-preset parameters, latency and CPU cost
+  are in `docs/dsp/podcast-chain.md`.
+- Setting **Noise & voice → Podcast voice chain** (default on). Off restores the 1.0.0 processing. The PC tells the
+  phone with PING flag bit 7 (`FlagChainOff`); older phones ignore it and older PCs never set it.
+- CPU watchdog: when the chain needs more than 30 % of real time for 1.5 s, dereverb and dialog isolation are
+  dropped for the session.
+
+### Changed
+- Added latency at 48 kHz: Off +1.0 ms; Phone – light +1.5 ms, or +6.9 ms on phones where the platform noise
+  suppressor is used (dereverb and dialog need the STFT); Phone – strong +2.0 ms; PC Studio +7.4 ms.
+- With the chain on, PC Studio's B3 auto volume no longer adds gain after RNNoise, because the chain's AGC levels the
+  voice first. With the chain off, B3 behaves as in 1.0.0 and its saved start gain is kept.
+- Settings schema 2 → 3: files from 1.0.0 and earlier load with the podcast voice chain on. All other saved values
+  are kept. The 0.7.0 automatic-update migration still runs only for schema 1 files.
+
 ### Fixed
 - The release workflow no longer fails when SignPath is not configured. The
   SignPath jobs run only when the repository variable `SIGNPATH_ENABLED` is

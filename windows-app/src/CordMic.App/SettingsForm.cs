@@ -507,6 +507,8 @@ internal static class RowFactory
                 };
             case "clarity":
                 return new ToggleRow(f, T(item.LabelKey), H(item), () => app.DisplayedVoiceClarity, v => app.SetVoiceClarity(v));
+            case "podcast":
+                return new ToggleRow(f, T(item.LabelKey), H(item), () => app.PodcastVoiceChain, v => app.SetPodcastVoiceChain(v));
             case "frontFocus":
                 return new ToggleRow(f, T(item.LabelKey), H(item), () => app.DisplayedFrontFocus, v => app.SetFrontFocus(v));
             case "detected":

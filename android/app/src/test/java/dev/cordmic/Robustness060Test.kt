@@ -29,7 +29,7 @@ class Robustness060Test {
     @Test fun studioBypassesPhoneProcessing() {
         for (m in NoiseMode.values()) for (agc in listOf(false, true)) for (ns in listOf(false, true)) {
             val p = voicePlan(m, agc, studio = true, platformNsActive = ns)
-            assertEquals(VoicePlan(NoiseMode.OFF, NoiseMode.OFF, false, false), p)
+            assertEquals(VoicePlan(NoiseMode.OFF, NoiseMode.OFF, false, false, podcast = false), p)
         }
     }
 

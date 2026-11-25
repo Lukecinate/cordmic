@@ -60,21 +60,28 @@ internal class FrontFocusReporter {
 }
 
 /** What the voice chain runs for one block, given the user's settings and whether the PC asked for Studio. */
-internal data class VoicePlan(val mode: NoiseMode, val expander: NoiseMode, val agc: Boolean, val platformNs: Boolean)
+internal data class VoicePlan(
+    val mode: NoiseMode,
+    val expander: NoiseMode,
+    val agc: Boolean,
+    val platformNs: Boolean,
+    /** 1.1.0: podcast voice chain on this phone. Off with Studio (the PC runs it) or when the PC sends FLAG_CHAIN_OFF. */
+    val podcast: Boolean = true,
+)
 
 /**
  * With Studio (FLAG_STUDIO) the phone sends raw capture: no platform NS, no STFT suppressor, no gate/expander, no AGC,
  * so noise reduction is not stacked. User gain, voice clarity EQ and the limiter stay. The user's stored settings are
  * not changed and are still reported in PONG; they apply again as soon as the PC stops asking.
  */
-internal fun voicePlan(noiseMode: NoiseMode, agc: Boolean, studio: Boolean, platformNsActive: Boolean): VoicePlan {
-    if (studio) return VoicePlan(NoiseMode.OFF, NoiseMode.OFF, agc = false, platformNs = false)
+internal fun voicePlan(noiseMode: NoiseMode, agc: Boolean, studio: Boolean, platformNsActive: Boolean, chain: Boolean = true): VoicePlan {
+    if (studio) return VoicePlan(NoiseMode.OFF, NoiseMode.OFF, agc = false, platformNs = false, podcast = false)
     val mode = when {
         noiseMode == NoiseMode.STRONG -> NoiseMode.STRONG
         noiseMode == NoiseMode.LIGHT && platformNsActive -> NoiseMode.OFF
         else -> noiseMode
     }
-    return VoicePlan(mode, noiseMode, agc, platformNs = noiseMode == NoiseMode.LIGHT)
+    return VoicePlan(mode, noiseMode, agc, platformNs = noiseMode == NoiseMode.LIGHT, podcast = chain)
 }
 
 /**

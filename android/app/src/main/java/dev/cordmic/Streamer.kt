@@ -86,6 +86,8 @@ class Streamer(context: Context, private val cfg: Config) {
     private val platformNs = PlatformNs()
     /** 0.6.0: the PC runs Studio noise reduction (FLAG_STUDIO on the last PING); cleared when the PC goes quiet. */
     @Volatile var pcStudio: Boolean = false; private set
+    /** 1.1.0: podcast voice chain wanted (default on; the PC can turn it off with FLAG_CHAIN_OFF). */
+    @Volatile var podcastChain: Boolean = true; private set
     private val silenceWatch = SilenceWatch(ctx)
     /** 0.6.0: Android silenced this capture because another app uses the microphone. */
     val micSilenced: Boolean get() = silenceWatch.silenced
@@ -322,7 +324,9 @@ class Streamer(context: Context, private val cfg: Config) {
             // With PC Studio (0.6.0) everything but gain, clarity EQ and the limiter is bypassed (voicePlan).
             val studio = pcStudio && SystemClock.elapsedRealtime() - lastHeard < 3000
             platformNs.apply(engine.sessionId(), voicePlan(noiseMode, agc, studio, false).platformNs)
-            val plan = voicePlan(noiseMode, agc, studio, platformNs.active)
+            val plan = voicePlan(noiseMode, agc, studio, platformNs.active, podcastChain)
+            voice.podcast = plan.podcast
+            voice.podcastParams = PodcastPresets.forNoise(noiseMode)
             voice.mode = plan.mode
             voice.expander = plan.expander // pause expander follows the user's choice, even with the platform suppressor
             voice.voiceClarity = voiceClarity
@@ -380,6 +384,7 @@ class Streamer(context: Context, private val cfg: Config) {
             wantPhoneKey = payload.wantPhoneKey
             if (pcStudio != payload.studio) Log.i(TAG, if (payload.studio) "PC Studio on: sending raw capture" else "PC Studio off")
             pcStudio = payload.studio
+            podcastChain = !payload.chainOff
             fun take(field: SyncField, apply: () -> Unit) {
                 val remote = payload.revs[field.ordinal]
                 if (SettingsSync.shouldApply(sync[field], remote)) {

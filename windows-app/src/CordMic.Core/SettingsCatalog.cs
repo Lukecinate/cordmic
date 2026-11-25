@@ -63,6 +63,7 @@ public static class SettingsCatalog
                 SettingsChoices.NoiseChoices.Select(SettingsChoices.NoiseKey).ToArray(),
                 SettingsChoices.NoiseChoices.Select(c => SettingsChoices.NoiseKey(c) + ".help").ToArray()),
             new("clarity", SettingKind.Toggle, "set.clarity", "set.clarity.help"),
+            new("podcast", SettingKind.Toggle, "set.podcast", "set.podcast.help"),
             new("frontFocus", SettingKind.Toggle, "set.frontFocus", "set.frontFocus.help"),
             new("detected", SettingKind.Note, "set.detected"),
         },
