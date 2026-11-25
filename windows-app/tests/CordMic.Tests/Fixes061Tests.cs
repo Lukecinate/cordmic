@@ -302,7 +302,8 @@ public class Fixes061Tests
             var path2 = Path.Combine(dir, "live.log");
             var live = new FileLog(path2);
             for (int i = 0; i < 100; i++) live.Write("n " + i);
-            Assert.True(WaitFor(() => File.Exists(path2) && File.ReadAllLines(path2).Length == 100, 3000));
+            // The writer thread may hold the file open for a moment on Windows; a sharing violation just means "not yet".
+            Assert.True(WaitFor(() => { try { return File.Exists(path2) && File.ReadAllLines(path2).Length == 100; } catch (IOException) { return false; } }, 3000));
             live.Dispose();
             Assert.EndsWith("n 99", File.ReadAllLines(path2)[^1]);
         }
