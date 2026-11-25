@@ -28,7 +28,7 @@ class ProtocolTest {
         buf[Protocol.HEADER_SIZE + 3] = 4
         val c = Protocol.readPingControl(buf, buf.size)!!
         assertEquals(true, c.noiseCancellation)
-        assertEquals(12, c.gainDb)
+        assertEquals(12.0, c.gainDb, 0.0)
         assertEquals(4, c.changeSeq)
         assertEquals(null, Protocol.readPingControl(ByteArray(Protocol.HEADER_SIZE), Protocol.HEADER_SIZE))
     }

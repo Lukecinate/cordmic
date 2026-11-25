@@ -28,7 +28,7 @@ class Streamer(context: Context, private val cfg: Config) {
         val sampleRate: Int = 48000,
         val frames: Int = 240,     // 5 ms @ 48 kHz
         val noiseCancellation: Boolean = true,
-        val gainDb: Int = VoiceChain.DEFAULT_GAIN_DB,
+        val gainDb: Double = VoiceChain.DEFAULT_GAIN_DB,
         val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF,
         val voiceClarity: Boolean = true,
         val autoVolume: Boolean = true,
@@ -69,7 +69,10 @@ class Streamer(context: Context, private val cfg: Config) {
         set(value) { noiseMode = if (value) (if (noiseMode == NoiseMode.OFF) NoiseMode.LIGHT else noiseMode) else NoiseMode.OFF }
     @Volatile var voiceClarity: Boolean = cfg.voiceClarity
     @Volatile var agc: Boolean = cfg.autoVolume
-    @Volatile var gainDb: Int = cfg.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB)
+    @Volatile var gainDb: Double = VoiceChain.clampGain(cfg.gainDb)
+    /** True when the latest PING carried a GainExt block (1.1.1 PC). */
+    @Volatile var peerGainExt: Boolean = false
+        private set
     @Volatile var frontFocus: Boolean = cfg.frontFocus
     @Volatile var frontFocusAr: Boolean = cfg.frontFocusAr
     @Volatile var speechLow: Boolean = false
@@ -186,9 +189,9 @@ class Streamer(context: Context, private val cfg: Config) {
         agc = on
     }
 
-    fun applyGain(db: Int, fromUser: Boolean = true) {
-        val v = db.coerceIn(0, VoiceChain.MAX_GAIN_DB)
-        if (gainDb == v) return
+    fun applyGain(db: Double, fromUser: Boolean = true) {
+        val v = VoiceChain.snapGain(db)
+        if (kotlin.math.abs(gainDb - v) < 0.05) return
         if (fromUser) sync.bump(SyncField.GAIN, SyncOrigin.PHONE)
         gainDb = v
     }
@@ -303,15 +306,7 @@ class Streamer(context: Context, private val cfg: Config) {
                     voice.setNoiseFloorDbfs(floor)
                     val speechAfter = speech?.let { it + gainDb }
                     speechLow = speechAfter != null && speechAfter < VoiceChain.SPEECH_LOW_DBFS
-                    val shouldNudge = cfg.autoOptimize && ctrlSeq < 0 &&
-                        (!cfg.userSetGain || (cfg.upgradeGainNudge && speechAfter != null && speechAfter < VoiceChain.SPEECH_LOW_DBFS))
-                    if (shouldNudge) {
-                        val g = DeviceTune.suggestedGain(speech, floor)
-                        if (g != gainDb) {
-                            gainDb = g
-                            Log.i(TAG, "auto gain -> +${g}dB from floor=${"%.1f".format(floor)} speech=${speech?.let { "%.1f".format(it) } ?: "-"}")
-                        }
-                    }
+                    // 1.1.1: never auto-raise gain. The user sets it; peak protection may only reduce it.
                 }
             }
             if (!nsCheck.done) {
@@ -400,6 +395,7 @@ class Streamer(context: Context, private val cfg: Config) {
                 take(SyncField.FRONT_FOCUS_AR) { applyFrontFocusAr(c.frontFocusAr, fromUser = false) }
             }
             take(SyncField.GAIN) { gainDb = c.gainDb }
+            peerGainExt = c.hasGainExt
             ctrlSeq = c.changeSeq
             return
         }
@@ -414,6 +410,7 @@ class Streamer(context: Context, private val cfg: Config) {
             }
             gainDb = c.gainDb
         }
+        peerGainExt = c.hasGainExt
     }
 
         /** Handles HELLO (discovery reply) and PING (RTT) from the PC. */
@@ -423,7 +420,7 @@ class Streamer(context: Context, private val cfg: Config) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val rb = ByteArray(256)
         val rp = DatagramPacket(rb, rb.size)
-        val tb = ByteArray(Protocol.HEADER_SIZE + 96)
+        val tb = ByteArray(Protocol.HEADER_SIZE + 128)
         while (running) {
             val s = sock
             if (s == null || s.isClosed) { SystemClock.sleep(100); continue }
@@ -466,6 +463,7 @@ class Streamer(context: Context, private val cfg: Config) {
                             diag = if (peerSync && wantDiag) voice.diagnostics.copy(
                                 silenced = micSilenced, studioBypass = pcStudio, nsSuspected = nsSuspected) else null,
                             installId = if (peerSync && wantPhoneKey) InstallId.get(ctx) else null,
+                            writeGainExt = peerGainExt,
                         )
                         Protocol.writeHeader(tb, Protocol.T_PONG, h.seq, h.tsUs, 0, 0)
                         s.send(DatagramPacket(tb, Protocol.HEADER_SIZE + n, rp.socketAddress))

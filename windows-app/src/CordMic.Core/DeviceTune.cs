@@ -61,17 +61,8 @@ public static class DeviceTune
         return new CaptureAdvice(useAAudio, exclusive, preset, frontFocus, nc, p.HasPlatformNs, gain, summary);
     }
 
-    public static int SuggestedGain(double? speechDbfs, double? floorDbfs)
-    {
-        if (speechDbfs is { } s && s > -90)
-            return Math.Clamp((int)Math.Round(-24.0 - s), 0, 18);
-        if (floorDbfs is { } f)
-        {
-            if (f > -38) return 0;
-            if (f > -46) return 3;
-        }
-        return VoiceChain.DefaultGainDb;
-    }
+    /// <summary>1.1.1: gain is manual and defaults to 0. DeviceTune no longer auto-boosts quiet mics.</summary>
+    public static int SuggestedGain(double? speechDbfs, double? floorDbfs) => 0;
 
     public static CaptureAdvice WithOverrides(CaptureAdvice advice, bool? useAAudio = null,
         bool? frontFocus = null, NoiseMode? noiseMode = null, int? gainDb = null, int? inputPreset = null)

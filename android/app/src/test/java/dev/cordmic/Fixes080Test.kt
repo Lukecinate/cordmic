@@ -43,7 +43,7 @@ class Fixes080Test {
         val id = ByteArray(16) { (it + 1).toByte() }
         val buf = ByteArray(128)
         val n = Protocol.writePongStatus(
-            buf, 0, true, true, true, false, true, 6, "SM-S721B ",
+            buf, 0, true, true, true, false, true, 6.0, "SM-S721B ",
             NoiseMode.LIGHT, frontFocus = true, dirCode = 1, micCount = 2,
             sync = sync, installId = id,
         )
@@ -53,7 +53,7 @@ class Fixes080Test {
         // Without an id, a 0.7.2-sized trailing sync still parses and is not followed by the block.
         val old = ByteArray(128)
         val o = Protocol.writePongStatus(
-            old, 0, true, true, true, false, true, 6, "Pixel 8",
+            old, 0, true, true, true, false, true, 6.0, "Pixel 8",
             NoiseMode.LIGHT, frontFocus = true, dirCode = 1, micCount = 1, sync = sync,
         )
         assertNull(PhoneIdBlock.tryRead(old, o - PhoneIdBlock.SIZE, PhoneIdBlock.SIZE))

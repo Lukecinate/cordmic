@@ -87,8 +87,9 @@
     <string name="update_installing">Installing update…</string>
     <string name="reset_audio">Reset audio settings</string>
     <string name="gain_option">Mic gain</string>
-    <string name="gain_value">+%1$d dB</string>
-    <string name="gain_help">Default +6 dB. Auto volume does the rest. Peaks stay at or below −1 dBFS.</string>
+    <string name="gain_value">%1$s</string>
+    <string name="gain_help">Manual, −24 to +24 dB, default 0 dB. The chain never raises the gain by itself; it only turns it down if peaks would reach the yellow part of the meter. Double-tap the knob or slider to reset to 0. Arrow keys and a mouse wheel move 0.5 dB (Shift: 0.1 dB).</string>
+    <string name="gain_access">Mic gain, %1$s. Double-tap to reset to 0 dB. Arrow keys and the mouse wheel move 0.5 dB; hold Shift for 0.1 dB.</string>
     <string name="err_port">Enter a port from 1 to 65535.</string>
     <string name="label_pair_code">Pairing code (optional)</string>
     <string name="helper_pair_code">Only needed when the PC app has \"Require a pairing code on the phone\" turned on.</string>

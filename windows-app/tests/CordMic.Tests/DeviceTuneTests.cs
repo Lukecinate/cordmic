@@ -11,19 +11,19 @@ public class DeviceTuneTests
             new DeviceProfile(34, "samsung", "SM-S721B", MicCount: 3, HasFrontMic: true, DirectionApi: true,
                 DirectionWorks: false, AAudioAvailable: true, AAudioExclusive: true, AAudioLowLatency: true,
                 HasPlatformNs: true, NativeSampleRate: 48000, FramesPerBurst: 96, SpeechLevelDbfs: -30),
-            true, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, 6
+            true, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, 0
         },
         {
             "midrange shared AAudio",
             new DeviceProfile(30, "Xiaomi", "2201116SG", MicCount: 2, HasFrontMic: true, DirectionApi: true,
                 AAudioAvailable: true, AAudioExclusive: false, AAudioLowLatency: true, HasPlatformNs: true),
-            true, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, VoiceChain.DefaultGainDb
+            true, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, 0
         },
         {
             "AudioRecord fallback",
             new DeviceProfile(29, "Generic", "OEM-A1", MicCount: 1, HasFrontMic: true, DirectionApi: true,
                 DirectionWorks: true, AAudioAvailable: false, HasPlatformNs: false),
-            false, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, VoiceChain.DefaultGainDb
+            false, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, 0
         },
         {
             "hot noise floor",
@@ -35,7 +35,7 @@ public class DeviceTuneTests
             "quiet speech",
             new DeviceProfile(31, Model: "Pixel 7a", MicCount: 3, AAudioAvailable: true, AAudioExclusive: true,
                 AAudioLowLatency: true, SpeechLevelDbfs: -36),
-            true, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, 12
+            true, DeviceTune.PresetVoiceRecognition, true, NoiseMode.Light, 0
         },
         {
             "already near target",

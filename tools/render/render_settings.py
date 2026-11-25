@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draw labelled HTML/PNG *renders* of the CordMic 0.7.0 Settings window.
+"""Draw labelled HTML/PNG *renders* of the CordMic 1.1.1 Settings window.
 
 WinForms cannot run on Linux, so these are not screenshots. They are drawn from the same catalog, strings and
 layout constants the app uses (dumped by `CordMic.Harness settings-json en|id`), with the app's colours, fonts
@@ -71,6 +71,14 @@ body { margin: 0; background: #DADDE2; font-family: PJS, 'Segoe UI', sans-serif;
 .slider .val { color: #007A7F; font-weight: 600; font-size: 14px; }
 .track { margin-top: 12px; max-width: 440px; height: 4px; background: #C9CDD3; position: relative; margin-bottom: 14px; }
 .track b { position: absolute; left: 40%%; top: -8px; width: 10px; height: 20px; background: #007A7F; }
+
+.gain { display: flex; align-items: center; gap: 12px; margin-top: 6px; max-width: 440px; height: 56px; }
+.gain .knob { flex: none; }
+.gain-col { flex: 1; min-width: 0; position: relative; height: 56px; }
+.gain-val { position: absolute; right: 0; top: 4px; color: #007A7F; font-weight: 600; font-size: 13px; }
+.gain-track { position: absolute; left: 0; right: 0; top: 26px; height: 4px; background: #C9CDD3; }
+.gain-track i { position: absolute; left: 0; width: 50%%; height: 4px; background: #007A7F; }
+.gain-track b { position: absolute; left: calc(50%% - 5px); top: -7px; width: 10px; height: 18px; background: #007A7F; }
 .btn { display: inline-flex; align-items: center; justify-content: center; height: 36px; min-width: 112px; padding: 0 16px;
        border: 1px solid #C9CDD3; font-size: 14px; background: #fff; }
 .btn.pri { background: #007A7F; border-color: #007A7F; color: #fff; font-weight: 600; }
@@ -111,8 +119,20 @@ def row_html(it, S):
         opts = it.get("options") or []
         cur = SAMPLE["output"] if i == "output" else (opts[SAMPLE.get(i, 0)] if opts else "")
         return f'<div class="t">{lab}</div><div class="combo">{e(cur)}</div>{help_}'
+    if k == "Slider" and i == "gain":
+        return (f'<div class="t">{lab}</div>'
+                f'<div class="gain">'
+                f'<svg class="knob" viewBox="0 0 52 52" width="52" height="52" aria-hidden="true">'
+                f'<circle cx="26" cy="26" r="20" fill="none" stroke="#C9CDD3" stroke-width="3" stroke-linecap="round" '
+                f'stroke-dasharray="94.2 31.4" transform="rotate(135 26 26)"/>'
+                f'<line x1="26" y1="12" x2="26" y2="5" stroke="#16181C" stroke-width="1" stroke-linecap="round"/>'
+                f'<line x1="26" y1="26" x2="26" y2="8" stroke="#16181C" stroke-width="2" stroke-linecap="round"/>'
+                f'<circle cx="26" cy="26" r="4" fill="#16181C"/>'
+                f'</svg>'
+                f'<div class="gain-col"><div class="gain-val">0.0 dB</div>'
+                f'<div class="gain-track"><i></i><b></b></div></div></div>{help_}')
     if k == "Slider":
-        return (f'<div class="slider"><span class="t">{lab}</span><span class="val">{e(S["ui.gainValue"].replace("{0}", "9"))}</span></div>'
+        return (f'<div class="slider"><span class="t">{lab}</span><span class="val">{e(S.get("ui.gainValue", "{0}").replace("{0}", "9"))}</span></div>'
                 f'<div class="track"><b></b></div>{help_}')
     if k == "Segmented":
         segs = "".join(f'<span class="{"on" if n == 1 else ""}">{e(o)}</span>' for n, o in enumerate(it["options"]))
@@ -150,8 +170,8 @@ def page_html(d, page, w, h, scale):
         f'{"<span class=dot></span>" if p["id"] == "Updates" else ""}</div>' for p in d["pages"])
     rows = "".join(f'<div class="row">{row_html(it, S)}</div>' for it in page["items"] if it["id"] not in SKIP_WHEN_SAMPLE)
     css = CSS % dict(fonts=FONTS.as_uri(), w=w, h=h, nav=L["NavWidth"], px=L["ContentPadX"], py=L["ContentPadY"], gap2=L["RowGap"] // 2 + 4)
-    tag = f'Render (not a Windows screenshot) · CordMic 0.7.0 Settings · {page["title"]} · {d["lang"].upper()} · {int(scale * 100)}% scale · window {w}×{h} logical px'
-    ver = e(S["set.version"].replace("{0}", "0.7.0"))
+    tag = f'Render (not a Windows screenshot) · CordMic 1.1.1 Settings · {page["title"]} · {d["lang"].upper()} · {int(scale * 100)}% scale · window {w}×{h} logical px'
+    ver = e(S["set.version"].replace("{0}", "1.1.1"))
     return f"""<!doctype html><meta charset="utf-8"><style>{css}</style>
 <div class="tag">{e(tag)}</div>
 <div class="win"><div class="titlebar">{e(S["set.title"])} – {e(page["title"])}<span class="sp"></span><span class="ctl">–</span><span class="ctl">☐</span><span class="ctl">✕</span></div>

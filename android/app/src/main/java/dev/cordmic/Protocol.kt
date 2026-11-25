@@ -83,10 +83,19 @@ object Protocol {
         val mode = if (extended) NoiseMode.from(stored) else if (nc) NoiseMode.LIGHT else NoiseMode.OFF
         val sync = if (len >= HEADER_SIZE + LINK_SIZE + SettingsSync.SIZE)
             SettingsSync.tryRead(buf, HEADER_SIZE + LINK_SIZE) else null
+        var gain = (buf[HEADER_SIZE + 2].toInt() and 0xFF).coerceIn(0, VoiceChain.MAX_GAIN_DB).toDouble()
+        var hasExt = false
+        val extOff = HEADER_SIZE + LINK_SIZE + SettingsSync.SIZE
+        if (sync != null && len >= extOff + GainExt.SIZE) {
+            GainExt.tryRead(buf, extOff, len - extOff)?.let { gain = it; hasExt = true }
+        } else if (len >= HEADER_SIZE + LINK_SIZE + GainExt.SIZE) {
+            GainExt.tryRead(buf, len - GainExt.SIZE, GainExt.SIZE)?.let { gain = it; hasExt = true }
+        }
         return PingControl(
             noiseCancellation = nc,
             agc = f and 2 != 0,
-            gainDb = (buf[HEADER_SIZE + 2].toInt() and 0xFF).coerceIn(0, VoiceChain.MAX_GAIN_DB),
+            gainDb = gain,
+            hasGainExt = hasExt,
             changeSeq = buf[HEADER_SIZE + 3].toInt() and 0xFF,
             extended = extended,
             voiceClarity = f and 4 != 0,
@@ -99,11 +108,11 @@ object Protocol {
 
     /** Writes the pong status at [off] and returns how many bytes were used. */
     fun writePongStatus(buf: ByteArray, off: Int, noiseCancellation: Boolean, agc: Boolean, aaudio: Boolean,
-                        exclusive: Boolean, lowLatency: Boolean, gainDb: Int, deviceName: String,
+                        exclusive: Boolean, lowLatency: Boolean, gainDb: Double, deviceName: String,
                         noiseMode: NoiseMode = NoiseMode.OFF, frontFocus: Boolean = false,
                         dirCode: Int = 0, micCount: Int = 0, frontFocusAr: Boolean = false,
                         speechLow: Boolean = false, sync: SyncClock? = null, voiceClarity: Boolean = true,
-                        diag: VoiceDiag? = null, installId: ByteArray? = null): Int {
+                        diag: VoiceDiag? = null, installId: ByteArray? = null, writeGainExt: Boolean = false): Int {
         buf[off] = LINK_MAGIC
         var f = 0
         if (noiseCancellation) f = f or 1
@@ -114,12 +123,12 @@ object Protocol {
         if (frontFocus) f = f or 32
         f = f or ((noiseMode.code and 3) shl 6)
         buf[off + 1] = f.toByte()
-        buf[off + 2] = gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toByte()
+        buf[off + 2] = VoiceChain.legacyGainByte(gainDb).toByte()
         val engine = if (aaudio) 1 else 2
         buf[off + 3] = (engine or ((dirCode and 3) shl 2) or ((micCount.coerceIn(0, 15) and 15) shl 4)).toByte()
         val withDiag = sync != null && diag != null
         val withId = sync != null && installId != null && installId.size == InstallId.SIZE
-        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE + (if (withDiag) DIAG_SIZE else 0) + (if (withId) PhoneIdBlock.SIZE else 0) else 0
+        val syncBytes = if (sync != null) 1 + SettingsSync.SIZE + (if (withDiag) DIAG_SIZE else 0) + (if (writeGainExt) GainExt.SIZE else 0) + (if (withId) PhoneIdBlock.SIZE else 0) else 0
         val name = deviceName.trim().replace(Regex("\\s+"), " ").encodeToByteArray()
         val n = minOf(name.size, buf.size - off - LINK_SIZE - syncBytes)
         if (n > 0) name.copyInto(buf, off + LINK_SIZE, 0, n)
@@ -133,13 +142,16 @@ object Protocol {
             if (speechLow) flags2 = flags2 or SettingsSync.FLAG_SPEECH_LOW
             if (voiceClarity) flags2 = flags2 or SettingsSync.FLAG_VOICE_CLARITY
             used += SettingsSync.write(buf, off + used, flags2, sync.revs)
+            if (writeGainExt && off + used + GainExt.SIZE <= buf.size)
+                used += GainExt.write(buf, off + used, gainDb)
             if (withId && off + used + PhoneIdBlock.SIZE <= buf.size)
                 used += PhoneIdBlock.write(buf, off + used, installId!!)
         }
         return used
     }
 
-    data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Int, val changeSeq: Int,
+    data class PingControl(val noiseCancellation: Boolean, val agc: Boolean, val gainDb: Double, val changeSeq: Int,
+                            val hasGainExt: Boolean = false,
                             val extended: Boolean = false, val voiceClarity: Boolean = true,
                             val noiseMode: NoiseMode = if (noiseCancellation) NoiseMode.LIGHT else NoiseMode.OFF,
                             val frontFocus: Boolean = true, val frontFocusAr: Boolean = false,

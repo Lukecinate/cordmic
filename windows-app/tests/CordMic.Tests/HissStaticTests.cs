@@ -49,7 +49,7 @@ public class HissStaticTests
     }
 
     [Fact]
-    public void SpeechStillReachesTargetWithTrackedFloor()
+    public void SpeechKeepsUserGainWithTrackedFloor_NoAutoBoost()
     {
         // 1 s of −65 dBFS room noise, then a −36 dBFS tone with the same noise underneath.
         int n = 48000 * 4;
@@ -59,7 +59,9 @@ public class HissStaticTests
         var chain = new VoiceChain(48000) { NoiseCancellation = false, VoiceClarity = false, GainDb = 6 };
         chain.Process(s);
         double outDb = RmsDb(s, 48000 * 3, 48000);
-        Assert.InRange(outDb, -26, -15);
+        // −33 dBFS peak sine ≈ −36 RMS, plus +6 dB user gain, no auto-boost → about −30 RMS.
+        Assert.InRange(outDb, -33, -27);
+        Assert.True(outDb < VoiceChain.MeterYellowDbfs);
     }
 
     [Fact]

@@ -23,7 +23,7 @@ class PhoneDiagTest {
 
     private fun pong(diag: VoiceDiag?, sync: SyncClock?): Pair<ByteArray, Int> {
         val buf = ByteArray(128)
-        val n = Protocol.writePongStatus(buf, 0, true, true, true, false, true, 6, "Pixel 8",
+        val n = Protocol.writePongStatus(buf, 0, true, true, true, false, true, 6.0, "Pixel 8",
             NoiseMode.STRONG, sync = sync, diag = diag)
         return buf to n
     }
@@ -61,7 +61,7 @@ class PhoneDiagTest {
 
     @Test fun chainReportsFloorGateAndAgc() {
         val c = VoiceChain(48000)
-        c.mode = NoiseMode.OFF; c.agc = true; c.gainDb = 0
+        c.mode = NoiseMode.OFF; c.agc = true; c.gainDb = 0.0
         val hiss = ShortArray(48000) { ((Math.random() * 2 - 1) * 32768 * 0.001).toInt().toShort() } // about −65 dBFS
         c.process(hiss, hiss.size)
         val d = c.diagnostics

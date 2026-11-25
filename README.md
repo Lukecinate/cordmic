@@ -9,7 +9,7 @@ CordMic turns an Android phone into a low-latency PC microphone over a **USB cab
 cleans up the voice, streams it to a Windows tray app, and the tray app plays it into a virtual audio cable that
 Discord, Zoom, OBS and games can select as a microphone.
 
-Current stable version: **1.1.0** (podcast voice chain, see [Voice processing](#voice-processing)). It is the GitHub latest release and is offered by the in-app updater to 1.0.0, 0.7.2 and 0.8.0-beta installs ([changelog](CHANGELOG.md), [latest](https://github.com/Lukecinate/cordmic/releases/latest)). Pre-releases 0.8.0-beta.1–beta.3 remain on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and are not offered by automatic updates.
+Current stable version: **1.1.1** (manual mic gain and a yellow-safe ceiling, see [Voice processing](#voice-processing)). It is the GitHub latest release and is offered by the in-app updater to 1.1.0, 1.0.0, 0.7.2 and 0.8.0-beta installs ([changelog](CHANGELOG.md), [latest](https://github.com/Lukecinate/cordmic/releases/latest)). Pre-releases 0.8.0-beta.1–beta.3 remain on the [Releases](https://github.com/Lukecinate/cordmic/releases) page and are not offered by automatic updates.
 
 USB over the accessory path remains **experimental**, off by default, and untested on hardware. Automatic mode still uses USB tethering. Hardware gate G-M1 has not been passed; this release does not claim that the accessory path works on a real phone. Company and managed-PC deployment is **unsupported** until a later review; there is no admin install guide.
 
@@ -17,8 +17,7 @@ USB over the accessory path remains **experimental**, off by default, and untest
 - **Low latency.** 48 kHz mono PCM in 5 ms packets, AAudio exclusive capture where the phone grants it, a
   jitter buffer sized to the real Windows render period, a resampling drift controller, pitch-based packet-loss
   concealment, and CordMic's own WASAPI renderer (IAudioClient3 shared or exclusive mode). Designed for roughly **30–45 ms end-to-end** (see [Latency](#latency)).
-- **Voice processing on the phone.** Voice clarity EQ, noise cancellation (Off / Light / Strong), Auto volume
-  toward −18 dBFS with a gate that follows the measured noise floor, a pause expander, and a −1 dBFS peak limiter.
+- **Voice processing on the phone.** Manual mic gain (−24 to +24 dB, default 0 dB), Voice clarity EQ, noise cancellation (Off / Light / Strong), Auto volume that may only turn the gain down, a pause expander, and a look-ahead limiter at −10 dBFS (below the yellow meter mark at −9 dBFS).
 - **Optional PC Studio noise reduction** (0.6.0, off by default). RNNoise on the PC with whisper protection and
   loudness-based Auto volume; the phone then sends unprocessed voice. Adds about 30 ms.
 - **Per-phone auto-detection.** The phone probes its own capabilities (capture engines, microphones, platform
@@ -57,7 +56,7 @@ USB over the accessory path remains **experimental**, off by default, and untest
 ## Screenshots
 
 **Android app.** Real renders of the app's layouts, produced by the Robolectric screenshot test
-(`./gradlew testDebugUnitTest -PrecordScreenshots`) with sample values; not photos of a physical phone.
+(`./gradlew testDebugUnitTest -PrecordScreenshots`) with sample values; not photos of a physical phone. Addresses in these renders are documentation examples (`192.0.2.0/24`, TEST-NET-1), not a real PC.
 
 | Waiting for USB tethering | Looking for your PC | Streaming to your PC |
 |---|---|---|
@@ -73,22 +72,26 @@ USB over the accessory path remains **experimental**, off by default, and untest
 
 Landscape: [android-landscape.png](docs/screenshots/android-landscape.png).
 
-**Windows app.** The connect window below is a layout render of the 0.5.1 header and connect button
-(this environment cannot host WinForms), using the app's logo, icons, Plus Jakarta Sans
-and colours, with sample values. It is not a capture of the running app. The older images are design
-previews of the 0.4 setup guide.
+**Windows app.** The connect window below is a layout render of the 1.1.1 main window (level meter and gain
+control under the status). This environment cannot host WinForms, so the image uses the app's logo, icons,
+Plus Jakarta Sans and colours, with sample values. It is not a capture of the running app. The older images
+are design previews of the 0.4 setup guide.
 
-| Connect window |
+| Connect window (1.1.1 render) |
 |---|
 | ![CordMic connect window](docs/screenshots/windows-main.png) |
+
+| Settings: Sound (1.1.1 render) | Settings: Sound, Bahasa Indonesia |
+|---|---|
+| ![Settings window, Sound page (render)](docs/screenshots/windows-settings-sound-render.png) | ![Settings window, Sound page in Indonesian (render)](docs/screenshots/windows-settings-sound-id-render.png) |
 
 | Settings: Noise & voice (0.7.0 render) | Settings: Updates (0.7.0 render) |
 |---|---|
 | ![Settings window, Noise & voice page (render)](docs/screenshots/windows-settings-noise-render.png) | ![Settings window, Updates page (render)](docs/screenshots/windows-settings-updates-render.png) |
 
 The Settings images are renders drawn by `tools/render/render_settings.py` from the app's own catalog, strings and
-layout constants, with sample values; they are not screenshots of the running app.
-[Indonesian Sound page](docs/screenshots/windows-settings-sound-id-render.png).
+layout constants, with sample values; they are not screenshots of the running app. The connect window is drawn by
+`tools/render/render_main.py`.
 
 | Setup guide, streaming (0.4 preview) | Setup guide, waiting (0.4 preview) | Tray menu and tooltip |
 |---|---|---|
@@ -167,7 +170,9 @@ the measured Windows output buffer), plus round-trip time and packet loss over t
 
 Double-click the tray icon (or **Open CordMic**). The window has one round button (disconnected, searching,
 connected, error; it can be focused and pressed with Enter or Space), a status line with the phone model and the live
-PC-side delay, and a **Settings** link. The gear in the header opens the same Settings window and shows a teal dot
+PC-side delay, a level meter, a mic-gain knob and slider (with a numeric dB readout) so the effect is visible on the
+meter, and a **Settings** link. Double-click the knob or slider to reset gain to 0 dB; the wheel and arrow keys move
+0.5 dB (Shift: 0.1 dB). The gear in the header opens the same Settings window and shows a teal dot
 when an update is downloaded and ready. Esc closes the window, Ctrl+, opens Settings.
 
 ### Settings window (0.7.0)
@@ -180,7 +185,7 @@ DPI (100–200%). Keyboard: Tab / Shift+Tab between settings, arrow keys inside 
 | Page | Settings | Default |
 |---|---|---|
 | Connection | Phone status; Ask for a pairing code (with New code); Start with Windows; Language (Automatic, English, Bahasa Indonesia) | Pairing per previous setting; Start with Windows off; Automatic |
-| Sound | Virtual microphone (Automatic = best virtual cable found: VB-CABLE A–D, VAC, VoiceMeeter, or a specific device); Install VB-CABLE (only when no cable is found); Auto volume; Phone mic boost 0 to +24 dB; **Delay or stability**: Lowest delay / Balanced / Most stable, with the current phone-to-PC delay | Automatic; Auto volume on; +6 dB; Balanced |
+| Sound | Virtual microphone (Automatic = best virtual cable found: VB-CABLE A–D, VAC, VoiceMeeter, or a specific device); Install VB-CABLE (only when no cable is found); Auto volume (may only reduce gain); Mic gain −24 to +24 dB (knob + slider); **Delay or stability**: Lowest delay / Balanced / Most stable, with the current phone-to-PC delay | Automatic; Auto volume on; 0 dB; Balanced |
 | Noise & voice | **Noise reduction**, one choice: Off, Phone – light (recommended), Phone – strong, PC Studio – balanced / whisper / maximum (+47 ms, see [PC Studio noise reduction](#pc-studio-noise-reduction-optional)); Voice clarity; Podcast voice chain (1.1.0); Front focus; Phone microphones (what the phone reported) | Phone – light; Voice clarity on; Podcast voice chain on; Front focus on |
 | Updates | Update card (status, progress, Cancel, one primary button); Download updates automatically; Install when I exit CordMic; Download page on GitHub | Download automatically **on**; install on exit off |
 | Advanced | Jitter buffer (Low 5 / Normal 10 / Safe 20 ms); Windows output mode (Auto, Low latency, Stable, Exclusive); Front focus, compatible mode (AudioRecord, higher latency); Optimize VB-CABLE; Fix phone network priority; Mic mode is set on the phone; Get VB-CABLE; Open log; Reset audio settings | Normal; Auto; off |
@@ -252,10 +257,10 @@ receives), packets sent, send errors and the age of the last PC reply.
    | Optimize automatically | On | Chooses the capture path and starting settings for this phone; a value set by the user is never overwritten. **Re-detect** runs the probe again |
    | Noise cancellation | Light | Light uses the phone's own suppressor when available (no added delay), otherwise CordMic's Light filter. Strong uses CordMic's spectral filter (2.7 ms). Both lower pauses between words (about 6 / 12 dB) |
    | Voice clarity | On | Cuts rumble, lifts presence |
-   | Auto volume | On | Toward −18 dBFS; pauses are not boosted |
+   | Auto volume | On | Turns the gain down if a peak would reach the yellow part of the meter; never turns it up |
    | Front focus | On | Prefers the mic facing the user |
    | Front focus (higher latency) | Off | Uses AudioRecord so the direction can be applied |
-   | Mic gain | +6 dB | 0 to +24 dB |
+   | Mic gain | 0 dB | −24 to +24 dB; knob and slider, double-tap resets to 0 |
    | Auto update / Check for updates | Auto update off | See [Updates](#updates) |
    | Reset audio settings | – | Restores the voice defaults |
 
@@ -291,16 +296,18 @@ only a short capability summary plus the model name is sent to the PC over the e
 
 ## Voice processing
 
-### Podcast voice chain (1.1.0, on by default)
+### Podcast voice chain (on by default since 1.1.0)
 
-Every preset first runs a podcast-style chain. It consists of a gated AGC toward about −17 dBFS RMS (held in pauses,
-never lifting the room floor above −52 dBFS); a dynamic EQ (80 Hz high-pass, a dynamic cut around 250 Hz, a dynamic
-de-ess around 6.5 kHz); a soft-knee 3:1 compressor with program-dependent release; and a look-ahead brickwall limiter
-at −1 dBFS. Spectral dereverb and dialog isolation come next, folded into the noise-suppression STFT (one mask, no
-double masking). A thin true-peak guard runs after noise reduction. It runs on the phone, or on the PC in front of
-RNNoise when PC Studio is on, never on both. It adds 1.0 ms (Off), 1.5 ms (Light; 6.9 ms where Android's own
-suppressor is used), 2.0 ms (Strong) or 7.4 ms (PC Studio). Turn it off in *Settings → Noise & voice → Podcast voice
-chain* to get the 1.0.0 processing below. Parameters, latency and CPU per stage:
+Every preset first runs a podcast-style chain. Mic gain is manual (−24 to +24 dB, default 0 dB). Peak-aware
+protection may only turn the gain down, and never auto-raises it, when a sample peak would meet −12 dBFS (3 dB below
+the yellow meter mark at −9 dBFS). Then come a dynamic EQ (80 Hz high-pass, a dynamic cut around 250 Hz, a dynamic
+de-ess around 6.5 kHz); a soft-knee 3:1 compressor with 0 dB makeup and program-dependent release; and a look-ahead
+brickwall limiter at −10 dBFS, 1 dB below yellow. Spectral dereverb and dialog isolation come next, folded into the
+noise-suppression STFT (one mask, no double masking). A thin true-peak guard at the same −10 dBFS ceiling runs after
+noise reduction. It runs on the phone, or on the PC in front of RNNoise when PC Studio is on, never on both. It adds
+1.0 ms (Off), 1.5 ms (Light; 6.9 ms where Android's own suppressor is used), 2.0 ms (Strong) or 7.4 ms (PC Studio).
+Turn it off in *Settings → Noise & voice → Podcast voice chain* to get the 1.0.0 processing below, still with the
+same manual gain and −10 dBFS ceiling. Parameters, latency and CPU per stage:
 [docs/dsp/podcast-chain.md](docs/dsp/podcast-chain.md).
 
 ### Chain without the podcast stages (1.0.0 behaviour)
@@ -319,10 +326,10 @@ All voice processing runs on the phone, before the packet is sent. The chain is 
 3. **Mic gain**, ramped over about 20 ms when changed.
 4. **Gate and noise floor**, measured before the gain. The floor is tracked continuously (down within about 0.3 s,
    up at most 1.5 dB/s in pauses). The gate opens about 10 dB and closes about 4 dB above the floor, with a 200 ms hold.
-5. **Auto volume**: an RMS envelope (~40 ms) is driven toward −18 dBFS; makeup is limited so the floor stays at or
-   below −52 dBFS after gain, and released toward unity in pauses.
+5. **Auto volume**: may only reduce gain, never raise it, so a shout stays below the yellow meter mark. With Auto
+   volume off, only the limiter and true-peak guard remain as a net.
 6. **Pause expander**: about −6 dB (Light) or −12 dB (Strong) while the gate is closed.
-7. **Peak limiter** at −1 dBFS.
+7. **Peak limiter** at −10 dBFS (1 dB below the yellow mark at −9 dBFS).
 
 ### PC Studio noise reduction (optional)
 
@@ -396,8 +403,8 @@ also requires the APK signing certificate to match the installed app and hands t
 | Studio switched itself off | The PC could not keep up (3 missed deadlines in 1 s). Close heavy background apps, or use the phone's noise cancellation |
 | Voice sounds distant or muddy | Follow the *Move the phone closer* notice: about 15 cm. Noise reduction cannot remove room echo |
 | "Microphone silenced" warning | Another app (often a voice assistant or recorder) took the microphone. Close it |
-| Hiss between words | Keep Noise cancellation on Light or Strong (both lower pauses), lower Mic gain and let Auto volume do the rest. Keep the game's voice-activation threshold moderate. The log's `floor` shows the phone's background level (above about −50 dBFS is a noisy room or a high Mic gain) |
-| Voice too quiet | Move closer, raise Mic gain a few dB, and leave Auto volume on. A warning appears below about −40 dBFS |
+| Hiss between words | Keep Noise cancellation on Light or Strong (both lower pauses), or lower Mic gain. Auto volume will not turn the gain up; it only turns it down if a peak would reach yellow. Keep the game's voice-activation threshold moderate. The log's `floor` shows the phone's background level (above about −50 dBFS is a noisy room or a high Mic gain) |
+| Voice too quiet | Move closer, or raise Mic gain a few dB (it can also go below 0). Auto volume will not boost a quiet voice. A warning appears below about −40 dBFS |
 | Front focus shows "unsupported" | The phone's AAudio path has no direction API. Turn on *Front focus (higher latency)* to use AudioRecord, or leave it off for the lowest latency |
 | Game ping rises or mobile data is used after plugging in the phone | *Stop using phone data…* in the tray menu (or run `C:\Program Files\CordMic\tools\set-tether-metric.ps1` as administrator), or turn off mobile data on the phone |
 | Discord hears nothing | The input device must be **CABLE Output** (not CABLE Input) |
@@ -637,8 +644,8 @@ official install.
 | Suite | Command | Covers |
 |---|---|---|
 | Python (24 tests) | `cd windows-receiver && python -m unittest discover -s tests` | protocol, jitter buffer, output callback, UDP loopback (clean and lossy) |
-| .NET (372 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), 0.7.1 regression tests (install/check race, restore of a ready update after restart, watchdog, clean-up, monotonic schedule, font scale per DPI), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI, 0.7.2 regression tests (layout gate and init order in every form, headless page layout, tethering diagnosis and guidance, tray update path, mic-only routing) |
-| Kotlin (65 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, USB state (charging only / no cable), tethering screen fallback, metered update check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
+| .NET (570 tests) | `cd windows-app && dotnet test tests/CordMic.Tests` | protocol golden vectors, jitter buffer, policy simulations and drift lock, adaptive target, underrun/overflow continuity, voice chain and quality (THD+N, clicks, hiss, Strong gain flutter, whisper/fricative retention), phone diagnostics, settings sync, device tuning, updates and checksums, VB-CABLE rules, ping backoff, UDP loopback, interop with `sim_sender.py`, localization tables, 0.6.0 PLC/resampler vectors and closed-loop drift, RNNoise delay, Studio CPU and allocations, watchdog, WhisperGuard, B3 Auto volume, move-closer hint, 0.7.0 updater against a fake release server (progress, cancel, checksum mismatch, concurrent checks, no downgrade), 0.7.1 regression tests (install/check race, restore of a ready update after restart, watchdog, clean-up, monotonic schedule, font scale per DPI), portable detection, swap and rollback, settings migration, Settings catalog and layout at 100–200% DPI, 0.7.2 regression tests (layout gate and init order in every form, headless page layout, tethering diagnosis and guidance, tray update path, mic-only routing) |
+| Kotlin (114 tests) | `cd android && ./gradlew testReleaseUnitTest` | header compatibility, voice chain (delay, gain ramp, limiter, pre-gain gate, expander, Strong gain flutter, whisper/fricative retention), diagnostics block, settings sync, update parsing, English/Indonesian string parity, level meter, Studio bypass, diagnostics flags, guarded mic-direction calls, hidden-NS check, USB state (charging only / no cable), tethering screen fallback, metered update check, Robolectric screenshot renders (`-PrecordScreenshots` rewrites `docs/screenshots/android-*.png`) |
 
 The release gates for noise reduction and Auto volume (DNSMOS, ESTOI, PESQ, LUFS) run on the shipping C# code through
 `tools/harness/` with data downloaded at test time; see [tools/harness/README.md](tools/harness/README.md).
@@ -678,6 +685,7 @@ Without a phone, `python sim_sender.py --host 127.0.0.1 --seconds 10` sends a 44
 
 | Version | Highlights |
 |---|---|
+| 1.1.1 | Manual mic gain −24 to +24 dB (default 0 dB, knob and slider), no auto-boost, limiter and true-peak guard at −10 dBFS so the meter stays below yellow (−9 dBFS); optional GainExt on the wire |
 | 1.1.0 | Podcast voice chain in every preset (gated AGC, dynamic EQ, compressor, look-ahead limiter, dereverb, dialog isolation, true-peak guard), on by default with a Settings switch; release workflow skips SignPath cleanly |
 | 1.0.0 | First supported stable after 0.7.2: Settings page scrolling, NSIS 3.13, .NET 8.0.34 in the self-contained app, USB accessory path still experimental, off, and untested on hardware |
 | 0.7.2 | Settings window crash fixed, tethering status and Samsung guidance on PC and phone, PC internet never routed through the phone's mobile data, UI self-test |

@@ -398,7 +398,7 @@ public class Release070Tests : IDisposable
         Assert.Equal(StudioPreset.Whisper, s.StudioPreset);
         Assert.Equal(7.5, s.StudioAgcGainDb);
         Assert.False(s.FrontFocus);
-        Assert.Equal(12, s.MicGainDb);
+        Assert.Equal(0, s.MicGainDb); // 1.1.1: existing users are reset to 0 dB
         Assert.Equal(OutputMode.Exclusive, s.OutputMode);
         Assert.Equal("id", s.Language);
         Assert.Equal("123456", s.PairingCode);

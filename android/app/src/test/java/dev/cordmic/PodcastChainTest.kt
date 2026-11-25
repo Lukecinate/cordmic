@@ -18,7 +18,7 @@ import org.junit.Test
  */
 class PodcastChainTest {
     private val rates = intArrayOf(8000, 16000, 44100, 48000)
-    private val ceil = PodcastChain.dbToLin(-1.0)
+    private val ceil = PodcastChain.dbToLin(VoiceChain.CEILING_DBFS)
 
     /** Deterministic xorshift so failures reproduce. */
     private class Rng(var s: Long) {
@@ -118,13 +118,11 @@ class PodcastChainTest {
         }
     }
 
-    @Test fun agcBringsQuietSpeechTowardTargetWithoutLiftingNoise() {
+    @Test fun agcDoesNotBoostQuietSpeechAndDoesNotLiftNoise() {
         val sr = 48000
         val pc = PodcastChain(sr, 1, PodcastPresets.LIGHT)
         pc.dynamicEqEnabled = false; pc.compressorEnabled = false
         val r = Rng(9)
-        // 1.5 s room noise at -72 dBFS, then 4 s voiced "speech" at -35 dBFS RMS with the same noise.
-        // (The makeup is capped so the tracked floor stays at or below -52 dBFS, as in the 0.5.x AGC.)
         val noiseAmp = PodcastChain.dbToLin(-72.0) * sqrt(3.0)
         val n = (sr * 5.5).toInt()
         val x = DoubleArray(n) { i ->
@@ -136,7 +134,8 @@ class PodcastChainTest {
         val outNoise = rmsDb(x, sr / 2, (1.5 * sr).toInt())
         assertTrue("noise not boosted: $outNoise", outNoise < -52.0 + 0.5)
         val outSpeech = rmsDb(x, (4.5 * sr).toInt(), n)
-        assertTrue("speech near target: $outSpeech", outSpeech in -21.0..-13.0)
+        assertTrue("speech stays near -35: $outSpeech", outSpeech in -38.0..-32.0)
+        assertTrue("agc may only reduce: ${pc.agcGainDb}", pc.agcGainDb in -0.3..0.05)
     }
 
     @Test fun agcNeverLiftsRoomFloorAboveNoiseCeiling() {
@@ -223,7 +222,7 @@ class PodcastChainTest {
 
     @Test fun truePeakGuardHoldsCeilingWithTwoSampleDelay() {
         for (sr in rates) for (ch in 1..2) {
-            val g = TruePeakGuard(sr, ch, -1.0)
+            val g = TruePeakGuard(sr, ch, VoiceChain.CEILING_DBFS)
             val r = Rng(77L + sr)
             val n = sr / 2
             val x = DoubleArray(n * ch) { i -> if (i % 101 == 0) Double.NaN else 3 * r.next() }
@@ -286,7 +285,7 @@ class PodcastChainTest {
         val limit = Math.round(32768 * ceil).toInt() + 1
         for (sr in rates) for (mode in NoiseMode.values()) for (agc in listOf(true, false)) {
             val vc = VoiceChain(sr)
-            vc.podcast = true; vc.mode = mode; vc.expander = mode; vc.agc = agc; vc.gainDb = 24
+            vc.podcast = true; vc.mode = mode; vc.expander = mode; vc.agc = agc; vc.gainDb = 24.0
             vc.podcastParams = PodcastPresets.forNoise(mode)
             val x = chaos(sr, 1, 1.5, 99L + sr + mode.code)
             val s = ShortArray(x.size) { i -> val v = x[i]; if (!v.isFinite()) 0 else (v * 32767).toInt().coerceIn(-32768, 32767).toShort() }

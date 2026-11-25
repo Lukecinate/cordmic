@@ -24,10 +24,10 @@ import org.robolectric.annotation.GraphicsMode
 class ScreenshotTest {
     private val size = "w393dp-h852dp-port"
     private val phone = "$size-xhdpi"
-    private val usb = "rndis0 · 192.168.42.129/24"
+    private val usb = "rndis0 · 192.0.2.1/24"
     private val stats = EngineStats("AAudio", 48000, framesPerBurst = 96, lowLatency = true, exclusive = true,
         bufferFrames = 192, xruns = 0)
-    private val streaming = UiState(Phase.STREAMING, target = "192.168.42.157:50005", engine = "AAudio",
+    private val streaming = UiState(Phase.STREAMING, target = "192.0.2.10:50005", engine = "AAudio",
         levelDb = -17f, sent = 18432, sendErrors = 0, lastReplyMs = 400, usb = usb, stats = stats)
 
     private fun shot(name: String, qualifiers: String, state: UiState, settings: Boolean? = null, details: Boolean = false) {

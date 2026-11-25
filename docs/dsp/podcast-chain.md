@@ -1,8 +1,16 @@
-# Podcast voice chain (1.1.0)
+# Podcast voice chain
 
-CordMic 1.1.0 adds a podcast-style voice chain in front of noise reduction in every preset. It is on by default.
+CordMic 1.1.0 added a podcast-style voice chain in front of noise reduction in every preset. It is on by default.
 It can be turned off globally in **Settings → Noise & voice → Podcast voice chain**. Turning it off restores the
-1.0.0 processing exactly.
+1.0.0 stage list, still with the 1.1.1 manual gain and ceilings below.
+
+Since 1.1.1, mic gain is manual: −24 to +24 dB, default 0 dB. Existing settings migrate to 0 dB. The chain never
+auto-raises gain. Peak-aware protection may only reduce it, and does so when a sample peak would meet −12 dBFS
+(3 dB below the yellow meter mark at −9 dBFS sample peak on both the Windows and Android meters). The look-ahead
+limiter and the true-peak guard sit at −10 dBFS, 1 dB below yellow, as a last-resort net. Compressor makeup is 0 dB.
+The same range and default apply on the phone. Fine steps of 0.1 dB travel in an optional trailing `GainExt` block
+(magic 0xC9, version 1, int16 little-endian tenths). Older peers ignore it. The legacy gain byte stays 0–24;
+a negative value is sent as 0 so an older peer never treats a wrap as +24 dB. The wire version stays 1.
 
 All code is original and MIT-licensed. It was written from the public RBJ *Audio EQ Cookbook* formulas and from
 standard one-pole, dB-domain gain-computer and Wiener-gain math. It contains no models, no weights, and no
@@ -26,22 +34,20 @@ The chain runs in exactly one place per stream, so nothing is processed twice.
   off, so only the PC runs it.
 - With the toggle off, the PC sets `FlagChainOff` (PING flags bit 7) and the phone bypasses the chain. Older PCs
   never set this bit, so a 1.1.0 phone keeps the chain on. Older phones ignore the bit. The wire version stays 1.
-- In Studio, the B3 auto volume is not stacked on top of the chain. The podcast AGC levels the voice, and B3 only
-  meters loudness for the comfort floor, at 0 dB. With the chain off, B3 works as it did in 1.0.0, and its saved
-  start gain is kept.
+- In Studio, the B3 auto volume is not stacked on top of the chain. The podcast peak protection may only reduce
+  gain, and B3 only meters loudness for the comfort floor, at 0 dB. With the chain off, B3 works as it did in 1.0.0,
+  and its saved start gain is kept.
 - **Platform noise suppression.** On phones where *Phone – light* uses Android's built-in `NoiseSuppressor`, that
   suppressor runs inside the capture path, before CordMic receives any samples. It cannot be reordered. Everything
   CordMic does, including the podcast chain and its own NS, comes after it.
 
 ## Stages
 
-1. **Gated AGC.** The level is a 200 ms mean square, driven toward the target (about −17 dBFS RMS, inside the −18 to
-   −12 dBFS goal). The gain rises with a 0.6 s time constant and falls with 0.18 s. It moves only while the input is
-   at least 9 dB above the tracked room floor and above −62 dBFS. In pauses, during the 300 ms gate hold, and in word
-   gaps, the gain is **held**. It is never raised there; it is only pulled down if needed to keep the room floor at
-   or below −52 dBFS (the 0.5.x noise ceiling, with a 2 dB correction for the bias of minimum tracking). As a result
-   the AGC does not pump, and it does not lift silence or hiss. Its range is −12 to +24 dB, minus the mic gain above
-   0 dB.
+1. **Peak protection (downward only).** This stage never raises the user gain. `AgcMaxDb` is 0 dB relative to the
+   manual mic gain. When a sample peak would meet −12 dBFS (`MeterPeakCeilingDbfs`, 3 dB below the yellow meter mark
+   at −9 dBFS), the gain drops at once, holds for about 150 ms, then recovers toward unity over about 2 s. It is
+   never taken above 1.0. With Auto volume off, this stage is skipped and only the limiter and true-peak guard remain
+   as a net. Quiet speech stays quiet; there is no auto-boost toward a loudness target.
 2. **Dynamic EQ.**
    - High-pass: 80 Hz, 2nd-order Butterworth (RBJ).
    - Mud: a parallel band at 250 Hz, Q 1. Written as `x + (g − 1)·BP(x)` with a constant-peak RBJ band-pass, this is a
@@ -52,12 +58,12 @@ The chain runs in exactly one place per stream, so nothing is processed twice.
      because those bands have no sibilance. At 16 kHz the centre is clamped to 0.4 × fs.
    - The gains are computed every 16 samples in dB and smoothed per sample (2 ms).
 3. **Compressor.** Feed-forward, with a linked mean-square detector (5 ms attack, 25 ms release) and a dB-domain
-   soft-knee gain computer: −22 dBFS threshold, 3:1 ratio, 10 dB knee, +2 dB makeup. Release is program-dependent,
+   soft-knee gain computer: −22 dBFS threshold, 3:1 ratio, 10 dB knee, 0 dB makeup. Release is program-dependent,
    for a variable-mu-like feel. A fast gain-reduction envelope (8 ms attack, 80 ms release) runs alongside a slow one
    (400 ms / 900 ms) that charges only under sustained compression, and the larger of the two is applied. Short peaks
    recover quickly; dense passages recover slowly. A test checks that recovery after 2 s of compression takes more than
    twice as long as after a 30 ms burst.
-4. **Look-ahead brickwall limiter**, −1 dBFS. The required gain `min(1, ceil/|x|)` gets a one-pole release (still ≤ the
+4. **Look-ahead brickwall limiter**, −10 dBFS (1 dB below the yellow meter mark). The required gain `min(1, ceil/|x|)` gets a one-pole release (still ≤ the
    required gain). Then come a sliding minimum over L samples (a monotonic deque in fixed arrays) and a length-L boxcar,
    with the signal delayed by L − 1 samples. The boxcar reaches the needed gain exactly when the peak leaves the delay.
    This guarantees the ceiling with a smooth attack, and a final clamp only absorbs float rounding.
@@ -77,22 +83,23 @@ The chain runs in exactly one place per stream, so nothing is processed twice.
    strengths are conservative: on the phone the dereverb mask never goes below −6 dB and the dialog mask never below
    −4.5 dB. Together they reach at most −10.5 dB (Strong), which is still above the Strong NS floor of −15 dB.
 8. **True-peak guard** after NS. Inter-sample peaks are estimated with a 4-tap half-sample interpolator
-   `(−x0 + 9x1 + 9x2 − x3)/16`. The guard reduces gain at once, releases over 40 ms, and clamps at −1 dBFS. Delay is
+   `(−x0 + 9x1 + 9x2 − x3)/16`. The guard reduces gain at once, releases over 40 ms, and clamps at −10 dBFS. Delay is
    2 samples. NS gain changes and OLA phase therefore cannot clip.
 
 ## Per-preset parameters
 
-The defaults apply unless a preset changes them: target −17 dBFS, AGC max +24 dB, HP 80 Hz, mud 250 Hz / −6 dB
-threshold, de-ess 6.5 kHz / −12 dB threshold, compressor −22 dBFS 3:1 10 dB knee +2 dB, limiter −1 dBFS.
+The defaults apply unless a preset changes them: AGC max 0 dB (never auto-raises), peak-protection ceiling −12 dBFS,
+HP 80 Hz, mud 250 Hz / −6 dB threshold, de-ess 6.5 kHz / −12 dB threshold, compressor −22 dBFS 3:1 10 dB knee 0 dB
+makeup, limiter and true-peak guard −10 dBFS. The meter turns yellow at −9 dBFS sample peak.
 
-| Preset | Mud max cut | De-ess max cut | Comp threshold | AGC target / max | Look-ahead | Limiter release | Dereverb | Dialog |
+| Preset | Mud max cut | De-ess max cut | Comp threshold | AGC max | Look-ahead | Limiter release | Dereverb | Dialog |
 |---|---|---|---|---|---|---|---|---|
-| Off (lowest latency) | 3 dB | 5 dB | −22 dBFS | −17 / +24 | **1.0 ms** | 50 ms | 0 (no STFT) | 0 |
-| Phone – light | 4 dB | 6 dB | −22 dBFS | −17 / +24 | 1.5 ms | 60 ms | 0.35 (floor −4.2 dB) | 0.30 (−3 dB) |
-| Phone – strong | 4 dB | 6 dB | −22 dBFS | −17 / +24 | 2.0 ms | 80 ms | 0.50 (−6 dB) | 0.45 (−4.5 dB) |
-| PC Studio – balanced | 4 dB | 6 dB | −22 dBFS | −17 / +24 | 2.0 ms | 60 ms | 0.35 | 0.30 |
-| PC Studio – whisper | 2 dB | 3 dB | −26 dBFS | −16 / +27 | 2.0 ms | 60 ms | 0.25 | 0.15 |
-| PC Studio – maximum | 4 dB | 6 dB | −22 dBFS | −17 / +24 | 2.0 ms | 80 ms | 0.50 | 0.40 |
+| Off (lowest latency) | 3 dB | 5 dB | −22 dBFS | 0 | **1.0 ms** | 50 ms | 0 (no STFT) | 0 |
+| Phone – light | 4 dB | 6 dB | −22 dBFS | 0 | 1.5 ms | 60 ms | 0.35 (floor −4.2 dB) | 0.30 (−3 dB) |
+| Phone – strong | 4 dB | 6 dB | −22 dBFS | 0 | 2.0 ms | 80 ms | 0.50 (−6 dB) | 0.45 (−4.5 dB) |
+| PC Studio – balanced | 4 dB | 6 dB | −22 dBFS | 0 | 2.0 ms | 60 ms | 0.35 | 0.30 |
+| PC Studio – whisper | 2 dB | 3 dB | −26 dBFS | 0 | 2.0 ms | 60 ms | 0.25 | 0.15 |
+| PC Studio – maximum | 4 dB | 6 dB | −22 dBFS | 0 | 2.0 ms | 80 ms | 0.50 | 0.40 |
 
 The noise setting Off keeps no STFT, so it stays the lowest-latency choice for games. Whisper keeps the de-ess and
 the masks gentle so whispered s/f/sh sounds are not thinned.
@@ -160,4 +167,5 @@ fallback and the latency drop.
 - Tests (Kotlin and C#) run every stage with silence, full-scale square, DC, NaN/Inf, denormals, over-range noise,
   bursts and dropouts. They cover 8 / 16 / 44.1 / 48 kHz, mono and stereo, with presets switched every few blocks.
   An integration test runs the whole phone chain at +24 dB mic gain in every preset and checks that no output
-  sample exceeds −1 dBFS. A Studio test does the same through RNNoise.
+  sample reaches the yellow meter mark (−9 dBFS); the limiter and true-peak guard hold −10 dBFS. A Studio test does
+  the same through RNNoise.

@@ -8,7 +8,7 @@ public sealed class AppSettings
 {
     /// <summary>Settings schema. 2 = 0.7.0 (automatic update downloads on by default, install on quit).
     /// 3 = 1.1.0 (podcast voice chain, on by default).</summary>
-    public const int CurrentSchema = 3;
+    public const int CurrentSchema = 4;
     public int Version { get; set; } = CurrentSchema;
     public int Port { get; set; } = Protocol.DefaultPort;
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -52,8 +52,8 @@ public sealed class AppSettings
     public bool InstallOnQuit { get; set; }
     /// <summary>UTC ticks of the last completed update check (0 = never). Used to honour the six-hour spacing.</summary>
     public long LastUpdateCheckUtcTicks { get; set; }
-    /// <summary>Phone mic makeup gain in dB, 0 to +24. Default +6 on new installs; a saved value is left unchanged.</summary>
-    public int MicGainDb { get; set; } = 6;
+    /// <summary>Phone mic gain in dB, −24 to +24. Default 0. 1.1.1 is manual: the chain never auto-raises it.</summary>
+    public double MicGainDb { get; set; } = 0;
     /// <summary>How CordMic feeds Windows audio (added in 0.4.2; older files default to LowLatency).</summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public OutputMode OutputMode { get; set; } = OutputMode.Auto;
@@ -180,6 +180,12 @@ public sealed class AppSettings
             PodcastVoiceChain = true;
             notes.Add("podcast voice chain on (1.1.0 default)");
         }
+        if (from < 4)
+        {
+            // Schema 3 -> 4 (1.1.1): mic gain is manual, default 0 dB, and may go negative. Existing users are reset to 0.
+            MicGainDb = 0;
+            notes.Add("mic gain set to 0 dB (1.1.1 manual, no auto-boost)");
+        }
         string note = string.Join("; ", notes);
         Version = CurrentSchema;
         return $"settings schema {from} -> {CurrentSchema}: {note}";
@@ -194,6 +200,7 @@ public sealed class AppSettings
         if (!Enum.IsDefined(StudioPreset)) StudioPreset = CordMic.Core.Dsp.StudioPreset.Off;
         if (double.IsNaN(StudioAgcGainDb) || double.IsInfinity(StudioAgcGainDb)) StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.DefaultStartGainDb;
         StudioAgcGainDb = CordMic.Core.Dsp.AgcB3.ClampSaved(StudioAgcGainDb); // 0.6.2: persisted start gain ≤ +15 dB
+        MicGainDb = VoiceChain.SnapGain(MicGainDb);
     }
 
     /// <summary>Drop bad seed entries, clamp values, keep at most 32. Raw identifier-looking keys are rejected.</summary>

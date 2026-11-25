@@ -296,9 +296,12 @@ internal sealed class StateBadge : Control
     protected override void Dispose(bool disposing) { if (disposing) _bmp?.Dispose(); base.Dispose(disposing); }
 }
 
-/// <summary>Rounded input-level meter, -60..0 dBFS. Teal, amber from -9 dB, red from -1 dB (clipping risk).</summary>
+/// <summary>Rounded input-level meter, -60..0 dBFS sample peak. Teal below <see cref="MeterYellowDbfs"/>, amber from that mark, red from <see cref="MeterRedDbfs"/>.</summary>
 internal sealed class LevelMeter : Control
 {
+    public const double MeterYellowDbfs = VoiceChain.MeterYellowDbfs;
+    public const double MeterRedDbfs = VoiceChain.MeterRedDbfs;
+    public const double FloorDbfs = -60;
     private double _db = -90;
     public double Dbfs { get => _db; set { if (Math.Abs(value - _db) > 0.05) { _db = value; Invalidate(); } } }
 
@@ -318,10 +321,10 @@ internal sealed class LevelMeter : Control
         float r = Height / 2f;
         using (var p = Theme.Rounded(new RectangleF(0, 0, Width - 1, Height - 1), r))
         using (var b = new SolidBrush(Theme.SurfaceMuted)) g.FillPath(b, p);
-        var f = Math.Clamp((_db + 60) / 60.0, 0, 1);
+        var f = Math.Clamp((_db - FloorDbfs) / -FloorDbfs, 0, 1);
         if (f <= 0) return;
         float w = Math.Max(Height, (float)(Width * f)) - 1;
-        var c = _db >= -1 ? Theme.Red : _db >= -9 ? Theme.MeterAmber : Theme.Accent;
+        var c = _db >= MeterRedDbfs ? Theme.Red : _db >= MeterYellowDbfs ? Theme.MeterAmber : Theme.Accent;
         using (var p = Theme.Rounded(new RectangleF(0, 0, w, Height - 1), r))
         using (var b = new SolidBrush(c)) g.FillPath(b, p);
     }

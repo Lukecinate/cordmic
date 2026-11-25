@@ -106,20 +106,30 @@ public static class SettingsSync
     /// Returns the UTF-8 name length (separator NUL stripped) when a block is present.
     /// </summary>
     public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength) =>
-        TryReadTrailing(afterClassic, out flags2, out revs, out nameLength, out _);
+        TryReadTrailing(afterClassic, out flags2, out revs, out nameLength, out _, out _);
 
     /// <summary>0.8.0: also returns the optional install-id block that follows the sync block when present.</summary>
-    public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength, out byte[]? installId)
+    public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength, out byte[]? installId) =>
+        TryReadTrailing(afterClassic, out flags2, out revs, out nameLength, out installId, out _);
+
+    /// <summary>1.1.1: also returns a <see cref="GainExt"/> block sitting between the sync block and the install-id, when present.</summary>
+    public static bool TryReadTrailing(ReadOnlySpan<byte> afterClassic, out byte flags2, out FieldRev[] revs, out int nameLength, out byte[]? installId, out double? gainExt)
     {
         flags2 = 0;
         revs = Array.Empty<FieldRev>();
         nameLength = afterClassic.Length;
         installId = null;
+        gainExt = null;
         int end = afterClassic.Length;
         if (end >= PhoneIdBlock.Size && PhoneIdBlock.TryRead(afterClassic.Slice(end - PhoneIdBlock.Size), out var id))
         {
             installId = id;
             end -= PhoneIdBlock.Size;
+        }
+        if (end >= GainExt.Size && GainExt.TryRead(afterClassic.Slice(end - GainExt.Size, GainExt.Size), out var g))
+        {
+            gainExt = g;
+            end -= GainExt.Size;
         }
         if (end < Size) return false;
         int start = end - Size;

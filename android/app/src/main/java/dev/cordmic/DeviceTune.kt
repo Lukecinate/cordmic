@@ -58,15 +58,8 @@ object DeviceTune {
         return CaptureAdvice(useAAudio, exclusive, preset, frontFocus, nc, p.hasPlatformNs, gain, summary)
     }
 
-    fun suggestedGain(speechDbfs: Double?, floorDbfs: Double?): Int {
-        if (speechDbfs != null && speechDbfs > -90)
-            return (-24.0 - speechDbfs).roundToInt().coerceIn(0, 18)
-        if (floorDbfs != null) {
-            if (floorDbfs > -38) return 0
-            if (floorDbfs > -46) return 3
-        }
-        return VoiceChain.DEFAULT_GAIN_DB
-    }
+    /** 1.1.1: gain is manual and defaults to 0. DeviceTune no longer auto-boosts quiet mics. */
+    fun suggestedGain(speechDbfs: Double?, floorDbfs: Double?): Int = 0
 
     fun withOverrides(
         advice: CaptureAdvice,

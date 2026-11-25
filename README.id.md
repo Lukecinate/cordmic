@@ -9,7 +9,7 @@ Android **USB tethering**, jadi tidak perlu Wi-Fi, USB debugging/ADB, atau drive
 suara, mengirimnya ke aplikasi tray Windows, lalu aplikasi tray memutarnya ke kabel audio virtual yang bisa dipilih
 Discord, Zoom, OBS, dan game sebagai mikrofon.
 
-Versi stabil saat ini: **1.1.0** (rantai suara podcast, lihat [Pemrosesan suara](#pemrosesan-suara)). Ini rilis *latest* di GitHub, dan pembaruan dalam aplikasi menawarkannya ke pemasangan 1.0.0, 0.7.2 serta ke beta 0.8.0 ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)). Pra-rilis 0.8.0-beta.1–beta.3 tetap ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis.
+Versi stabil saat ini: **1.1.1** (gain mic manual dan plafon di bawah zona kuning, lihat [Pemrosesan suara](#pemrosesan-suara)). Ini rilis *latest* di GitHub, dan pembaruan dalam aplikasi menawarkannya ke pemasangan 1.1.0, 1.0.0, 0.7.2 serta ke beta 0.8.0 ([changelog](CHANGELOG.md), [stabil terbaru](https://github.com/Lukecinate/cordmic/releases/latest)). Pra-rilis 0.8.0-beta.1–beta.3 tetap ada di halaman [Releases](https://github.com/Lukecinate/cordmic/releases) dan tidak ditawarkan oleh pembaruan otomatis.
 
 Jalur USB aksesori tetap **eksperimental**, mati secara bawaan, dan belum diuji di perangkat keras. Mode otomatis tetap memakai tethering USB. Gerbang perangkat keras G-M1 belum dilalui; rilis ini tidak menyatakan bahwa jalur aksesori sudah berfungsi di HP nyata. Pemasangan di PC perusahaan atau yang dikelola TI **belum didukung** sampai ada tinjauan tersendiri; tidak ada panduan instalasi untuk admin.
 
@@ -18,8 +18,7 @@ Jalur USB aksesori tetap **eksperimental**, mati secara bawaan, dan belum diuji 
   yang disesuaikan dengan periode render Windows yang sebenarnya, kontrol drift dengan resampler, penyamaran packet
   loss berbasis pitch, dan renderer WASAPI milik CordMic sendiri (IAudioClient3 mode shared atau exclusive). Target rancangan sekitar **30–45 ms end-to-end**
   (lihat [Latensi](#latensi)).
-- **Pemrosesan suara di HP.** EQ voice clarity, noise cancellation (Mati / Ringan / Kuat), Volume otomatis menuju
-  −18 dBFS dengan gate yang mengikuti lantai noise terukur, expander jeda, dan limiter puncak −1 dBFS.
+- **Pemrosesan suara di HP.** Gain mic manual (−24 sampai +24 dB, bawaan 0 dB), EQ voice clarity, noise cancellation (Mati / Ringan / Kuat), Volume otomatis yang hanya boleh menurunkan gain, expander jeda, dan limiter look-ahead di −10 dBFS (di bawah tanda kuning meter pada −9 dBFS).
 - **Peredam bising Studio di PC (opsional)** (0.6.0, mati secara default). RNNoise di PC dengan perlindungan bisikan
   dan Volume otomatis berbasis loudness; HP lalu mengirim suara tanpa olahan. Menambah sekitar 30 ms.
 - **Deteksi otomatis per HP.** HP memeriksa kemampuannya sendiri (engine capture, mikrofon, efek bawaan, API arah,
@@ -58,7 +57,7 @@ Jalur USB aksesori tetap **eksperimental**, mati secara bawaan, dan belum diuji 
 ## Tangkapan layar
 
 **Aplikasi Android.** Render asli dari layout aplikasi, dibuat oleh test screenshot Robolectric
-(`./gradlew testDebugUnitTest -PrecordScreenshots`) dengan nilai contoh; bukan foto dari HP fisik.
+(`./gradlew testDebugUnitTest -PrecordScreenshots`) dengan nilai contoh; bukan foto dari HP fisik. Alamat pada render ini adalah contoh dokumentasi (`192.0.2.0/24`, TEST-NET-1), bukan PC sungguhan.
 
 | Menunggu USB tethering | Mencari PC | Streaming ke PC |
 |---|---|---|
@@ -74,21 +73,26 @@ Jalur USB aksesori tetap **eksperimental**, mati secara bawaan, dan belum diuji 
 
 Lanskap: [android-landscape.png](docs/screenshots/android-landscape.png).
 
-**Aplikasi Windows.** Jendela sambung di bawah adalah render tata letak header dan tombol sambung 0.5.1
-(lingkungan ini tidak bisa menjalankan WinForms), memakai logo, ikon, Plus Jakarta Sans, dan warna aplikasi,
-dengan nilai contoh. Ini bukan tangkapan dari aplikasi yang sedang berjalan. Gambar lama adalah
-pratinjau desain panduan 0.4.
+**Aplikasi Windows.** Jendela sambung di bawah adalah render tata letak jendela utama 1.1.1 (meter level dan kontrol
+gain di bawah status). Lingkungan ini tidak bisa menjalankan WinForms, jadi gambarnya memakai logo, ikon, Plus
+Jakarta Sans, dan warna aplikasi, dengan nilai contoh. Ini bukan tangkapan dari aplikasi yang sedang berjalan.
+Gambar lama adalah pratinjau desain panduan 0.4.
 
-| Jendela sambung |
+| Jendela sambung (render 1.1.1) |
 |---|
 | ![Jendela sambung CordMic](docs/screenshots/windows-main.png) |
 
-| Pengaturan: Suara (render 0.7.0) | Pengaturan: Pembaruan (render 0.7.0, Inggris) |
+| Pengaturan: Suara (render 1.1.1, Inggris) | Pengaturan: Suara (Bahasa Indonesia) |
 |---|---|
-| ![Jendela Pengaturan, halaman Suara (render)](docs/screenshots/windows-settings-sound-id-render.png) | ![Jendela Pengaturan, halaman Pembaruan (render)](docs/screenshots/windows-settings-updates-render.png) |
+| ![Jendela Pengaturan, halaman Suara (render)](docs/screenshots/windows-settings-sound-render.png) | ![Jendela Pengaturan, halaman Suara dalam bahasa Indonesia (render)](docs/screenshots/windows-settings-sound-id-render.png) |
+
+| Pengaturan: Bising & suara (render 0.7.0) | Pengaturan: Pembaruan (render 0.7.0, Inggris) |
+|---|---|
+| ![Jendela Pengaturan, halaman Bising & suara (render)](docs/screenshots/windows-settings-noise-render.png) | ![Jendela Pengaturan, halaman Pembaruan (render)](docs/screenshots/windows-settings-updates-render.png) |
 
 Gambar Pengaturan adalah render dari `tools/render/render_settings.py` berdasarkan katalog, teks, dan konstanta tata
-letak aplikasi, dengan nilai contoh; bukan tangkapan layar aplikasi yang berjalan.
+letak aplikasi, dengan nilai contoh; bukan tangkapan layar aplikasi yang berjalan. Jendela sambung digambar oleh
+`tools/render/render_main.py`.
 
 | Panduan, streaming (pratinjau 0.4) | Panduan, menunggu (pratinjau 0.4) | Menu tray dan tooltip |
 |---|---|---|
@@ -165,8 +169,10 @@ rata-rata, dan buffer output Windows terukur), plus round-trip time dan packet l
 ### Jendela utama
 
 Klik dua kali ikon tray (atau **Buka CordMic**). Jendela berisi satu tombol bulat (terputus, mencari, tersambung,
-error; bisa difokuskan dan ditekan dengan Enter atau Spasi), baris status dengan model HP dan delay sisi PC, serta
-tautan **Pengaturan**. Ikon roda gigi di header membuka jendela Pengaturan yang sama dan menampilkan titik teal bila
+error; bisa difokuskan dan ditekan dengan Enter atau Spasi), baris status dengan model HP dan delay sisi PC, meter
+level, knob dan penggeser gain mic (dengan angka dB) agar efeknya terlihat di meter, serta tautan **Pengaturan**.
+Klik dua kali knob atau penggeser untuk kembali ke 0 dB; roda tetikus dan tombol panah mengubah 0,5 dB (Shift: 0,1 dB).
+Ikon roda gigi di header membuka jendela Pengaturan yang sama dan menampilkan titik teal bila
 pembaruan sudah diunduh dan siap. Esc menutup jendela, Ctrl+, membuka Pengaturan.
 
 ### Jendela Pengaturan (0.7.0)
@@ -179,7 +185,7 @@ Ctrl+Tab / Ctrl+Shift+Tab (atau Ctrl+PageDown / PageUp) antar halaman, Esc menut
 | Halaman | Pengaturan | Default |
 |---|---|---|
 | Koneksi | Status HP; Minta kode pairing (dengan Kode baru); Jalan saat Windows mulai; Bahasa (Otomatis, English, Bahasa Indonesia) | Pairing mengikuti pengaturan sebelumnya; Jalan saat Windows mulai mati; Otomatis |
-| Suara | Mikrofon virtual (Otomatis = kabel virtual terbaik yang ditemukan: VB-CABLE A–D, VAC, VoiceMeeter, atau perangkat tertentu); Pasang VB-CABLE (hanya bila belum ada kabel); Volume otomatis; Penguat mic HP 0 sampai +24 dB; **Jeda atau stabil**: Jeda terendah / Seimbang / Paling stabil, dengan jeda HP-ke-PC saat ini | Otomatis; Volume otomatis aktif; +6 dB; Seimbang |
+| Suara | Mikrofon virtual (Otomatis = kabel virtual terbaik yang ditemukan: VB-CABLE A–D, VAC, VoiceMeeter, atau perangkat tertentu); Pasang VB-CABLE (hanya bila belum ada kabel); Volume otomatis (hanya boleh menurunkan gain); Gain mic −24 sampai +24 dB (knob + penggeser); **Jeda atau stabil**: Jeda terendah / Seimbang / Paling stabil, dengan jeda HP-ke-PC saat ini | Otomatis; Volume otomatis aktif; 0 dB; Seimbang |
 | Bising & suara | **Peredam bising**, satu pilihan: Mati, HP – ringan (disarankan), HP – kuat, Studio PC – seimbang / bisikan / maksimal (+47 ms, lihat [Peredam bising Studio di PC](#peredam-bising-studio-di-pc-opsional)); Kejelasan suara; Rantai suara podcast (1.1.0); Fokus depan; Mikrofon HP (info dari HP) | HP – ringan; Kejelasan suara aktif; Rantai suara podcast aktif; Fokus depan aktif |
 | Pembaruan | Kartu pembaruan (status, progres, Batal, satu tombol utama); Unduh pembaruan otomatis; Pasang saat aku keluar dari CordMic; Halaman unduhan di GitHub | Unduh otomatis **aktif**; pasang saat keluar mati |
 | Lanjutan | Jitter buffer (Low 5 / Normal 10 / Safe 20 ms); Mode output Windows (Auto, Latensi rendah, Stabil, Exclusive); Fokus depan, mode kompatibel (AudioRecord, latensi lebih tinggi); Optimalkan VB-CABLE; Perbaiki prioritas jaringan HP; Mode mic diatur di HP; Dapatkan VB-CABLE; Buka log; Reset pengaturan audio | Normal; Auto; mati |
@@ -252,10 +258,10 @@ PC), paket terkirim, error kirim, dan umur balasan PC terakhir.
    | Optimalkan otomatis | Aktif | Memilih jalur capture dan pengaturan awal untuk HP ini; nilai yang diatur pengguna tidak pernah ditimpa. **Deteksi ulang** menjalankan pemeriksaan lagi |
    | Noise cancellation | Ringan | Ringan memakai peredam bawaan HP bila ada (tanpa delay tambahan), bila tidak memakai filter Ringan CordMic. Kuat memakai filter spektral CordMic (2,7 ms). Keduanya menurunkan jeda antarkata (sekitar 6 / 12 dB) |
    | Voice clarity | Aktif | Memotong dengung, menonjolkan presence |
-   | Volume otomatis | Aktif | Menuju −18 dBFS; jeda tidak dikuatkan |
+   | Volume otomatis | Aktif | Menurunkan gain jika puncak akan menyentuh zona kuning pada meter; tidak pernah menaikkannya |
    | Fokus depan | Aktif | Memilih mic yang menghadap pengguna |
    | Fokus depan (latensi lebih tinggi) | Mati | Memakai AudioRecord agar arah bisa diterapkan |
-   | Gain mic | +6 dB | 0 sampai +24 dB |
+   | Gain mic | 0 dB | −24 sampai +24 dB; knob dan penggeser, ketuk dua kali untuk kembali ke 0 |
    | Pembaruan otomatis / Periksa pembaruan | Pembaruan otomatis mati | Lihat [Pembaruan](#pembaruan) |
    | Reset pengaturan audio | – | Mengembalikan default suara |
 
@@ -291,17 +297,20 @@ PC lewat link yang sama.
 
 ## Pemrosesan suara
 
-### Rantai suara podcast (1.1.0, aktif secara bawaan)
+### Rantai suara podcast (aktif secara bawaan sejak 1.1.0)
 
-Setiap preset lebih dulu menjalankan rantai bergaya podcast. Isinya: AGC bergerbang menuju sekitar −17 dBFS RMS
-(ditahan saat jeda, tidak pernah menaikkan lantai ruangan di atas −52 dBFS); EQ dinamis (high-pass 80 Hz, potongan
-dinamis sekitar 250 Hz, de-ess dinamis sekitar 6,5 kHz); kompresor 3:1 soft-knee dengan release yang mengikuti materi;
-dan limiter brickwall look-ahead di −1 dBFS. Setelah itu dereverb spektral dan isolasi dialog, digabung ke STFT peredam
-bising (satu mask, tanpa masking ganda). Penjaga true-peak tipis berjalan setelah peredam bising. Rantai ini berjalan
-di HP, atau di PC sebelum RNNoise bila Studio PC aktif, tidak pernah di keduanya. Tambahan latensinya 1,0 ms (Mati),
-1,5 ms (Ringan; 6,9 ms bila peredam bawaan Android dipakai), 2,0 ms (Kuat) atau 7,4 ms (Studio PC). Matikan di
-*Pengaturan → Bising & suara → Rantai suara podcast* untuk kembali ke pemrosesan 1.0.0 di bawah. Parameter, latensi,
-dan CPU per tahap: [docs/dsp/podcast-chain.md](docs/dsp/podcast-chain.md).
+Setiap preset lebih dulu menjalankan rantai bergaya podcast. Gain mic bersifat manual (−24 sampai +24 dB, bawaan 0 dB).
+Perlindungan puncak hanya boleh menurunkan gain, dan tidak pernah menaikkannya sendiri, jika puncak sampel akan
+mencapai −12 dBFS (3 dB di bawah tanda kuning meter pada −9 dBFS). Kemudian EQ dinamis (high-pass 80 Hz, potongan
+dinamis sekitar 250 Hz, de-ess dinamis sekitar 6,5 kHz); kompresor 3:1 soft-knee dengan makeup 0 dB dan release yang
+mengikuti materi; dan limiter brickwall look-ahead di −10 dBFS, 1 dB di bawah zona kuning. Setelah itu dereverb
+spektral dan isolasi dialog, digabung ke STFT peredam bising (satu mask, tanpa masking ganda). Penjaga true-peak
+tipis pada plafon −10 dBFS yang sama berjalan setelah peredam bising. Rantai ini berjalan di HP, atau di PC sebelum
+RNNoise bila Studio PC aktif, tidak pernah di keduanya. Tambahan latensinya 1,0 ms (Mati), 1,5 ms (Ringan; 6,9 ms
+bila peredam bawaan Android dipakai), 2,0 ms (Kuat) atau 7,4 ms (Studio PC). Matikan di
+*Pengaturan → Bising & suara → Rantai suara podcast* untuk kembali ke pemrosesan 1.0.0 di bawah, tetap dengan gain
+manual dan plafon −10 dBFS. Parameter, latensi, dan CPU per tahap:
+[docs/dsp/podcast-chain.md](docs/dsp/podcast-chain.md).
 
 ### Rantai tanpa tahap podcast (perilaku 1.0.0)
 
@@ -321,10 +330,11 @@ implementasi referensi C# (`CordMic.Core/VoiceChain.cs`) yang memuat test.
 4. **Gate dan lantai noise**, diukur sebelum gain. Lantai dilacak terus-menerus (turun dalam sekitar 0,3 detik, naik
    paling cepat 1,5 dB/detik saat jeda). Gate terbuka sekitar 10 dB dan tertutup sekitar 4 dB di atas lantai, dengan
    tahan 200 ms.
-5. **Volume otomatis**: selubung RMS (~40 ms) diarahkan ke −18 dBFS; makeup dibatasi agar lantai tetap di −52 dBFS
-   atau lebih rendah setelah gain, dan kembali ke unity saat jeda.
+5. **Volume otomatis**: hanya boleh menurunkan gain, tidak pernah menaikkannya, agar teriakan tetap di bawah tanda
+   kuning pada meter. Jika Volume otomatis dimatikan, hanya limiter dan penjaga true-peak yang tetap menjadi jaring
+   pengaman.
 6. **Expander jeda**: sekitar −6 dB (Ringan) atau −12 dB (Kuat) saat gate tertutup.
-7. **Limiter puncak** di −1 dBFS.
+7. **Limiter puncak** di −10 dBFS (1 dB di bawah tanda kuning pada −9 dBFS).
 
 ### Peredam bising Studio di PC (opsional)
 
@@ -399,8 +409,8 @@ ke installer sistem (Install diketuk sekali; "install unknown apps" mungkin dimi
 | Studio mati sendiri | PC tidak sanggup mengikuti (3 tenggat terlewat dalam 1 detik). Tutup aplikasi latar yang berat, atau pakai peredam noise HP |
 | Suara terdengar jauh atau keruh | Ikuti pemberitahuan *Dekatkan HP*: sekitar 15 cm. Peredam noise tidak bisa menghapus gema ruangan |
 | Peringatan "mic dibuat hening" | Aplikasi lain (sering asisten suara atau perekam) mengambil mic. Tutup aplikasi itu |
-| Desis di antara kata | Biarkan noise cancellation di Ringan atau Kuat (keduanya menurunkan jeda), turunkan Gain mic dan biarkan Volume otomatis bekerja. Pakai ambang voice activation game yang sedang. Kolom `floor` di log menunjukkan level latar HP (di atas sekitar −50 dBFS berarti ruangan bising atau Gain mic terlalu tinggi) |
-| Suara terlalu pelan | Dekatkan HP, naikkan Gain mic beberapa dB, dan biarkan Volume otomatis aktif. Peringatan muncul di bawah sekitar −40 dBFS |
+| Desis di antara kata | Biarkan noise cancellation di Ringan atau Kuat (keduanya menurunkan jeda), atau turunkan Gain mic. Volume otomatis tidak akan menaikkan gain; ia hanya menurunkannya jika puncak akan menyentuh zona kuning. Pakai ambang voice activation game yang sedang. Kolom `floor` di log menunjukkan level latar HP (di atas sekitar −50 dBFS berarti ruangan bising atau Gain mic terlalu tinggi) |
+| Suara terlalu pelan | Dekatkan HP, atau naikkan Gain mic beberapa dB (bisa juga ke bawah 0). Volume otomatis tidak akan menguatkan suara yang pelan. Peringatan muncul di bawah sekitar −40 dBFS |
 | Fokus depan "unsupported" | Jalur AAudio HP tidak punya API arah. Nyalakan *Fokus depan (latensi lebih tinggi)* untuk memakai AudioRecord, atau biarkan mati untuk latensi terendah |
 | Ping game naik atau kuota HP terpakai setelah HP dicolok | *Berhenti memakai kuota HP…* di menu tray (atau jalankan `C:\Program Files\CordMic\tools\set-tether-metric.ps1` sebagai administrator), atau matikan data seluler HP |
 | Discord tidak mendengar apa-apa | Perangkat input harus **CABLE Output** (bukan CABLE Input) |
@@ -637,8 +647,8 @@ lokal ditandatangani kunci debug, dan updater di aplikasi akan menolaknya sebaga
 | Suite | Perintah | Cakupan |
 |---|---|---|
 | Python (24 test) | `cd windows-receiver && python -m unittest discover -s tests` | protokol, jitter buffer, callback output, UDP loopback (bersih dan lossy) |
-| .NET (372 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), test regresi 0.7.1 (race pasang/periksa, pemulihan pembaruan siap setelah restart, watchdog, pembersihan, jadwal monotonik, skala font per DPI), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200%, test regresi 0.7.2 (gerbang layout dan urutan inisialisasi di semua form, tata letak halaman tanpa layar, diagnosis tethering dan panduannya, jalur pembaruan tray, routing khusus mic) |
-| Kotlin (65 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, status USB (hanya mengisi daya / tanpa kabel), cadangan layar tethering, pemeriksaan pembaruan di jaringan berkuota, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
+| .NET (570 test) | `cd windows-app && dotnet test tests/CordMic.Tests` | vektor emas protokol, jitter buffer, simulasi kebijakan dan drift lock, target adaptif, kontinuitas underrun/overflow, voice chain dan kualitas (THD+N, klik, desis, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), diagnostik HP, sinkronisasi pengaturan, tuning perangkat, pembaruan dan checksum, aturan VB-CABLE, backoff ping, UDP loopback, interop dengan `sim_sender.py`, tabel lokalisasi, vektor PLC/resampler 0.6.0 dan drift loop tertutup, delay RNNoise, CPU dan alokasi Studio, watchdog, WhisperGuard, Volume otomatis B3, pemberitahuan dekatkan HP, updater 0.7.0 dengan server rilis palsu (progres, batal, checksum tidak cocok, pemeriksaan bersamaan, tanpa downgrade), test regresi 0.7.1 (race pasang/periksa, pemulihan pembaruan siap setelah restart, watchdog, pembersihan, jadwal monotonik, skala font per DPI), deteksi portabel, penggantian file dan rollback, migrasi pengaturan, katalog dan tata letak Pengaturan pada DPI 100–200%, test regresi 0.7.2 (gerbang layout dan urutan inisialisasi di semua form, tata letak halaman tanpa layar, diagnosis tethering dan panduannya, jalur pembaruan tray, routing khusus mic) |
+| Kotlin (114 test) | `cd android && ./gradlew testReleaseUnitTest` | kompatibilitas header, voice chain (delay, ramp gain, limiter, gate sebelum gain, expander, fluktuasi gain Kuat, bisikan/konsonan tetap utuh), blok diagnostik, sinkronisasi pengaturan, parsing pembaruan, kesetaraan string Inggris/Indonesia, meter level, bypass Studio, flag diagnostik, panggilan arah mic yang dijaga, pemeriksaan peredam noise tersembunyi, status USB (hanya mengisi daya / tanpa kabel), cadangan layar tethering, pemeriksaan pembaruan di jaringan berkuota, render screenshot Robolectric (`-PrecordScreenshots` menulis ulang `docs/screenshots/android-*.png`) |
 
 Gerbang rilis untuk peredam noise dan Volume otomatis (DNSMOS, ESTOI, PESQ, LUFS) dijalankan pada kode C# yang dikirim
 melalui `tools/harness/` dengan data yang diunduh saat pengujian; lihat [tools/harness/README.md](tools/harness/README.md).
@@ -678,6 +688,7 @@ mensimulasikan link buruk).
 
 | Versi | Sorotan |
 |---|---|
+| 1.1.1 | Gain mic manual −24 sampai +24 dB (bawaan 0 dB, knob dan penggeser), tanpa auto-boost, limiter dan penjaga true-peak di −10 dBFS agar meter tetap di bawah zona kuning (−9 dBFS); GainExt opsional pada kabel |
 | 1.1.0 | Rantai suara podcast di setiap preset (AGC bergerbang, EQ dinamis, kompresor, limiter look-ahead, dereverb, isolasi dialog, penjaga true-peak), aktif secara bawaan dengan sakelar di Pengaturan; workflow rilis melewati SignPath dengan bersih |
 | 1.0.0 | Stabil pertama yang didukung setelah 0.7.2: pengguliran halaman Pengaturan, NSIS 3.13, .NET 8.0.34 di aplikasi self-contained, jalur USB aksesori tetap eksperimental, mati, dan belum diuji di perangkat keras |
 | 0.7.2 | Crash jendela Pengaturan diperbaiki, status tethering dan panduan Samsung di PC dan HP, internet PC tidak pernah lewat kuota HP, self-test UI |

@@ -29,12 +29,51 @@ public sealed class VoiceChain
     public const int NoiseFft = 256;
     public const int NoiseHop = 128;
     public const int NoiseDelayFrames = NoiseHop;
+    public const int MinGainDb = -24;
     public const int MaxGainDb = 24;
-    public const int DefaultGainDb = 6;
-    /// <summary>AGC envelope target. −18 dBFS leaves headroom for Discord/game mic sliders around 50–60 %.</summary>
+    /// <summary>1.1.1: manual gain, default 0 dB. The chain never auto-raises it.</summary>
+    public const double DefaultGainDb = 0;
+    public const double GainStepDb = 0.5;
+    public const double GainFineStepDb = 0.1;
+    /// <summary>Android <c>LevelMeterView</c> and Windows <c>LevelMeter</c>: sample peak, amber at or above this.</summary>
+    public const double MeterYellowDbfs = -9;
+    /// <summary>Sample-peak red / clipping-risk colour on both meters.</summary>
+    public const double MeterRedDbfs = -1;
+    /// <summary>Peak-aware gain reduction aims this far below the yellow mark (3 dB of margin).</summary>
+    public const double MeterPeakCeilingDbfs = -12;
+    /// <summary>AGC envelope target used by the legacy (podcast-off) chain only. The 1.1.1 podcast chain does not auto-boost.</summary>
     public const double TargetDbfs = -18;
     public const double MaxAgcDb = 24;
-    public const double CeilingDbfs = -1;
+    /// <summary>Look-ahead limiter and true-peak guard ceiling, 1 dB below the yellow meter mark. Last-resort only.</summary>
+    public const double CeilingDbfs = -10;
+
+    public static double ClampGain(double db) => Math.Clamp(db, MinGainDb, MaxGainDb);
+
+    /// <summary>Round to <paramref name="step"/> dB (default 0.1) and clamp to the legal range.</summary>
+    public static double SnapGain(double db, double step = GainFineStepDb)
+    {
+        if (step <= 0) return ClampGain(db);
+        return ClampGain(Math.Round(db / step, MidpointRounding.ToEven) * step);
+    }
+
+    /// <summary>Arrow / wheel nudge. Coarse step is 0.5 dB; Shift uses 0.1 dB.</summary>
+    public static double NudgeGain(double db, int steps, bool fine)
+    {
+        double step = fine ? GainFineStepDb : GainStepDb;
+        return SnapGain(db + steps * step, step);
+    }
+
+    /// <summary>Legacy PING/PONG byte: 0–24 only. Negative gain is sent as 0 so an older peer never hears a 0–255 wrap as +24 dB.</summary>
+    public static int LegacyGainByte(double db) => db < 0 ? 0 : (int)Math.Clamp(Math.Round(db, MidpointRounding.ToEven), 0, MaxGainDb);
+
+    /// <summary>Display string: "0.0 dB", "+3.5 dB", "−12.0 dB" (Unicode minus).</summary>
+    public static string FormatGain(double db)
+    {
+        db = SnapGain(db);
+        if (Math.Abs(db) < 0.05) return "0.0 dB";
+        string body = Math.Abs(db).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
+        return db > 0 ? "+" + body + " dB" : "−" + body + " dB";
+    }
     private const double LightFloor = 0.32;   // −10 dB — milder than Strong at the same speech level
     private const double StrongFloor = 0.18;  // −15 dB: a little natural background instead of near-silence
     private const double StrongOverSub = 1.6;
@@ -86,7 +125,7 @@ public sealed class VoiceChain
     private double _gateClose = DbToLin(DefaultGateCloseDbfs);
     private bool _gated = true;
     private NoiseMode _mode = NoiseMode.Light;
-    private int _gainDb = DefaultGainDb;
+    private double _gainDb = DefaultGainDb;
 
     public int SampleRate => _sr;
 
@@ -116,10 +155,10 @@ public sealed class VoiceChain
         set => VoiceClarity = value;
     }
 
-    public int GainDb
+    public double GainDb
     {
         get => _gainDb;
-        set => _gainDb = Math.Clamp(value, 0, MaxGainDb);
+        set => _gainDb = ClampGain(value);
     }
 
     /// <summary>
@@ -236,7 +275,7 @@ public sealed class VoiceChain
         if (Podcast) { ProcessPodcast(samples); return; }
         double user = DbToLin(_gainDb);
         if (double.IsNaN(_userGain)) _userGain = user;
-        double maxAgc = DbToLin(Math.Min(MaxAgcDb, MaxGainDb - _gainDb));
+        double maxAgc = 1.0; // 1.1.1: the legacy AGC may only reduce, never boost
         double target = DbToLin(TargetDbfs);
         double thresh = DbToLin(CeilingDbfs);
         double noiseCeil = DbToLin(NoiseCeilingDbfs);
@@ -298,7 +337,7 @@ public sealed class VoiceChain
         if (double.IsNaN(_userGain)) _userGain = user;
         _pod.AgcEnabled = Agc && !PodcastSpectralOnly;
         _pod.DynamicEqEnabled = _pod.CompressorEnabled = _pod.LimiterEnabled = !PodcastSpectralOnly;
-        _pod.AgcMaxDb = Math.Min(MaxAgcDb, MaxGainDb - _gainDb);
+        _pod.AgcMaxDb = 0; // 1.1.1: never auto-raise; peak protection only reduces
         for (int i = 0; i < n; i++)
         {
             double x = samples[i] / 32768.0;

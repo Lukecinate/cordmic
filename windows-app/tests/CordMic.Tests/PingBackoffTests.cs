@@ -41,15 +41,15 @@ public class LinkControlTests
     {
         var ping = new byte[4];
         LinkControl.WritePing(ping, noiseCancellation: true, agc: true, gainDb: 12, changeSeq: 3);
-        Assert.True(LinkControl.TryReadPing(ping, out bool nc, out bool agc, out int gain, out byte seq));
-        Assert.Equal((true, true, 12, (byte)3), (nc, agc, gain, seq));
+        Assert.True(LinkControl.TryReadPing(ping, out bool nc, out bool agc, out double gain, out byte seq));
+        Assert.Equal((true, true, 12.0, (byte)3), (nc, agc, gain, seq));
         Assert.False(LinkControl.TryReadPing(ReadOnlySpan<byte>.Empty, out _, out _, out _, out _));
 
         var pong = new byte[4];
         LinkControl.WritePong(pong, true, true, aaudio: true, exclusive: false, lowLatency: true, gainDb: 18);
         Assert.True(LinkControl.TryReadPong(pong, out var phone));
         Assert.Equal("AAudio-ll", phone.Mode);
-        Assert.Equal("+18dB", phone.GainText);
+        Assert.Equal("+18.0dB", phone.GainText);
         Assert.Equal("on", phone.NoiseText);
         Assert.False(LinkControl.TryReadPong(new byte[4], out var unknown));
         Assert.Equal("?", unknown.Mode);
@@ -66,7 +66,7 @@ public class LinkControlTests
     {
         var ping = new byte[4];
         LinkControl.WritePing(ping, true, true, 6, 4, extended: true, voiceClarity: true, mode: NoiseMode.Strong);
-        Assert.True(LinkControl.TryReadPing(ping, out bool nc, out bool agc, out int gain, out byte seq,
+        Assert.True(LinkControl.TryReadPing(ping, out bool nc, out bool agc, out double gain, out byte seq,
             out bool ext, out bool clarity, out NoiseMode mode));
         Assert.Equal((true, true, 6, (byte)4, true, true, NoiseMode.Strong), (nc, agc, gain, seq, ext, clarity, mode));
         // A 0.5.2 reader still sees bit0 NC and bit1 AGC.

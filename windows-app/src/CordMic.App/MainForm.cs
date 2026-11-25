@@ -10,7 +10,9 @@ internal sealed class MainForm : Form
 {
     private readonly AppController _app;
     private ConnectOrb _orb = null!;
-    private Label _state = null!, _detail = null!;
+    private Label _state = null!, _detail = null!, _levelLabel = null!, _gainLabel = null!;
+    private LevelMeter _meter = null!;
+    private GainControl _gain = null!;
     private Button _settingsBtn = null!;
     private LinkLabel _settingsLink = null!;
     private ToolTip? _tip;
@@ -90,7 +92,7 @@ internal sealed class MainForm : Form
     {
         var fonts = _fonts.Current;
         Font = fonts.Body;
-        ClientSize = new Size(Sx(392), Sx(440));
+        ClientSize = new Size(Sx(392), Sx(456));
 
         double dpi = DeviceDpi;
         int headerH = HeaderLayout.Px(HeaderLayout.Height, dpi);
@@ -150,7 +152,7 @@ internal sealed class MainForm : Form
         header.Controls.Add(brand, 1, 0);
         header.Controls.Add(_settingsBtn, 2, 0);
 
-        _orb = new ConnectOrb { Size = new Size(Sx(168), Sx(168)), TabStop = true, AccessibleRole = AccessibleRole.PushButton };
+        _orb = new ConnectOrb { Size = new Size(Sx(148), Sx(148)), TabStop = true, AccessibleRole = AccessibleRole.PushButton };
         _orb.Click += (_, _) => OnOrb();
         _orb.DoubleClick += (_, _) => { /* 0.8.0 M0: ignored; debounce already drops the second Click */ };
         _orb.KeyDown += (_, e) => { if (e.KeyCode is Keys.Enter or Keys.Space) { OnOrb(); e.Handled = true; } };
@@ -172,10 +174,29 @@ internal sealed class MainForm : Form
         };
         _settingsLink.LinkClicked += (_, _) => _app.ShowSettings(null);
 
+        _levelLabel = new Label
+        {
+            Text = L.T("ui.level"), Font = fonts.Small, ForeColor = Theme.Muted,
+            AutoSize = false, Height = Sx(18), BackColor = Color.Transparent, TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _meter = new LevelMeter();
+        _gainLabel = new Label
+        {
+            Text = L.T("ui.gain"), Font = fonts.Small, ForeColor = Theme.Muted,
+            AutoSize = false, Height = Sx(18), BackColor = Color.Transparent, TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _gain = new GainControl(compact: true);
+        _gain.SetValueFromHost(_app.DisplayedGain);
+        _gain.ValueChanged += v => _app.SetMicGain(v);
+
         Controls.Add(header);
         Controls.Add(_orb);
         Controls.Add(_state);
         Controls.Add(_detail);
+        Controls.Add(_levelLabel);
+        Controls.Add(_meter);
+        Controls.Add(_gainLabel);
+        Controls.Add(_gain);
         Controls.Add(_settingsLink);
         _dotShown = false;
         _gate.MarkBuilt();
@@ -217,10 +238,17 @@ internal sealed class MainForm : Form
     private void LayoutHeroCore()
     {
         int w = ClientSize.Width;
-        _orb.Location = new Point((w - _orb.Width) / 2, Sx(108));
-        _state.SetBounds(Sx(32), _orb.Bottom + Sx(22), w - Sx(64), Sx(30));
-        _detail.SetBounds(Sx(24), _state.Bottom + Sx(4), w - Sx(48), Sx(64)); // 0.7.2: room for three lines of tethering guidance
-        _settingsLink.Location = new Point((w - _settingsLink.Width) / 2, ClientSize.Height - _settingsLink.Height - Sx(18));
+        int pad = Sx(24);
+        // Orb sits just under the 56 px header (was 96) so the level meter + gain and the Settings link fit in 456 px.
+        _orb.Location = new Point((w - _orb.Width) / 2, Sx(64));
+        _state.SetBounds(Sx(32), _orb.Bottom + Sx(16), w - Sx(64), Sx(28));
+        _detail.SetBounds(pad, _state.Bottom + Sx(2), w - pad * 2, Sx(36)); // two short lines of tethering guidance
+        int y = _detail.Bottom + Sx(8);
+        _levelLabel.SetBounds(pad, y, w - pad * 2, Sx(16));
+        _meter.SetBounds(pad, _levelLabel.Bottom + Sx(4), w - pad * 2, Sx(10));
+        _gainLabel.SetBounds(pad, _meter.Bottom + Sx(8), w - pad * 2, Sx(16));
+        _gain.SetBounds(pad, _gainLabel.Bottom + Sx(2), w - pad * 2, Sx(48));
+        _settingsLink.Location = new Point((w - _settingsLink.Width) / 2, ClientSize.Height - _settingsLink.Height - Sx(12));
     }
 
     private void OnOrb()
@@ -283,6 +311,11 @@ internal sealed class MainForm : Form
             _detail.Text = lat is { } ms ? $"{who}  ·  {ms.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)} ms" : who;
         }
         else _detail.Text = st.Detail;
+        _meter.Dbfs = _app.InputLevelDbfs;
+        _levelLabel.Text = L.T("ui.levelValue",
+            _app.InputLevelDbfs <= -60 ? L.T("ui.levelSilent") : $"{_app.InputLevelDbfs:0} dBFS");
+        if (!_gain.Capture && !_gain.ContainsFocus)
+            _gain.SetValueFromHost(_app.DisplayedGain);
         RefreshUpdateDot();
     }
 

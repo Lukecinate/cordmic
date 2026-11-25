@@ -154,8 +154,31 @@ internal sealed class PageWheelFilter : IMessageFilter
         var client = _viewport.PointToClient(Control.MousePosition);
         if (!_viewport.ClientRectangle.Contains(client)) return false;
         if (ComboDropped(form)) return false;
+        if (WantsValueWheel(form)) return false;
         _page.Wheel(unchecked((short)((m.WParam.ToInt64() >> 16) & 0xFFFF)));
         return true;
+    }
+
+    /// <summary>True when the control under the cursor (or a focused gain editor) should keep the wheel.</summary>
+    internal static bool WantsValueWheel(Control root)
+    {
+        var c = DeepChildAt(root, root.PointToClient(Control.MousePosition));
+        for (Control? p = c; p is not null; p = p.Parent)
+            if (p is IPreferWheelValue v && v.WantsWheel) return true;
+        return false;
+    }
+
+    internal static Control? DeepChildAt(Control root, Point client)
+    {
+        Control? cur = root;
+        var pt = client;
+        while (true)
+        {
+            var child = cur.GetChildAtPoint(pt, GetChildAtPointSkip.Invisible | GetChildAtPointSkip.Disabled);
+            if (child is null || child == cur) return cur;
+            pt = child.PointToClient(cur.PointToScreen(pt));
+            cur = child;
+        }
     }
 
     internal static bool ComboDropped(Control root)
@@ -393,6 +416,50 @@ internal sealed class SliderRow : Row
             if (_bar.Value != v) { Suppress = true; _bar.Value = v; Suppress = false; }
         }
         return SetText(_value, _fmt(_bar.Value)) && false;
+    }
+}
+
+/// <summary>Mic gain: knob, slider and dB readout, kept in sync. Wheel over the editor adjusts gain, not the page.</summary>
+internal sealed class GainRow : Row
+{
+    private readonly Label _title, _help;
+    private readonly GainControl _gain;
+    private readonly Func<double> _get;
+
+    public GainRow(SettingsForm f, string title, string? help, Func<double> get, Action<double> set) : base(f)
+    {
+        _get = get;
+        _title = Lbl(Fonts.Strong, Theme.Ink, title);
+        _help = Lbl(Fonts.Small, Theme.Muted, help);
+        _gain = new GainControl { AccessibleName = title, AccessibleDescription = help };
+        _gain.Value = get();
+        _gain.ValueChanged += v => { if (!Suppress) set(v); };
+        Controls.AddRange(new Control[] { _title, _help, _gain });
+    }
+
+    public override int Arrange(int width)
+    {
+        int y = Place(_title, 0, 0, width);
+        _gain.SetBounds(0, y + Sx(6), Math.Min(width, Sx(440)), Sx(56));
+        y = _gain.Bottom;
+        if (!string.IsNullOrEmpty(_help.Text)) y = Place(_help, 0, y + Sx(4), width);
+        return y;
+    }
+
+    public override bool RefreshValue()
+    {
+        base.RefreshValue();
+        if (!_gain.Capture && !_gain.Focused && !_gain.WantsWheel)
+        {
+            double v = _get();
+            if (SettingsPresentation.GainChanged(_gain.Value, v))
+            {
+                Suppress = true;
+                _gain.SetValueFromHost(v);
+                Suppress = false;
+            }
+        }
+        return false;
     }
 }
 

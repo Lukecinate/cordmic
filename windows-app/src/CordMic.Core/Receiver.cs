@@ -115,7 +115,7 @@ public sealed class Receiver : IDisposable
     private long _studioMissLogged;
     private StudioProcessor? _studioMissRef;
     private double _underrunPerMin = double.NaN, _overflowPerMin = double.NaN;
-    private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size + SettingsSync.Size];
+    private readonly byte[] _pingPkt = new byte[Protocol.HeaderSize + LinkControl.Size + SettingsSync.Size + GainExt.Size];
     // 0.6.0 Studio noise reduction (PC side) and the distance hint.
     private volatile StudioProcessor? _studio;
     private StudioPreset _studioPreset = StudioPreset.Off;
@@ -276,7 +276,7 @@ public sealed class Receiver : IDisposable
     public bool FrontFocusAudioRecord { get; set; }
     public SyncClock Sync { get; } = new();
     public bool Agc { get; set; } = true;
-    public int MicGainDb { get; set; } = VoiceChain.DefaultGainDb;
+    public double MicGainDb { get; set; } = VoiceChain.DefaultGainDb;
     public PhoneLink Phone => _phone;
 
     /// <summary>Bumps the control counter so the phone applies <see cref="NoiseCancellation"/> and <see cref="MicGainDb"/>.</summary>
@@ -866,6 +866,7 @@ public sealed class Receiver : IDisposable
                 if (StudioActive) flags2 |= SettingsSync.FlagStudio;
                 if (!PodcastVoiceChain) flags2 |= SettingsSync.FlagChainOff;
                 SettingsSync.Write(payload.Slice(LinkControl.Size), flags2, Sync.Revs);
+                GainExt.Write(payload.Slice(LinkControl.Size + SettingsSync.Size), MicGainDb);
                 Protocol.WriteHeader(_pingPkt, Protocol.TPing, _pingSeq, NowUs());
                 if (_pingSock is { } p2)
                 {

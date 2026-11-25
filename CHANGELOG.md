@@ -4,6 +4,24 @@ All notable changes to CordMic are documented here. Versions follow [Semantic Ve
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-25
+
+Manual mic gain, and a ceiling that keeps the level meter out of the yellow zone. The 1.1.0 podcast chain is
+otherwise unchanged. Android `versionCode` is 27 / `versionName` 1.1.1. The wire version stays 1. Windows builds are
+unsigned while SignPath is not configured; verify downloads with `SHA256SUMS`. The USB accessory engine remains
+Experimental, off by default, and untested on hardware (`UsbEngineGate.HardwareGateGm1Passed` stays false).
+
+### Changed
+- Mic gain is now manual, from −24 to +24 dB, default 0 dB. Existing settings migrate to 0 dB. The chain never
+  auto-raises gain; peak-aware protection may only turn it down. The limiter and true-peak guard sit at −10 dBFS,
+  1 dB below the yellow meter mark (−9 dBFS sample peak on both the Windows and Android meters). Compressor makeup
+  is 0 dB. Signed tenths travel in an optional trailing `GainExt` block (older peers keep seeing 0–24, and a
+  negative value is sent as 0 in the legacy byte).
+- The main window, Settings → Sound, and the phone app show a linked gain knob, slider and numeric dB readout next
+  to the level meter. Double-click (or a double-tap on the phone) resets to 0 dB; the wheel and arrow keys move
+  0.5 dB (Shift: 0.1 dB). While the control is hovered or focused, the wheel adjusts gain and does not scroll the
+  page.
+
 ### Fixed
 - Release workflow: the tag-push `draft` job ran only when every upstream job succeeded, so with SignPath off (the
   `sign-installer` job skipped) it was skipped too and no draft was created. It now runs when provenance succeeded.

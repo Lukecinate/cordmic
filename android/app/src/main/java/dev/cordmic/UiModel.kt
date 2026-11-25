@@ -99,6 +99,10 @@ object UiCopy {
 
 object Level {
     const val FLOOR_DB = -60f
+    /** Sample-peak dBFS at which both meters turn amber (the "yellow zone"). */
+    const val YELLOW_DB = -9f
+    /** Sample-peak dBFS at which both meters turn red (clipping risk). */
+    const val RED_DB = -1f
 
     /** PCM16 peak (0..32768) to dBFS, clamped to [FLOOR_DB, 0]. 0 -> FLOOR_DB. */
     fun peakToDb(peak: Int): Float {

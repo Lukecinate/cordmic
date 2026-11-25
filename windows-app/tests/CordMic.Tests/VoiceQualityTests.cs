@@ -77,7 +77,7 @@ public class VoiceQualityTests
     }
 
     [Fact]
-    public void DefaultChainTargetsMinus18AndDoesNotBoostHiss()
+    public void DefaultChainDoesNotBoostQuietToneOrHiss_AndStaysBelowYellow()
     {
         var lines = new System.Text.StringBuilder();
         void L(string s) { lines.AppendLine(s); _out.WriteLine(s); }
@@ -92,7 +92,8 @@ public class VoiceQualityTests
             double thdn = Thdn(s, 48000 * 2, 24000, 1000);
             double thdnDb = 10 * Math.Log10(Math.Max(thdn, 1e-12));
             L($"default -40dBFS 1kHz: peak={pdb:F1} dBFS THD+N={thdnDb:F1} dB clicks={Clicks(s, 24000, 12000)} delay={chain.NoiseLatencyMs:F2} ms");
-            Assert.InRange(pdb, -26.0, -15.0);
+            Assert.InRange(pdb, -42.0, -36.0); // 0 dB default, no auto-boost
+            Assert.True(pdb < VoiceChain.MeterYellowDbfs);
             Assert.True(thdnDb < -20, $"THD+N {thdnDb:F1} dB");
             Assert.InRange(chain.NoiseLatencyMs, 2.6, 2.75);
         }
@@ -105,7 +106,7 @@ public class VoiceQualityTests
             double pdb = 20 * Math.Log10(pk / 32768.0);
             int clicks = Clicks(s, 48000 * 2, 24000);
             L($"default -12dBFS 1kHz: peak={pdb:F1} dBFS clicks={clicks}");
-            Assert.True(pdb <= -0.8, $"peak {pdb:F1} above limiter ceiling");
+            Assert.True(pdb < VoiceChain.MeterYellowDbfs, $"peak {pdb:F1} reached yellow");
             Assert.True(clicks < 5, $"clicks {clicks}");
         }
 

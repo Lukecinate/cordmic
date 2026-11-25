@@ -84,8 +84,9 @@
     <string name="update_installing">Memasang pembaruan…</string>
     <string name="reset_audio">Reset pengaturan audio</string>
     <string name="gain_option">Gain mic</string>
-    <string name="gain_value">+%1$d dB</string>
-    <string name="gain_help">Default +6 dB. Volume otomatis mengatur sisanya. Puncak tetap di −1 dBFS atau lebih rendah.</string>
+    <string name="gain_value">%1$s</string>
+    <string name="gain_help">Manual, −24 sampai +24 dB, bawaan 0 dB. Rangkaian tidak pernah menaikkan gain sendiri; ia hanya menurunkannya jika puncak akan menyentuh zona kuning pada meter. Ketuk dua kali tombol atau penggeser untuk kembali ke 0. Tombol panah dan roda tetikus mengubah 0,5 dB (Shift: 0,1 dB).</string>
+    <string name="gain_access">Gain mic, %1$s. Ketuk dua kali untuk kembali ke 0 dB. Tombol panah dan roda tetikus mengubah 0,5 dB; tahan Shift untuk 0,1 dB.</string>
     <string name="err_port">Isi port dari 1 sampai 65535.</string>
     <string name="label_pair_code">Kode pairing (opsional)</string>
     <string name="helper_pair_code">Hanya perlu jika \"Wajibkan kode pairing di HP\" aktif di aplikasi PC.</string>

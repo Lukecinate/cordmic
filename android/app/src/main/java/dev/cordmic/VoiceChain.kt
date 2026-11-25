@@ -42,8 +42,8 @@ class VoiceChain(private val sampleRate: Int = 48000) {
     var highPass: Boolean
         get() = voiceClarity
         set(value) { voiceClarity = value }
-    var gainDb: Int = DEFAULT_GAIN_DB
-        set(value) { field = value.coerceIn(0, MAX_GAIN_DB) }
+    var gainDb: Double = DEFAULT_GAIN_DB
+        set(value) { field = clampGain(value) }
 
     /**
      * 1.1.0 podcast chain (gated AGC, dynamic EQ, compressor, look-ahead limiter) before noise suppression, spectral
@@ -197,9 +197,9 @@ class VoiceChain(private val sampleRate: Int = 48000) {
             while (o < n) { val c = min(work.size, n - o); processPodcast(samples, o, c); o += c }
             return
         }
-        val user = dbToLin(gainDb.toDouble())
+        val user = dbToLin(gainDb)
         if (userGain.isNaN()) userGain = user
-        val maxAgc = dbToLin(min(MAX_AGC_DB, (MAX_GAIN_DB - gainDb).toDouble()))
+        val maxAgc = 1.0 // 1.1.1: the legacy AGC may only reduce, never boost
         val target = dbToLin(TARGET_DBFS)
         val thresh = dbToLin(CEILING_DBFS)
         val noiseCeil = dbToLin(NOISE_CEILING_DBFS)
@@ -254,10 +254,10 @@ class VoiceChain(private val sampleRate: Int = 48000) {
      */
     private fun processPodcast(samples: ShortArray, off: Int, n: Int) {
         val t0 = clock()
-        val user = dbToLin(gainDb.toDouble())
+        val user = dbToLin(gainDb)
         if (userGain.isNaN()) userGain = user
         pod.agcEnabled = agc
-        pod.agcMaxDb = min(MAX_AGC_DB, (MAX_GAIN_DB - gainDb).toDouble())
+        pod.agcMaxDb = 0.0 // 1.1.1: never auto-raise; peak protection only reduces
         for (i in 0 until n) {
             var x = samples[off + i] / 32768.0
             if (voiceClarity) x = presence.process(x) // static presence lift; HP and mud are dynamic EQ now
@@ -478,11 +478,40 @@ class VoiceChain(private val sampleRate: Int = 48000) {
         const val NOISE_FFT = 256
         const val NOISE_HOP = 128
         const val NOISE_DELAY_FRAMES = NOISE_HOP
+        const val MIN_GAIN_DB = -24
         const val MAX_GAIN_DB = 24
-        const val DEFAULT_GAIN_DB = 6
+        const val DEFAULT_GAIN_DB = 0.0
+        const val GAIN_STEP_DB = 0.5
+        const val GAIN_FINE_STEP_DB = 0.1
+        const val METER_YELLOW_DBFS = -9.0
+        const val METER_RED_DBFS = -1.0
+        const val METER_PEAK_CEILING_DBFS = -12.0
         const val TARGET_DBFS = -18.0
         const val MAX_AGC_DB = 24.0
-        const val CEILING_DBFS = -1.0
+        const val CEILING_DBFS = -10.0
+
+        fun clampGain(db: Double): Double = db.coerceIn(MIN_GAIN_DB.toDouble(), MAX_GAIN_DB.toDouble())
+
+        fun snapGain(db: Double, step: Double = GAIN_FINE_STEP_DB): Double {
+            if (step <= 0.0) return clampGain(db)
+            return clampGain(kotlin.math.round(db / step) * step)
+        }
+
+        fun nudgeGain(db: Double, steps: Int, fine: Boolean): Double {
+            val step = if (fine) GAIN_FINE_STEP_DB else GAIN_STEP_DB
+            return snapGain(db + steps * step, step)
+        }
+
+        fun legacyGainByte(db: Double): Int = if (db < 0) 0 else kotlin.math.round(db).toInt().coerceIn(0, MAX_GAIN_DB)
+
+        fun formatGain(db: Double): String {
+            val v = snapGain(db)
+            return when {
+                kotlin.math.abs(v) < 0.05 -> "0.0 dB"
+                v > 0 -> "+${"%.1f".format(java.util.Locale.US, v)} dB"
+                else -> "−${"%.1f".format(java.util.Locale.US, -v)} dB"
+            }
+        }
         private const val LIGHT_FLOOR = 0.32
         private const val STRONG_FLOOR = 0.18 // −15 dB: a little natural background
         private const val STRONG_OVER_SUB = 1.6

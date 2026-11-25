@@ -64,21 +64,20 @@ public class VoiceChainTests
     }
 
     [Fact]
-    public void DefaultChainIsClearlyLouderAndLimited()
+    public void DefaultChainDoesNotBoostAndStaysBelowYellow()
     {
-        // -40 dBFS sine, the middle of the range in the 0.4.2 log (-36..-70).
         double amp = 32768.0 * Math.Pow(10, -40.0 / 20.0);
-        var input = Tone(48000 * 3, 1000, amp); // 3 s, so slow AGC can settle
+        var input = Tone(48000 * 3, 1000, amp);
         int inPeak = Peak(input, 0, input.Length);
-        var chain = new VoiceChain(48000); // NC Light, AGC on, +6 dB, target −18
+        var chain = new VoiceChain(48000);
+        Assert.Equal(VoiceChain.DefaultGainDb, chain.GainDb);
         chain.Process(input);
         int outPeak = Peak(input, 48000 * 2, 24000);
         double inDb = 20 * Math.Log10(inPeak / 32768.0);
         double outDb = 20 * Math.Log10(outPeak / 32768.0);
-        _out.WriteLine($"level {inDb:F1} dBFS -> {outDb:F1} dBFS (peak {inPeak} -> {outPeak}), NC latency {chain.NoiseLatencyMs:F2} ms");
-        // −40 + 6 user + up to 12 AGC = −22 if the cap binds; target −18 if AGC can reach it.
-        Assert.InRange(outDb, -26.0, -15.0);
-        Assert.True(outPeak < 30000, "limiter let a sample near full scale");
+        _out.WriteLine($"level {inDb:F1} dBFS -> {outDb:F1} dBFS (peak {inPeak} -> {outPeak})");
+        Assert.InRange(outDb, inDb - 3.0, inDb + 1.5);
+        Assert.True(outDb < VoiceChain.MeterYellowDbfs);
     }
 
     [Fact]
@@ -88,8 +87,9 @@ public class VoiceChainTests
         var s = Tone(2400, 1000, 20000);
         chain.Process(s);
         int peak = Peak(s, 0, s.Length);
-        Assert.InRange(peak, 20000, 31000);
-        Assert.True(peak < 32000);
+        double pkDb = 20 * Math.Log10(peak / 32768.0);
+        Assert.True(pkDb < VoiceChain.MeterYellowDbfs, $"limiter peak {pkDb:F2} dBFS reached yellow");
+        Assert.InRange(pkDb, VoiceChain.CeilingDbfs - 2.5, VoiceChain.CeilingDbfs + 0.4);
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public class VoiceChainTests
     [Fact]
     public void AgcBringsSpeechRmsNearTargetAndLeavesHissAlone()
     {
-        // Peak −24 dBFS sine → RMS ≈ −27 dBFS. AGC should lift that near −18 without using the peak.
+        // Peak −24 dBFS sine → RMS ≈ −27 dBFS. AGC must not lift it.
         double amp = 32768.0 * Math.Pow(10, -24.0 / 20.0);
         var speech = Tone(48000 * 2, 1000, amp);
         var chain = new VoiceChain(48000) { NoiseCancellation = false, VoiceClarity = false, HighPass = false, Agc = true, GainDb = 0 };
@@ -139,7 +139,7 @@ public class VoiceChainTests
         double outRms = Rms(speech, 48000 + 24000, 24000);
         double outDb = 20 * Math.Log10(Math.Max(outRms, 1) / 32768.0);
         _out.WriteLine($"speech RMS after AGC {outDb:F1} dBFS");
-        Assert.InRange(outDb, -21.0, -15.0);
+        Assert.InRange(outDb, -30.0, -24.0);
 
         var rng = new Random(2);
         double hissAmp = 32768.0 * Math.Pow(10, -55.0 / 20.0);

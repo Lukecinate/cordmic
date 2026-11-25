@@ -111,7 +111,8 @@ internal sealed class AppController : ApplicationContext
             return string.IsNullOrEmpty(label) ? "0.5.5" : label;
         }
     }
-    public int DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
+    public double DisplayedGain => SettingsPresentation.VisibleGain(_settings.MicGainDb);
+    public double InputLevelDbfs => Stats?.LevelDbfs ?? -120;
     public StudioPreset DisplayedStudio => _settings.StudioPreset;
     /// <summary>One-line Studio state for the settings panel, or "" when Studio is off.</summary>
     public string StudioNotice
@@ -223,7 +224,7 @@ internal sealed class AppController : ApplicationContext
             FrontFocus = _settings.FrontFocus,
             FrontFocusAudioRecord = _settings.FrontFocusAudioRecord,
             Agc = _settings.AutoVolume,
-            MicGainDb = Math.Clamp(_settings.MicGainDb, 0, VoiceChain.MaxGainDb),
+            MicGainDb = VoiceChain.SnapGain(_settings.MicGainDb),
             Policy = CurrentPolicy(),
         };
         try
@@ -1207,9 +1208,9 @@ internal sealed class AppController : ApplicationContext
         Log("audio settings reset to defaults");
     }
 
-    public void SetMicGain(int db)
+    public void SetMicGain(double db)
     {
-        db = Math.Clamp(db, 0, VoiceChain.MaxGainDb);
+        db = VoiceChain.SnapGain(db);
         if (!SettingsPresentation.GainChanged(_settings.MicGainDb, db)) return;
         _settings.MicGainDb = db;
         NoteLocalSettingsChanged();
@@ -1220,7 +1221,7 @@ internal sealed class AppController : ApplicationContext
             rx.Agc = _settings.AutoVolume;
             rx.NotifyLinkControlChanged(SyncField.Gain);
         }
-        Log($"mic gain -> +{db} dB");
+        Log($"mic gain -> {VoiceChain.FormatGain(db)}");
     }
 
     public void SetStartup(bool on)
@@ -1314,11 +1315,8 @@ internal sealed class AppController : ApplicationContext
             });
             Take(SyncField.Gain, () =>
             {
-                if (phone.GainDb >= 0)
-                {
-                    _settings.MicGainDb = phone.GainDb;
-                    rx.MicGainDb = phone.GainDb;
-                }
+                _settings.MicGainDb = VoiceChain.SnapGain(phone.GainDb);
+                rx.MicGainDb = _settings.MicGainDb;
             });
             Take(SyncField.FrontFocus, () =>
             {
@@ -1358,9 +1356,9 @@ internal sealed class AppController : ApplicationContext
             _settings.FrontFocus = phone.FrontFocus;
             staleChanged = true;
         }
-        if (phone.GainDb >= 0 && SettingsPresentation.GainChanged(_settings.MicGainDb, phone.GainDb))
+        if (SettingsPresentation.GainChanged(_settings.MicGainDb, phone.GainDb))
         {
-            _settings.MicGainDb = phone.GainDb;
+            _settings.MicGainDb = VoiceChain.SnapGain(phone.GainDb);
             staleChanged = true;
         }
         if (staleChanged) Save();

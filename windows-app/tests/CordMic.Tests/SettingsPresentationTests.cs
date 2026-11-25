@@ -6,7 +6,7 @@ public class SettingsPresentationTests
     public void VisibleValuesFollowLocalSettingsNotAStalePhoneEcho()
     {
         Assert.Equal(8, SettingsPresentation.VisibleGain(8));
-        Assert.Equal(0, SettingsPresentation.VisibleGain(-4));
+        Assert.Equal(-4, SettingsPresentation.VisibleGain(-4));
         Assert.Equal(VoiceChain.MaxGainDb, SettingsPresentation.VisibleGain(99));
         Assert.Equal(NoiseMode.Strong, SettingsPresentation.VisibleNoiseMode(NoiseMode.Strong));
         Assert.False(SettingsPresentation.VisibleAutoVolume(false));
@@ -46,7 +46,7 @@ public class SettingsPresentationTests
     public void IdenticalGainIsNotAChange()
     {
         Assert.False(SettingsPresentation.GainChanged(6, 6));
-        Assert.False(SettingsPresentation.GainChanged(-1, 0));
+        Assert.True(SettingsPresentation.GainChanged(-1, 0));
         Assert.True(SettingsPresentation.GainChanged(3, 8));
     }
 }

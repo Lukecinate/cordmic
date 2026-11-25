@@ -38,7 +38,7 @@ class LevelMeterView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet
         canvas.drawRoundRect(rect, r, r, track)
         val f = ((shownDb - Level.FLOOR_DB) / -Level.FLOOR_DB).coerceIn(0f, 1f)
         if (f <= 0f) return
-        fill.color = when { shownDb >= -1f -> clipColor; shownDb >= -9f -> warnColor; else -> okColor }
+        fill.color = when { shownDb >= Level.RED_DB -> clipColor; shownDb >= Level.YELLOW_DB -> warnColor; else -> okColor }
         rect.right = maxOf(height.toFloat(), width * f)
         canvas.drawRoundRect(rect, r, r, fill)
     }

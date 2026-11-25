@@ -13,7 +13,8 @@ namespace CordMic.Tests;
 public class PodcastChainTests
 {
     internal static readonly int[] Rates = { 8000, 16000, 44100, 48000 };
-    internal static readonly double Ceil = PodcastChain.Db(-1);
+    internal static readonly double Ceil = PodcastChain.Db(VoiceChain.CeilingDbfs);
+    internal static readonly double Yellow = PodcastChain.Db(VoiceChain.MeterYellowDbfs);
 
     internal sealed class Rng
     {
@@ -149,7 +150,7 @@ public class PodcastChainTests
     }
 
     [Fact]
-    public void Agc_BringsQuietSpeechTowardTarget_WithoutLiftingNoise()
+    public void Agc_DoesNotBoostQuietSpeech_AndDoesNotLiftNoise()
     {
         const int sr = 48000;
         var pc = new PodcastChain(sr, 1, PodcastPresets.Light) { DynamicEqEnabled = false, CompressorEnabled = false };
@@ -165,7 +166,8 @@ public class PodcastChainTests
         pc.Process(x, n);
         Assert.True(RmsDb(x, sr / 2, (int)(1.5 * sr)) < -51.5);
         double sp = RmsDb(x, (int)(4.5 * sr), n);
-        Assert.InRange(sp, -21, -13);
+        Assert.InRange(sp, -38, -32); // stays near -35; never auto-raised
+        Assert.InRange(pc.AgcGainDb, -0.3, 0.05); // may only reduce
     }
 
     [Fact]
@@ -271,7 +273,7 @@ public class PodcastChainTests
         foreach (int sr in Rates)
             for (int ch = 1; ch <= 2; ch++)
             {
-                var g = new TruePeakGuard(sr, ch, -1);
+                var g = new TruePeakGuard(sr, ch, VoiceChain.CeilingDbfs);
                 var r = new Rng((ulong)(77 + sr));
                 int n = sr / 2;
                 var x = new double[n * ch];
@@ -410,8 +412,9 @@ public class PodcastChainTests
         Assert.Contains("val STRONG = PodcastParams(lookaheadMs = 2.0, limReleaseMs = 80.0, dereverb = 0.50, dialog = 0.45)", kt);
         Assert.Contains("const val FLAG_CHAIN_OFF = 1 shl 7", File.ReadAllText(Path.Combine(RepoRoot(), "android/app/src/main/java/dev/cordmic/SettingsSync.kt")));
         var d = new PodcastParams();
-        Assert.Equal((-17.0, 24.0, 80.0, 250.0, 6500.0, -22.0, 3.0, 10.0, -1.0), (d.AgcTargetDbfs, d.AgcMaxDb, d.HpHz, d.MudHz, d.EssHz, d.CompThreshDbfs, d.CompRatio, d.CompKneeDb, d.LimCeilingDbfs));
-        Assert.Contains("val agcTargetDbfs: Double = -17.0", kt);
+        Assert.Equal((0.0, 80.0, 250.0, 6500.0, -22.0, 3.0, 10.0, 0.0, VoiceChain.CeilingDbfs), (d.AgcMaxDb, d.HpHz, d.MudHz, d.EssHz, d.CompThreshDbfs, d.CompRatio, d.CompKneeDb, d.CompMakeupDb, d.LimCeilingDbfs));
+        Assert.Contains("val compMakeupDb: Double = 0.0", kt);
+        Assert.Equal(VoiceChain.MeterPeakCeilingDbfs, d.AgcPeakDbfs);
         Assert.Contains("val compRatio: Double = 3.0", kt);
     }
 
@@ -472,7 +475,8 @@ public class Release110Tests
             Assert.Contains("podcast voice chain on", note);
             Assert.DoesNotContain("automatic update", note); // schema 2 already decided auto-update; keep the user's off
             Assert.False(s.AutoUpdate);
-            Assert.Equal(3, s.Version);
+            Assert.Equal(4, s.Version);
+            Assert.Equal(0, s.MicGainDb);
             Assert.Equal(NoiseMode.Strong, s.NoiseMode);
             Assert.False(s.VoiceClarity);
             Assert.Null(s.MigrateSchema(() => false));
@@ -497,10 +501,14 @@ public class Release110Tests
         var path = Path.Combine(Path.GetTempPath(), "cordmic-110-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
-            File.WriteAllText(path, """{"Version":3,"PodcastVoiceChain":false}""");
+            File.WriteAllText(path, """{"Version":3,"PodcastVoiceChain":false,"MicGainDb":12}""");
             var s = AppSettings.Load(path);
-            Assert.Null(s.MigrateSchema(() => false));
+            var note = s.MigrateSchema(() => false);
+            Assert.NotNull(note);
+            Assert.Contains("mic gain set to 0 dB", note);
             Assert.False(s.PodcastVoiceChain);
+            Assert.Equal(0, s.MicGainDb);
+            Assert.Equal(4, s.Version);
             s.ResetAudioDefaults();
             Assert.True(s.PodcastVoiceChain);
         }
@@ -515,14 +523,14 @@ public class Release110Tests
     }
 
     [Fact]
-    public void AppVersion_Is110_VersionCode26_WireVersionUnchanged()
+    public void AppVersion_Is111_VersionCode27_WireVersionUnchanged()
     {
         var root = PodcastChainTests.RepoRoot();
         var csproj = File.ReadAllText(Path.Combine(root, "windows-app/src/CordMic.App/CordMic.App.csproj"));
-        Assert.Contains("<Version>1.1.0</Version>", csproj);
+        Assert.Contains("<Version>1.1.1</Version>", csproj);
         var gradle = File.ReadAllText(Path.Combine(root, "android/app/build.gradle.kts"));
-        Assert.Contains("versionCode = 26", gradle);
-        Assert.Contains("versionName = \"1.1.0\"", gradle);
+        Assert.Contains("versionCode = 27", gradle);
+        Assert.Contains("versionName = \"1.1.1\"", gradle);
         Assert.Equal(1, Protocol.Version);
         Assert.False(CordMic.Core.Usb.UsbEngineGate.HardwareGateGm1Passed);
     }

@@ -67,7 +67,7 @@ class MicService : Service() {
             preset = intent?.getIntExtra(EXTRA_PRESET, 6) ?: 6,
             useAAudio = intent?.getBooleanExtra(EXTRA_AAUDIO, true) ?: true,
             noiseCancellation = intent?.getBooleanExtra(EXTRA_NC, true) ?: true,
-            gainDb = intent?.getIntExtra(EXTRA_GAIN, VoiceChain.DEFAULT_GAIN_DB) ?: VoiceChain.DEFAULT_GAIN_DB,
+            gainDb = intent?.getFloatExtra(EXTRA_GAIN, VoiceChain.DEFAULT_GAIN_DB.toFloat())?.toDouble() ?: VoiceChain.DEFAULT_GAIN_DB,
             noiseMode = NoiseMode.from(intent?.getIntExtra(EXTRA_NC_MODE, -1) ?: -1).let {
                 if ((intent?.getIntExtra(EXTRA_NC_MODE, -1) ?: -1) < 0)
                     if (intent?.getBooleanExtra(EXTRA_NC, true) != false) NoiseMode.LIGHT else NoiseMode.OFF

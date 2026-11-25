@@ -29,7 +29,6 @@ import androidx.core.view.updatePadding
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
-import com.google.android.material.slider.Slider
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.shape.ShapeAppearanceModel
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -60,8 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ncModeLayout: TextInputLayout
     private lateinit var voiceClarity: MaterialSwitch
     private lateinit var autoVolume: MaterialSwitch
-    private lateinit var gain: Slider
-    private lateinit var gainValue: TextView
+    private lateinit var gain: GainControlView
     private var applyingRemote = false
     private lateinit var toggle: MaterialButton
     private lateinit var hintAction: MaterialButton
@@ -134,8 +132,7 @@ class MainActivity : AppCompatActivity() {
         ncMode = findViewById(R.id.ncMode); ncModeLayout = findViewById(R.id.ncModeLayout)
         voiceClarity = findViewById(R.id.voiceClarity)
         autoVolume = findViewById(R.id.autoVolume)
-        gain = findViewById(R.id.gain)
-        gainValue = findViewById(R.id.gainValue)
+        gain = findViewById(R.id.gainControl)
         toggle = findViewById(R.id.toggle)
         hintAction = findViewById(R.id.hintAction)
         stateIcon = findViewById(R.id.stateIcon)
@@ -165,8 +162,7 @@ class MainActivity : AppCompatActivity() {
         }
         voiceClarity.isChecked = p.getBoolean("clarity", true)
         autoVolume.isChecked = p.getBoolean("agc", true)
-        gain.value = p.getInt("gain", VoiceChain.DEFAULT_GAIN_DB).coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
-        showGain()
+        gain.setValueFromHost(p.getFloat("gain", VoiceChain.DEFAULT_GAIN_DB.toFloat()).toDouble())
 
         preset.setAdapter(ArrayAdapter(this, R.layout.item_dropdown, presets.map { getString(it.label) }))
         preset.setOnItemClickListener { _, _, pos, _ ->
@@ -254,7 +250,7 @@ class MainActivity : AppCompatActivity() {
             autoVolume.isChecked = true
             frontFocus.isChecked = true
             frontFocusAr.isChecked = false
-            gain.value = VoiceChain.DEFAULT_GAIN_DB.toFloat()
+            gain.setValueFromHost(VoiceChain.DEFAULT_GAIN_DB)
             showNcMode()
             clearUserSets()
             persistAudio()
@@ -263,17 +259,15 @@ class MainActivity : AppCompatActivity() {
                 it.applyNoiseMode(NoiseMode.LIGHT)
                 it.applyClarity(true)
                 it.applyAgc(true)
-                it.applyGain(gain.value.toInt())
+                it.applyGain(gain.value)
                 it.applyFrontFocus(frontFocus.isChecked)
                 it.applyFrontFocusAr(frontFocusAr.isChecked)
             }
         }
-        gain.addOnChangeListener { _, value, fromUser ->
-            showGain()
-            if (!fromUser || applyingRemote) return@addOnChangeListener
-            val db = value.toInt()
+        gain.onGainChanged = gain@{ db ->
+            if (applyingRemote) return@gain
             markUserSet("userSetGain")
-            getPreferences(MODE_PRIVATE).edit().putInt("gain", db).apply()
+            getPreferences(MODE_PRIVATE).edit().putFloat("gain", db.toFloat()).apply()
             MicService.current?.applyGain(db)
         }
 
@@ -435,7 +429,7 @@ class MainActivity : AppCompatActivity() {
         showDetected()
         val liveStreamer = MicService.current
         if (liveStreamer == null) speechLowWarning.visibility = android.view.View.GONE
-        if (liveStreamer != null && !gain.isPressed) {
+        if (liveStreamer != null && !gain.hasFocus()) {
             applyingRemote = true
             val wantIdx = ncModes.indexOfFirst { it.first == liveStreamer.noiseMode }.let { if (it < 0) ncModeIndex else it }
             if (wantIdx != ncModeIndex) { ncModeIndex = wantIdx; showNcMode() }
@@ -444,10 +438,9 @@ class MainActivity : AppCompatActivity() {
             if (frontFocus.isChecked != liveStreamer.frontFocus) frontFocus.isChecked = liveStreamer.frontFocus
             if (frontFocusAr.isChecked != liveStreamer.frontFocusAr) frontFocusAr.isChecked = liveStreamer.frontFocusAr
             speechLowWarning.visibility = if (liveStreamer.speechLow) android.view.View.VISIBLE else android.view.View.GONE
-            val g = liveStreamer.gainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
-            if (gain.value != g) gain.value = g
+            val g = VoiceChain.clampGain(liveStreamer.gainDb)
+            if (kotlin.math.abs(gain.value - g) >= 0.05) gain.setValueFromHost(g)
             applyingRemote = false
-            showGain()
         }
 
         // Details
@@ -479,10 +472,6 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.settings_summary, host, portNum, getString(presets[presetIndex].label))
     }
 
-    private fun showGain() {
-        gainValue.text = getString(R.string.gain_value, gain.value.toInt())
-    }
-
     private val ncModes = listOf(
         NoiseMode.OFF to R.string.nc_off,
         NoiseMode.LIGHT to R.string.nc_light,
@@ -500,7 +489,7 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("frontFocusAr", frontFocusAr.isChecked)
             .putBoolean("autoOptimize", autoOptimize.isChecked)
             .putBoolean("autoUpdate", autoUpdate.isChecked)
-            .putInt("gain", gain.value.toInt())
+            .putFloat("gain", gain.value.toFloat())
             .putInt("preset", presetIndex)
             .apply()
     }
@@ -526,7 +515,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun migrateUserLocks(p: android.content.SharedPreferences) {
         val ver = p.getInt("prefsVersion", 0)
-        if (ver >= 3) return
+        if (ver >= 4) return
         val ed = p.edit()
         if (ver == 0) {
             val upgrading = listOf("gain", "aaudio", "preset", "nc", "ncMode", "clarity", "agc").any { p.contains(it) }
@@ -538,9 +527,16 @@ class MainActivity : AppCompatActivity() {
                 if (p.contains("agc")) ed.putBoolean("userSetAgc", true)
             }
         }
-        // Allow a one-shot gain nudge after upgrade when speech stays far below target.
-        ed.putBoolean("upgradeGainNudge", true)
-        ed.putInt("prefsVersion", 3).apply()
+        if (ver < 3) {
+            // historical: 0.5–1.1.0 one-shot nudge flag; 1.1.1 no longer auto-boosts, so it is cleared below.
+            ed.putBoolean("upgradeGainNudge", false)
+        }
+        if (ver < 4) {
+            ed.putFloat("gain", 0f)
+            ed.putBoolean("upgradeGainNudge", false)
+            ed.remove("userSetGain")
+        }
+        ed.putInt("prefsVersion", 4).apply()
     }
 
     private fun applyAdvice() {
@@ -549,7 +545,6 @@ class MainActivity : AppCompatActivity() {
             useAAudio = if (userSet("userSetAaudio")) aaudio.isChecked else null,
             frontFocus = if (userSet("userSetFrontFocus")) frontFocus.isChecked else null,
             noiseMode = if (userSet("userSetNc")) ncModes[ncModeIndex].first else null,
-            gainDb = if (userSet("userSetGain")) gain.value.toInt() else null,
             inputPreset = if (userSet("userSetPreset")) presets[presetIndex].source else null,
         )
         applyingRemote = true
@@ -557,17 +552,15 @@ class MainActivity : AppCompatActivity() {
         frontFocus.isChecked = advice.frontFocus
         val wantNc = ncModes.indexOfFirst { it.first == advice.noiseMode }.let { if (it < 0) ncModeIndex else it }
         if (wantNc != ncModeIndex) { ncModeIndex = wantNc; showNcMode() }
-        gain.value = advice.suggestedGainDb.coerceIn(0, VoiceChain.MAX_GAIN_DB).toFloat()
+        // 1.1.1: auto-optimize never changes mic gain.
         if (!userSet("userSetPreset")) {
             val idx = presets.indexOfFirst { it.source == advice.inputPreset }
             if (idx >= 0 && idx != presetIndex) { presetIndex = idx; showPreset() }
         }
         applyingRemote = false
-        showGain()
         persistAudio()
         MicService.current?.let {
             it.applyNoiseMode(advice.noiseMode)
-            it.applyGain(advice.suggestedGainDb)
             it.applyFrontFocus(advice.frontFocus)
             it.applyFrontFocusAr(frontFocusAr.isChecked)
         }
@@ -735,7 +728,7 @@ class MainActivity : AppCompatActivity() {
         if (codeText.isNotBlank() && code == null) { pairCodeLayout.error = getString(R.string.err_pair_code); ok = false }
         if (!ok || portNum == null) { settingsOverride = true; render(currentState(), immediate = true); return }
         permissionDenied = false
-        val gainDb = gain.value.toInt()
+        val gainDb = gain.value
         getPreferences(MODE_PRIVATE).edit().putString("ip", host).putInt("port", portNum)
             .putString("pairCode", code.orEmpty())
             .putInt("preset", presetIndex).putBoolean("aaudio", aaudio.isChecked)
@@ -747,7 +740,7 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("frontFocusAr", frontFocusAr.isChecked)
             .putBoolean("autoOptimize", autoOptimize.isChecked)
             .putBoolean("autoUpdate", autoUpdate.isChecked)
-            .putInt("gain", gainDb).apply()
+            .putFloat("gain", gainDb.toFloat()).apply()
         val i = Intent(this, MicService::class.java)
             .putExtra(MicService.EXTRA_HOST, host)
             .putExtra(MicService.EXTRA_PORT, portNum)
@@ -758,7 +751,7 @@ class MainActivity : AppCompatActivity() {
             .putExtra(MicService.EXTRA_NC_MODE, ncModes[ncModeIndex].first.code)
             .putExtra(MicService.EXTRA_CLARITY, voiceClarity.isChecked)
             .putExtra(MicService.EXTRA_AGC, autoVolume.isChecked)
-            .putExtra(MicService.EXTRA_GAIN, gainDb)
+            .putExtra(MicService.EXTRA_GAIN, gainDb.toFloat())
             .putExtra(MicService.EXTRA_FRONT_FOCUS, frontFocus.isChecked)
             .putExtra(MicService.EXTRA_FRONT_FOCUS_AR, frontFocusAr.isChecked)
             .putExtra(MicService.EXTRA_AUTO_OPTIMIZE, autoOptimize.isChecked)

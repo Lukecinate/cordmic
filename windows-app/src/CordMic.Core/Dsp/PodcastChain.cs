@@ -4,7 +4,7 @@ namespace CordMic.Core.Dsp;
 // one-pole / dB-domain gain-computer math; no third-party DSP code). Mirrors android/.../PodcastChain.kt.
 //
 //   gated AGC -> dynamic EQ (HP 80 Hz, dynamic mud cut ~250 Hz, dynamic de-ess ~6.5 kHz)
-//   -> soft-knee 3:1 compressor with program-dependent release -> look-ahead brickwall limiter (-1 dBFS)
+//   -> soft-knee 3:1 compressor with program-dependent release -> look-ahead brickwall limiter (-10 dBFS)
 //
 // The spectral dereverb and dialog-isolation masks (SpectralVoice) run inside the noise-suppression STFT of
 // VoiceChain, so there is one mask and one set of smoothing; a TruePeakGuard follows the noise stage.
@@ -12,11 +12,14 @@ namespace CordMic.Core.Dsp;
 /// <summary>Per-preset tuning of the podcast chain and its spectral stages. Strengths are 0..1.</summary>
 public sealed record PodcastParams
 {
-    public double AgcTargetDbfs { get; init; } = -17;
-    public double AgcMaxDb { get; init; } = 24;
-    public double AgcMinDb { get; init; } = -12;
+    public double AgcTargetDbfs { get; init; } = -20; // unused for boost in 1.1.1; kept so older tests and docs still parse
+    public double AgcMaxDb { get; init; } = 0;
+    public double AgcMinDb { get; init; } = -36;
     public double AgcRiseSec { get; init; } = 0.6;
     public double AgcFallSec { get; init; } = 0.18;
+    public double AgcPeakDbfs { get; init; } = VoiceChain.MeterPeakCeilingDbfs;
+    public double AgcPeakRecoverSec { get; init; } = 2.0;
+    public double AgcPeakHoldMs { get; init; } = 150;
     public double HpHz { get; init; } = 80;
     public double MudHz { get; init; } = 250;
     public double MudMaxCutDb { get; init; } = 4;
@@ -27,8 +30,8 @@ public sealed record PodcastParams
     public double CompThreshDbfs { get; init; } = -22;
     public double CompRatio { get; init; } = 3;
     public double CompKneeDb { get; init; } = 10;
-    public double CompMakeupDb { get; init; } = 2;
-    public double LimCeilingDbfs { get; init; } = -1;
+    public double CompMakeupDb { get; init; } = 0;
+    public double LimCeilingDbfs { get; init; } = VoiceChain.CeilingDbfs;
     public double LookaheadMs { get; init; } = 1.5;
     public double LimReleaseMs { get; init; } = 60;
     public double Dereverb { get; init; }
@@ -47,7 +50,7 @@ public static class PodcastPresets
     /// <summary>Whisper: more lift and a lower compressor threshold, gentle de-ess and masks so whispers are not thinned.</summary>
     public static readonly PodcastParams StudioWhisper = new()
     {
-        AgcTargetDbfs = -16, AgcMaxDb = 27, MudMaxCutDb = 2, EssMaxCutDb = 3, CompThreshDbfs = -26,
+        MudMaxCutDb = 2, EssMaxCutDb = 3, CompThreshDbfs = -26,
         LookaheadMs = 2.0, Dereverb = 0.25, Dialog = 0.15,
     };
     public static readonly PodcastParams StudioMax = new() { LookaheadMs = 2.0, LimReleaseMs = 80, Dereverb = 0.50, Dialog = 0.40 };
@@ -138,9 +141,9 @@ public sealed class PodcastChain
     public double FloorDbfs => 20 * Math.Log10(Math.Max(_floor, 1e-9));
 
     // gate + AGC
-    private double _gateMs, _floor = Db(-54), _agcMs, _agcG = 1;
+    private double _gateMs, _floor = Db(-54), _agcMs, _agcG = 1, _peakEnv, _peakRel, _peakRecov;
     private bool _floorKnown, _gate = true, _active;
-    private int _below, _hold;
+    private int _below, _hold, _peakHold, _peakHoldN;
     private readonly double _gateCoeff, _floorDown, _floorUp, _floorUpOpen, _agcMsCoeff, _agcGateRel;
     private readonly int _holdN;
     private double _agcRise, _agcFall;
@@ -162,7 +165,7 @@ public sealed class PodcastChain
     private readonly double[] _delay, _dqVal, _box;
     private readonly long[] _dqIdx;
     private int _dPos, _dqHead, _dqSize, _boxPos, _boxTick;
-    private double _boxSum, _limHeld = 1, _limRel, _limOut = 1, _ceil = Db(-1);
+    private double _boxSum, _limHeld = 1, _limRel, _limOut = 1, _ceil = Db(VoiceChain.CeilingDbfs);
     private long _n;
 
     public PodcastChain(int sampleRate, int channels = 1, PodcastParams? initial = null)
@@ -198,6 +201,9 @@ public sealed class PodcastChain
         var p = _p;
         _agcRise = Coeff(Math.Max(p.AgcRiseSec, 0.01));
         _agcFall = Coeff(Math.Max(p.AgcFallSec, 0.005));
+        _peakRel = Coeff(0.080);
+        _peakRecov = Coeff(Math.Max(p.AgcPeakRecoverSec, 0.2));
+        _peakHoldN = (int)(Math.Max(p.AgcPeakHoldMs, 0) / 1000.0 * SampleRate);
         _essOn = SampleRate >= 16000 && p.EssMaxCutDb > 0;
         for (int c = 0; c < Channels; c++)
         {
@@ -215,7 +221,7 @@ public sealed class PodcastChain
     public void Reset()
     {
         _gateMs = 0; _floor = Db(-54); _floorKnown = false; _below = 0; _gate = true; _active = false; _hold = 0;
-        double t = Db(_p.AgcTargetDbfs); _agcMs = t * t; _agcG = 1;
+        double t = Db(_p.AgcTargetDbfs); _agcMs = t * t; _agcG = 1; _peakEnv = 0; _peakHold = 0;
         for (int c = 0; c < Channels; c++) { _hp[c].Reset(); _mudBp[c].Reset(); _essBp[c].Reset(); }
         _broadEnv = _mudEnv = _essEnv = 0; _mudG = _essG = _mudGs = _essGs = 1;
         _compEnv = _grFast = _grSlow = _compGr = 0; _compG = _compGs = 1; _tick = 0;
@@ -233,10 +239,7 @@ public sealed class PodcastChain
     public void Process(double[] x, int frames, int off = 0)
     {
         var p = _p;
-        double target = Db(p.AgcTargetDbfs);
-        double maxLin = Db(Math.Max(Math.Min(p.AgcMaxDb, AgcMaxDb), 0));
         double minLin = Db(Math.Min(p.AgcMinDb, 0));
-        double noiseCeil = Db(VoiceChain.NoiseCeilingDbfs);
         int ch = Channels;
         for (int f = 0; f < frames; f++)
         {
@@ -250,21 +253,22 @@ public sealed class PodcastChain
                 if (v * v > sq) sq = v * v;
             }
             GateStep(sq);
-            // 1: gated AGC. The gain only moves while the input is clearly above the floor; in pauses, the gate hold
-            // and word gaps it is held (and only pulled down to the noise cap), so it cannot pump or lift the room.
+            // 1: 1.1.1 peak-aware protection. The gain never rises above 0 dB (no auto-boost). When a sample
+            // peak would meet the yellow-meter margin, the gain drops at once; it holds, then recovers slowly.
+            double pk = Math.Sqrt(Math.Max(sq, 0));
+            if (pk > _peakEnv) _peakEnv = pk; else _peakEnv += (pk - _peakEnv) * _peakRel;
             if (AgcEnabled)
             {
-                // the minimum-tracked floor reads ~1–1.5 dB under the true room RMS, so compensate before capping
-                double cap = _floorKnown ? Math.Clamp(noiseCeil / Math.Max(_floor * FloorBias, 1e-9), 1.0, Math.Max(1.0, maxLin)) : maxLin;
-                double want, k;
-                if (_active)
+                double peakCeil = Db(Math.Clamp(p.AgcPeakDbfs, -24, -3));
+                double wantPeak = peakCeil / Math.Max(Math.Max(pk, _peakEnv), 1e-8);
+                double want = Math.Clamp(Math.Min(1.0, wantPeak), minLin, 1.0);
+                if (want < _agcG)
                 {
-                    _agcMs += (sq - _agcMs) * _agcMsCoeff;
-                    want = Math.Clamp(target / Math.Max(Math.Sqrt(_agcMs), 1e-5), minLin, Math.Max(minLin, cap));
-                    k = want > _agcG ? _agcRise : _agcFall;
+                    _agcG = want; // instant downward so a shout cannot paint the meter yellow
+                    _peakHold = _peakHoldN;
                 }
-                else { want = Math.Min(_agcG, cap); k = _agcGateRel; }
-                _agcG += (want - _agcG) * k;
+                else if (_peakHold > 0) _peakHold--;
+                else _agcG += (want - _agcG) * _peakRecov;
                 for (int c = 0; c < ch; c++) x[b + c] *= _agcG;
             }
             // 2: dynamic EQ
@@ -414,7 +418,7 @@ public sealed class TruePeakGuard
     private double _g = 1;
     public double GainDb => 20 * Math.Log10(Math.Max(_g, 1e-9));
 
-    public TruePeakGuard(int sampleRate, int channels = 1, double ceilingDbfs = -1)
+    public TruePeakGuard(int sampleRate, int channels = 1, double ceilingDbfs = VoiceChain.CeilingDbfs)
     {
         _ch = channels; _ceil = PodcastChain.Db(ceilingDbfs); _rel = 1 - Math.Exp(-1.0 / (0.040 * sampleRate));
         _h = new double[4 * channels]; _prevMid = new double[channels]; _scratch = new double[channels];

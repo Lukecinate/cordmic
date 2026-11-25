@@ -11,8 +11,8 @@ public static class SettingsPresentation
     /// <summary>Ignore a stale PONG for this long after the user (or this PC) changes a setting.</summary>
     public static readonly TimeSpan EchoIgnoreWindow = TimeSpan.FromMilliseconds(1500);
 
-    public static int VisibleGain(int localGainDb) =>
-        Math.Clamp(localGainDb, 0, VoiceChain.MaxGainDb);
+    public static double VisibleGain(double localGainDb) =>
+        VoiceChain.SnapGain(localGainDb);
 
     public static NoiseMode VisibleNoiseMode(NoiseMode local) => local;
 
@@ -39,6 +39,6 @@ public static class SettingsPresentation
         return noiseBits == 2 ? NoiseMode.Strong : noiseBits == 1 ? NoiseMode.Light : localFallback;
     }
 
-    public static bool GainChanged(int currentDb, int nextDb) =>
-        Math.Clamp(currentDb, 0, VoiceChain.MaxGainDb) != Math.Clamp(nextDb, 0, VoiceChain.MaxGainDb);
+    public static bool GainChanged(double currentDb, double nextDb) =>
+        Math.Abs(VoiceChain.SnapGain(currentDb) - VoiceChain.SnapGain(nextDb)) >= 0.05;
 }

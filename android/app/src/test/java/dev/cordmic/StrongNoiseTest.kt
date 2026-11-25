@@ -18,7 +18,7 @@ class StrongNoiseTest {
     private data class Stats(val hopJitterDb: Double, val jumpRate: Double, val harmonicDb: Double, val meanDb: Double)
 
     private fun chain(mode: NoiseMode) = VoiceChain(48000).also {
-        it.mode = mode; it.agc = false; it.voiceClarity = false; it.gainDb = 0; it.expander = NoiseMode.OFF
+        it.mode = mode; it.agc = false; it.voiceClarity = false; it.gainDb = 0.0; it.expander = NoiseMode.OFF
     }
 
     private fun run(mode: NoiseMode, noiseDb: Double, speechAmp: Double, seed: Long): Stats {

@@ -476,7 +476,7 @@ internal static class RowFactory
             case "autoVolume":
                 return new ToggleRow(f, T(item.LabelKey), H(item), () => app.DisplayedAutoVolume, v => app.SetAutoVolume(v));
             case "gain":
-                return new SliderRow(f, T(item.LabelKey), H(item), 0, VoiceChain.MaxGainDb, () => app.DisplayedGain, v => app.SetMicGain(v), v => L.T("ui.gainValue", v));
+                return new GainRow(f, T(item.LabelKey), H(item), () => app.DisplayedGain, v => app.SetMicGain(v));
             case "delay":
                 return new SegmentedRow(f, T(item.LabelKey), H(item),
                     SettingsChoices.DelayChoices.Select(c => ((object)c, L.T(SettingsChoices.DelayKey(c)))).ToList(),

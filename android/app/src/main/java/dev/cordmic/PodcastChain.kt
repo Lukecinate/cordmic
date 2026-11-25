@@ -17,7 +17,7 @@ import kotlin.math.sqrt
  * one-pole / dB-domain gain-computer math; no third-party DSP code). Mirrors CordMic.Core.Dsp.PodcastChain (C#).
  *
  *   gated AGC -> dynamic EQ (HP 80 Hz, dynamic mud cut ~250 Hz, dynamic de-ess ~6.5 kHz)
- *   -> soft-knee 3:1 compressor with program-dependent release -> look-ahead brickwall limiter (-1 dBFS)
+ *   -> soft-knee 3:1 compressor with program-dependent release -> look-ahead brickwall limiter (-10 dBFS)
  *
  * The spectral dereverb and dialog-isolation masks ([SpectralVoice]) run inside the existing noise-suppression STFT,
  * so there is one mask and one set of smoothing, and a [TruePeakGuard] follows the noise stage.
@@ -25,11 +25,14 @@ import kotlin.math.sqrt
 
 /** Per-preset tuning of the podcast chain and its spectral stages. Strengths are 0..1. */
 data class PodcastParams(
-    val agcTargetDbfs: Double = -17.0,
-    val agcMaxDb: Double = 24.0,
-    val agcMinDb: Double = -12.0,
+    val agcTargetDbfs: Double = -20.0, // unused for boost in 1.1.1; kept so older tests and docs still parse
+    val agcMaxDb: Double = 0.0,
+    val agcMinDb: Double = -36.0,
     val agcRiseSec: Double = 0.6,
     val agcFallSec: Double = 0.18,
+    val agcPeakDbfs: Double = VoiceChain.METER_PEAK_CEILING_DBFS,
+    val agcPeakRecoverSec: Double = 2.0,
+    val agcPeakHoldMs: Double = 150.0,
     val hpHz: Double = 80.0,
     val mudHz: Double = 250.0,
     val mudMaxCutDb: Double = 4.0,
@@ -40,8 +43,8 @@ data class PodcastParams(
     val compThreshDbfs: Double = -22.0,
     val compRatio: Double = 3.0,
     val compKneeDb: Double = 10.0,
-    val compMakeupDb: Double = 2.0,
-    val limCeilingDbfs: Double = -1.0,
+    val compMakeupDb: Double = 0.0,
+    val limCeilingDbfs: Double = VoiceChain.CEILING_DBFS,
     val lookaheadMs: Double = 1.5,
     val limReleaseMs: Double = 60.0,
     val dereverb: Double = 0.0,
@@ -139,6 +142,11 @@ class PodcastChain(val sampleRate: Int, val channels: Int = 1, initial: PodcastP
     private var hold = 0
     private var agcMs = 0.0
     private var agcG = 1.0
+    private var peakEnv = 0.0
+    private var peakHold = 0
+    private var peakRel = 0.0
+    private var peakRecov = 0.0
+    private var peakHoldN = 0
     private val gateCoeff = coeff(0.040)
     private val floorDown = coeff(0.30)
     private val floorUp = Math.pow(10.0, 1.5 / 20.0 / sampleRate)
@@ -201,6 +209,9 @@ class PodcastChain(val sampleRate: Int, val channels: Int = 1, initial: PodcastP
         val p = params
         agcRise = coeff(max(p.agcRiseSec, 0.01))
         agcFall = coeff(max(p.agcFallSec, 0.005))
+        peakRel = coeff(0.080)
+        peakRecov = coeff(max(p.agcPeakRecoverSec, 0.2))
+        peakHoldN = (max(p.agcPeakHoldMs, 0.0) / 1000.0 * sampleRate).toInt()
         essOn = sampleRate >= 16000 && p.essMaxCutDb > 0
         for (c in 0 until channels) {
             hp[c].highPass(sampleRate, p.hpHz, 0.7071067811865476)
@@ -216,7 +227,7 @@ class PodcastChain(val sampleRate: Int, val channels: Int = 1, initial: PodcastP
 
     fun reset() {
         gateMs = 0.0; floor = dbToLin(-54.0); floorKnown = false; below = 0; gate = true; hold = 0
-        agcMs = dbToLin(params.agcTargetDbfs).let { it * it }; agcG = 1.0
+        agcMs = dbToLin(params.agcTargetDbfs).let { it * it }; agcG = 1.0; peakEnv = 0.0; peakHold = 0
         for (c in 0 until channels) { hp[c].reset(); mudBp[c].reset(); essBp[c].reset() }
         broadEnv = 0.0; mudEnv = 0.0; essEnv = 0.0; mudG = 1.0; essG = 1.0; mudGs = 1.0; essGs = 1.0
         compEnv = 0.0; grFast = 0.0; grSlow = 0.0; compGr = 0.0; compG = 1.0; compGs = 1.0; tick = 0
@@ -232,10 +243,7 @@ class PodcastChain(val sampleRate: Int, val channels: Int = 1, initial: PodcastP
     /** In place on [frames] interleaved frames starting at [off]. Non-finite input is treated as silence. */
     fun process(x: DoubleArray, frames: Int, off: Int = 0) {
         val p = params
-        val target = dbToLin(p.agcTargetDbfs)
-        val maxLin = dbToLin(min(p.agcMaxDb, agcMaxDb).coerceAtLeast(0.0))
         val minLin = dbToLin(min(p.agcMinDb, 0.0))
-        val noiseCeil = dbToLin(VoiceChain.NOISE_CEILING_DBFS)
         val ch = channels
         for (f in 0 until frames) {
             val base = off + f * ch
@@ -248,21 +256,26 @@ class PodcastChain(val sampleRate: Int, val channels: Int = 1, initial: PodcastP
                 if (v * v > sq) sq = v * v
             }
             gateStep(sq)
-            // ---- 1: gated AGC. The gain only moves while the input is clearly above the floor; in pauses, the gate hold
-            // and word gaps it is held (and only pulled down to the noise cap), so it cannot pump or lift the room.
+            // ---- 1: 1.1.1 peak-aware protection. The gain never rises above 0 dB (no auto-boost). When a sample
+            // peak would meet the yellow-meter margin, the gain drops at once; it holds, then recovers slowly.
+            val pk = sqrt(max(sq, 0.0))
+            if (pk > peakEnv) peakEnv = pk else peakEnv += (pk - peakEnv) * peakRel
             if (agcEnabled) {
-                // the minimum-tracked floor reads ~1-1.5 dB under the true room RMS, so compensate before capping
-                val cap = if (floorKnown) (noiseCeil / max(floor * FLOOR_BIAS, 1e-9)).coerceIn(1.0, maxLin) else maxLin
-                val want: Double
+                val peakCeil = dbToLin(p.agcPeakDbfs.coerceIn(-24.0, -3.0))
+                val wantPeak = peakCeil / max(max(pk, peakEnv), 1e-8)
+                var want = min(1.0, wantPeak).coerceIn(minLin, 1.0)
                 val k: Double
-                if (active) {
-                    agcMs += (sq - agcMs) * agcMsCoeff
-                    want = (target / max(sqrt(agcMs), 1e-5)).coerceIn(minLin, cap)
-                    k = if (want > agcG) agcRise else agcFall
+                if (want < agcG) {
+                    agcG = want // instant downward so a shout cannot paint the meter yellow
+                    peakHold = peakHoldN
+                    k = 0.0
+                } else if (peakHold > 0) {
+                    peakHold--
+                    k = 0.0 // hold
                 } else {
-                    want = min(agcG, cap); k = agcGateRel
+                    k = peakRecov
+                    agcG += (want - agcG) * k
                 }
-                agcG += (want - agcG) * k
                 for (c in 0 until ch) x[base + c] *= agcG
             }
             // ---- 2: dynamic EQ
@@ -408,7 +421,7 @@ class PodcastChain(val sampleRate: Int, val channels: Int = 1, initial: PodcastP
  * Thin true-peak clip guard after noise suppression: estimates inter-sample peaks with a 4-tap half-sample
  * interpolator, takes gain down at once, releases in 40 ms, and clamps at the ceiling. Delay: 2 samples.
  */
-class TruePeakGuard(sampleRate: Int, private val channels: Int = 1, ceilingDbfs: Double = -1.0) {
+class TruePeakGuard(sampleRate: Int, private val channels: Int = 1, ceilingDbfs: Double = VoiceChain.CEILING_DBFS) {
     val latencyFrames = 2
     private val ceil = PodcastChain.dbToLin(ceilingDbfs)
     private val rel = 1 - exp(-1.0 / (0.040 * sampleRate))

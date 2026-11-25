@@ -25,7 +25,7 @@ class VoiceChainTest {
         chain.noiseCancellation = true
         chain.agc = false
         chain.highPass = false
-        chain.gainDb = 0
+        chain.gainDb = 0.0
         assertEquals(128, chain.delayFrames)
         assertTrue(chain.noiseLatencyMs in 2.6..2.75)
         val input = ShortArray(256 * 3)
@@ -35,14 +35,18 @@ class VoiceChainTest {
         assertTrue(peak(input, 128, 256) > 8000)
     }
 
-    @Test fun defaultIsLouderAndLimited() {
+    @Test fun defaultDoesNotBoostAndStaysBelowYellow() {
         val amp = 32768.0 * Math.pow(10.0, -40.0 / 20.0)
         val input = tone(24000, 1000.0, amp)
         val inPeak = peak(input, 0, input.size)
-        VoiceChain(48000).process(input, input.size)
+        val chain = VoiceChain(48000)
+        assertEquals(VoiceChain.DEFAULT_GAIN_DB, chain.gainDb, 0.0)
+        chain.process(input, input.size)
         val outPeak = peak(input, 12000, 6000)
-        assertTrue("out $outPeak in $inPeak", outPeak > inPeak * 5)
-        assertTrue(outPeak < 30000)
+        val inDb = 20 * Math.log10(inPeak / 32768.0)
+        val outDb = 20 * Math.log10(outPeak / 32768.0)
+        assertTrue("out $outDb in $inDb", outDb in (inDb - 3.0)..(inDb + 1.5))
+        assertTrue(outDb < VoiceChain.METER_YELLOW_DBFS)
     }
 
     @Test fun limiterHoldsAHotSignal() {
@@ -50,11 +54,13 @@ class VoiceChainTest {
         chain.noiseCancellation = false
         chain.agc = false
         chain.highPass = false
-        chain.gainDb = 24
+        chain.gainDb = 24.0
         val s = tone(2400, 1000.0, 20000.0)
         chain.process(s, s.size)
         val p = peak(s, 0, s.size)
-        assertTrue(p in 20000..31000)
+        val pkDb = 20 * Math.log10(p / 32768.0)
+        assertTrue("limiter peak $pkDb dBFS reached yellow", pkDb < VoiceChain.METER_YELLOW_DBFS)
+        assertTrue(pkDb in (VoiceChain.CEILING_DBFS - 2.5)..(VoiceChain.CEILING_DBFS + 0.4))
     }
 
     private fun hiss(n: Int, dbfs: Double, seed: Long): ShortArray {
@@ -74,7 +80,7 @@ class VoiceChainTest {
         val chain = VoiceChain(48000)
         chain.noiseCancellation = false
         chain.voiceClarity = false
-        chain.gainDb = 12
+        chain.gainDb = 12.0
         chain.process(s, s.size)
         val out = rmsDb(s, 48000 * 3, 48000)
         assertTrue("hiss $out", out < -50)
@@ -88,7 +94,7 @@ class VoiceChainTest {
             chain.noiseCancellation = false
             chain.voiceClarity = false
             chain.expander = m
-            chain.gainDb = 6
+            chain.gainDb = 6.0
             chain.process(s, s.size)
             return rmsDb(s, 48000 * 2, 48000)
         }
@@ -102,12 +108,12 @@ class VoiceChainTest {
         chain.noiseCancellation = false
         chain.voiceClarity = false
         chain.agc = false
-        chain.gainDb = 0
+        chain.gainDb = 0.0
         val amp = 32768.0 * Math.pow(10.0, -20.0 / 20.0)
         val a = tone(4800, 200.0, amp)
         val b = a.copyOf()
         chain.process(a, a.size)
-        chain.gainDb = 18
+        chain.gainDb = 18.0
         chain.process(b, b.size)
         var step = 0
         for (i in 1 until 480) step = maxOf(step, abs(b[i] - b[i - 1]))
