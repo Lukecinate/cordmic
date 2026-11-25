@@ -264,7 +264,9 @@ jobs:
           path: artifacts/
 
   draft:
-    if: ${{ github.event_name == 'push' }}
+    # !cancelled() plus an explicit result check: with SignPath off, sign-installer is skipped, and a plain
+    # implicit success() would skip this job too (skips propagate through needs), leaving no draft.
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.provenance.result == 'success' }}
     needs: [provenance]
     runs-on: ubuntu-24.04
     permissions:

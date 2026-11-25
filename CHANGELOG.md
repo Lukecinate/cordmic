@@ -4,6 +4,11 @@ All notable changes to CordMic are documented here. Versions follow [Semantic Ve
 
 ## [Unreleased]
 
+### Fixed
+- Release workflow: the tag-push `draft` job ran only when every upstream job succeeded, so with SignPath off (the
+  `sign-installer` job skipped) it was skipped too and no draft was created. It now runs when provenance succeeded.
+  v1.1.0 was published from that run's unsigned Windows assets plus the locally signed APK; its tag was not moved.
+
 ## [1.1.0] - 2026-11-25
 
 Adds a podcast-style voice chain in front of noise reduction in every preset. It is on by default and can be turned
